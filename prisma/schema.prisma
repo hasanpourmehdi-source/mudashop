@@ -1,0 +1,1126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+  // برای production روی PostgreSQL: provider = "postgresql"
+}
+
+// ================= کاربر و احراز هویت =================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  password      String? // hash شده با bcrypt — برای کاربران Google خالی می‌مونه
+  phone         String?   @unique
+  image         String?
+  role          Role      @default(CUSTOMER)
+  status        UserStatus @default(ACTIVE)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  addresses     Address[]
+  wishlist      WishlistItem[]
+  orders        Order[]
+  reviews       Review[]
+  wallet        Wallet?
+  withdrawalRequests WalletWithdrawalRequest[]
+  resetTokens   PasswordResetToken[]
+  questions       ProductQuestion[]
+  questionReplies QuestionReply[]
+  stockNotifications StockNotification[]
+  notifications   Notification[]
+
+  @@map("users")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+}
+
+// توکن یک‌بارمصرف بازیابی رمز عبور -- در محیط توسعه (بدون سرویس ایمیل واقعی)
+// لینک بازیابی مستقیم توی همون صفحه نشون داده می‌شه، نه ایمیل واقعی
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// NextAuth v5 - مدل Account برای OAuth (گوگل)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// ================= آدرس =================
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String
+  title      String // مثلا "منزل"، "محل کار"
+  fullName   String
+  phone      String
+  province   String
+  city       String
+  postalCode String
+  detail     String
+  isDefault  Boolean @default(false)
+  createdAt  DateTime @default(now())
+
+  user  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("addresses")
+}
+
+// ================= دسته‌بندی (فقط از DB - همیشه) =================
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  imageUrl  String?
+  icon      String? // ایموجی انتخابی دستی برای این دسته (توی منوی دسته‌بندی‌ها استفاده می‌شه) -- اگه خالی باشه، حدس خودکار می‌زنیم
+  // لینک محصولات واقعی سایت‌های دیگه (ترندیول، ترندیول‌میلا، ...) برای این دسته دیگه
+  // اینجا نیست -- جایگزین شد با مدل عمومی‌تر ExternalSite/ExternalSiteCategoryParam
+  // که از چندتا سایت پشتیبانی می‌کنه، نه فقط ترندیول
+  parentId  String?
+  parent    Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryToCategory")
+  products  Product[]
+  attributes CategoryAttribute[]
+  sizeGuides SizeGuide[]
+  externalSiteParams ExternalSiteCategoryParam[]
+  createdAt DateTime   @default(now())
+
+  @@map("categories")
+}
+
+// ================= برند =================
+
+model Brand {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  products   Product[]
+  sizeGuides SizeGuide[]
+  campaigns  Campaign[]
+
+  @@map("brands")
+}
+
+// کمپین برند -- بعضی برندها برای یه بازه‌ی زمانی مشخص کمپین تبلیغاتی می‌ذارن (مثلا
+// «حراج تابستانه پارسیان‌پوش»)؛ همه‌ی محصولات همون برند در بازه‌ی فعال کمپین زیرش نشون داده می‌شن
+model Campaign {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  brandId     String
+  bannerImage String
+  description String?
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@map("campaigns")
+}
+
+// راهنمای سایز -- فقط یک عکس (از سایت اصلی برند برداشته می‌شه)، مخصوص هر ترکیب دسته‌بندی+برند
+// مثلا «شومیز زنانه» + «زارا» یک عکس راهنمای سایز مخصوص خودشون دارن
+model SizeGuide {
+  id         String   @id @default(cuid())
+  categoryId String
+  brandId    String
+  imageUrl   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  brand    Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, brandId])
+  @@map("size_guides")
+}
+
+// ================= محصول (فقط محصولات مزون - DB-backed) =================
+// توجه: محصولات ترندیول از Fake Store API میان و توی این جدول ذخیره نمی‌شن.
+
+model Product {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  description String
+  brandId     String?
+  basePrice   Int // به تومان
+  discount    Int      @default(0) // درصد تخفیف
+  images      String // JSON array به صورت string ("[\"url1\",\"url2\"]")
+  colorImages String   @default("{}") // JSON: {"مقدار رنگ": ["url1","url2"]} -- برای عوض شدن گالری با انتخاب رنگ
+  fastShipping Boolean @default(false) // بج «ارسال فوری» توی صفحه محصول -- دستی از پنل ادمین کنترل می‌شه
+  categoryId  String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category    Category           @relation(fields: [categoryId], references: [id])
+  brand       Brand?             @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  attributes  ProductAttribute[]
+  variants    ProductVariant[]
+  wishlist    WishlistItem[]
+  orderItems  OrderItem[]
+  reviews     Review[]
+  questions   ProductQuestion[]
+  flashSales  FlashSale[]
+  specifications ProductSpecification[]
+  stockNotifications StockNotification[]
+  views          ProductView[]
+  priceSnapshots PriceSnapshot[]
+
+  @@map("products")
+}
+
+// بازدید محصول -- هر بار کسی صفحه‌ی محصول رو باز می‌کنه یه ردیف ثبت می‌شه
+// (برای نمایش «در ۲۴ ساعت گذشته X نفر بازدید کرده‌اند»)
+model ProductView {
+  id        String   @id @default(cuid())
+  productId String
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_views")
+}
+
+// عکس لحظه‌ای قیمت -- حداکثر یک بار در روز برای هر محصول ثبت می‌شه (وقتی صفحه‌ش بازدید بشه)
+// تا بشه فهمید قیمت فعلی نسبت به ۱۰ روز اخیر کمترینه یا نه
+model PriceSnapshot {
+  id         String   @id @default(cuid())
+  productId  String
+  price      Int
+  recordedAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("price_snapshots")
+}
+
+// مشخصات فنی توصیفی محصول - جفت برچسب/مقدار (مثلا "جنس: کتان")
+// این‌ها فقط نمایشی‌ان، برخلاف Attribute که برای ساخت ترکیب/variant خرید استفاده می‌شه
+model ProductSpecification {
+  id        String @id @default(cuid())
+  productId String
+  label     String // مثلا "جنس"
+  value     String // مثلا "کتان"
+  order     Int    @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_specifications")
+}
+
+// سیستم ژنریک ویژگی/تنوع محصول (سایز، رنگ، هر چیز دیگه)
+
+model Attribute {
+  id                String              @id @default(cuid())
+  name              String              @unique // مثلا "سایز"، "رنگ"
+  groupId           String? // اگه پر باشه، یعنی این ویژگی جایگزین (نه مکمل) بقیه اعضای همین گروهه
+  values            AttributeValue[] // مقادیر از پیش‌تعریف‌شده (مثلا S, M, L)
+  categories        CategoryAttribute[] // این ویژگی به کدوم دسته‌بندی‌ها وصله
+  productAttributes ProductAttribute[] // این ویژگی روی کدوم محصولات استفاده شده
+  group             AttributeGroup?     @relation(fields: [groupId], references: [id])
+  externalSiteParams ExternalSiteAttributeParam[]
+
+  @@map("attributes")
+}
+
+// گروه ویژگی‌های جایگزین -- مثلا "سایز کفش" و "سایز لباس" هر دو تو گروه "سایز" هستن،
+// یعنی برای یه محصول فقط یکی از اعضای این گروه معنی داره (نه هر دو با هم)
+model AttributeGroup {
+  id         String      @id @default(cuid())
+  name       String      @unique
+  attributes Attribute[]
+  createdAt  DateTime    @default(now())
+
+  @@map("attribute_groups")
+}
+
+// مقادیر از پیش‌تعریف‌شده هر ویژگی - مثلا برای "سایز": S, M, L, XL
+model AttributeValue {
+  id          String @id @default(cuid())
+  attributeId String
+  value       String
+  order       Int    @default(0) // ترتیب نمایش، دقیقاً همون ترتیبی که ادمین وارد کرده
+
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([attributeId, value])
+  @@map("attribute_values")
+}
+
+// اتصال ویژگی به دسته‌بندی - یعنی محصولات این دسته می‌تونن از این ویژگی استفاده کنن
+model CategoryAttribute {
+  id          String  @id @default(cuid())
+  categoryId  String
+  attributeId String
+  fixedValue  String? // اگه پر باشه، یعنی این مقدار برای همه‌ی محصولات این دسته (و زیردسته‌هاش) ثابته
+  // مثال: دسته «زنانه» به ویژگی «جنسیت» با fixedValue="زنانه" وصله -- دیگه نیازی نیست
+  // هر محصول جدا این مقدار رو انتخاب کنه، خودکار از دسته‌بندی ارث می‌بره
+
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, attributeId])
+  @@map("category_attributes")
+}
+
+model ProductAttribute {
+  id          String @id @default(cuid())
+  productId   String
+  attributeId String
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id])
+
+  @@unique([productId, attributeId])
+  @@map("product_attributes")
+}
+
+// هر ترکیب از مقادیر ویژگی‌ها یک variant با موجودی و قیمت مستقل می‌سازه
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  sku       String  @unique
+  stock     Int     @default(0)
+  priceDiff Int     @default(0) // اختلاف قیمت نسبت به basePrice (می‌تونه منفی باشه)
+
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values  ProductVariantValue[]
+  orderItems OrderItem[]
+
+  @@map("product_variants")
+}
+
+model ProductVariantValue {
+  id        String @id @default(cuid())
+  variantId String
+  attribute String // نام ویژگی، مثلا "سایز"
+  value     String // مقدار، مثلا "L" یا "قرمز"
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("product_variant_values")
+}
+
+// ================= لیست علاقه‌مندی‌ها (فقط مزون) =================
+
+model WishlistItem {
+  id        String        @id @default(cuid())
+  userId    String
+  // برای مزون: productId پر می‌شه (رابطه‌ی واقعی به جدول Product). برای
+  // ترندیول: externalId پر می‌شه و چون جدول محلی برای join‌کردن نداریم،
+  // اطلاعات نمایشی (عنوان/عکس/لینک/قیمت) در لحظه‌ی افزودن snapshot می‌شن --
+  // ممکنه بعداً قیمت واقعی عوض بشه، برای یه لیست علاقه‌مندی قابل قبوله
+  source        ProductSource @default(MAZON)
+  productId     String?
+  externalId    String?
+  externalTitle String?
+  externalImage String?
+  externalUrl   String?
+  externalPrice Int?
+  createdAt     DateTime      @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // هر دو @@unique زیر با وجود nullable بودن productId/externalId درست کار
+  // می‌کنن، چون توی SQLite/Postgres چندتا NULL توی یه ایندکس یکتا مجاز و از
+  // هم متمایزن -- یعنی ردیف‌های مزون (externalId=NULL) با هم تداخل ایندکس
+  // ندارن، و برعکس برای ردیف‌های ترندیول (productId=NULL)
+  @@unique([userId, productId])
+  @@unique([userId, externalId])
+  @@map("wishlist_items")
+}
+
+// ================= سفارش =================
+
+model Order {
+  id            String        @id @default(cuid())
+  userId        String
+  addressId     String?
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(PENDING)
+  paymentAuthority String?    @unique
+  paidAt        DateTime?
+  // پرداخت کارت‌به‌کارت آفلاین -- ادمین از بین کارت‌های ثبت‌شده یکی رو برای این
+  // سفارش تخصیص می‌ده (snapshot، نه رابطه -- تا اگه کارت بعداً ویرایش/حذف شد،
+  // سفارش‌های قبلی دست‌نخورده بمونن). بعدش مشتری فیش واریزی رو آپلود می‌کنه، تا
+  // ادمین از پنل بررسی و تأیید/رد کنه (رد = لغو کامل سفارش)
+  assignedCardNumber  String?
+  assignedShebaNumber String?
+  assignedCardHolder  String?
+  receiptImage       String?
+  receiptSubmittedAt DateTime?
+  deliveredAt   DateTime? // زمان تحویل - برای محاسبه مهلت ۷ روزه مرجوعی
+  // آخرین بار که پیام خودکار «حواسمون به سفارشت هست» به مشتری ارسال شد -- برای
+  // این‌که این پیام هر چند ساعت یه بار تکرار بشه (نه یه‌بار برای همیشه) ولی
+  // اسپم هم نشه
+  lastReassurancePingAt DateTime?
+  subtotal      Int
+  discountTotal Int           @default(0)
+  // هزینه ارسال دیگه خودکار حساب نمی‌شه -- ادمین موقع بررسی سفارش (بعد از
+  // محاسبه‌ی باربری) دستی وارد می‌کنه. null یعنی «هنوز تعیین نشده»، برخلاف ۰
+  // که یعنی «رایگانه» (کد تخفیف FREE_SHIP یا تصمیم دستی ادمین)
+  shippingCost  Int?
+  // فقط سفارش خارجی -- هزینه‌ی باربری (حمل بین‌المللی ترکیه→ایران)، جدا از
+  // shippingCost که تحویل داخلی (انبار باربری تا آدرس مشتری) رو نشون می‌ده
+  cargoCost     Int?
+  // فقط برای سفارش‌های فقط-مزون پر می‌شه (پست پیشتاز/تیپاکس/...)؛ برای سفارش‌های
+  // حاوی کالای خارجی بی‌معنیه چون نحوه‌ی ارسالشون بعد از خرید مشخص می‌شه
+  shippingMethod String?
+  // موقع ثبت ارسال توسط ادمین پر می‌شه -- بسته به shippingMethod یا کد رهگیری
+  // پست/تیپاکسه یا شماره تماس پیک؛ به مشتری هم توی نوتیفیکیشن اطلاع داده می‌شه
+  trackingCode String?
+  freeShippingApplied Boolean @default(false)
+  // چندبار پست/پیک نتونسته این سفارش رو تحویل بده و بسته برگشت خورده -- فقط
+  // برای گزارش/هشدار داشبورد؛ هر بار برگشت یعنی باید دوباره هزینه‌ی ارسال
+  // گرفته بشه و چرخه‌ی ارسال از نو تکرار بشه (منطقش توی mark-returned-to-sender)
+  returnedToSenderCount Int @default(0)
+  // وقتی ادمین اقلام سفارش رو (تعداد/قیمت/افزودن/حذف) ویرایش می‌کنه، مشتری
+  // باید ببینه و یا قبول کنه یا خودش دوباره ویرایش کنه -- که در اون صورت باز
+  // باید ادمین تأیید کنه. پیش‌فرض AGREED یعنی کسی چیزی رو منتظر طرف مقابل نذاشته
+  itemsNegotiationStatus ItemsNegotiationStatus @default(AGREED)
+  // زمان دقیقِ آخرین باری که مشتری به ویرایش اقلام پاسخ داد (یعنی رفت روی
+  // AWAITING_ADMIN_REVIEW) -- برای ساعت‌شمار هشدار داشبورد، تا با هر آپدیت
+  // بی‌ربط دیگه‌ای روی سفارش (که updatedAt رو عوض می‌کنه) ریست نشه
+  itemsNegotiationRespondedAt DateTime?
+  // نیت مشتری موقع چک‌اوت برای استفاده از کیف‌پول -- چون مبلغ نهایی تا معلوم‌شدن
+  // هزینه ارسال کامل نیست، اعمال واقعی کیف‌پول (walletUsed) به لحظه‌ی نهایی‌سازی
+  // توسط ادمین موکول می‌شه، نه لحظه‌ی ثبت سفارش
+  useWalletRequested Boolean  @default(false)
+  total         Int
+  giftWrap      Boolean       @default(false)
+  couponCode    String?
+  walletUsed    Int           @default(0)
+  // آدرس به صورت inline هم ذخیره می‌شه تا اگر آدرس بعدا حذف شد، سفارش دست نخورده بمونه
+  addressSnapshot String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user    User                @relation(fields: [userId], references: [id])
+  address Address?            @relation(fields: [addressId], references: [id])
+  items   OrderItem[]
+  statusHistory OrderStatusHistory[]
+  returnRequest ReturnRequest?
+  shippingPayment ShippingPayment?
+  messages      OrderMessage[]
+  paymentEvents OrderPaymentEvent[]
+
+  @@map("orders")
+}
+
+// گفت‌وگوی مستقیم مشتری/ادمین درباره‌ی یک سفارش خاص -- مثلاً مشتری بخواد سایز
+// رو عوض کنه یا سوالی درباره‌ی وضعیت سفارش بپرسه، بدون نیاز به تیکت جدا
+model OrderMessage {
+  id        String        @id @default(cuid())
+  orderId   String
+  sender    MessageSender
+  message   String
+  createdAt DateTime      @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_messages")
+}
+
+enum MessageSender {
+  CUSTOMER
+  ADMIN
+}
+
+// هر بار ادمین برای یه دور پرداخت (اقلام یا ارسال/باربری) یه کارت خاص تخصیص
+// می‌ده، یه ردیف اینجا ثبت می‌شه -- برخلاف فیلدهای assignedCardNumber روی
+// Order/ShippingPayment (که هر بار بازنویسی می‌شن و مقدار قبلی رو گم می‌کنن)،
+// این جدول تاریخچه‌ی کامل رو نگه می‌داره تا مشتری/ادمین بتونن ببینن چه مبلغی
+// بابت چی، به چه شماره‌کارتی، در چه زمانی واریز/تخصیص شده
+model OrderPaymentEvent {
+  id          String    @id @default(cuid())
+  orderId     String
+  round       String // "items" | "shipping"
+  purpose     String // توضیح انسانی، مثلاً "هزینه اقلام سفارش" یا "هزینه ارسال و باربری"
+  amount      Int
+  cardNumber  String?
+  cardHolder  String?
+  shebaNumber String?
+  assignedAt  DateTime  @default(now())
+  paidAt      DateTime?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_payment_events")
+}
+
+enum PaymentStatus {
+  PENDING // تازه ثبت شده، منتظر بررسی ادمین و تخصیص شماره کارت
+  AWAITING_PAYMENT // ادمین شماره کارت رو تخصیص داد، منتظر واریز و آپلود فیش مشتری
+  AWAITING_VERIFICATION // فیش واریزی ارسال شده، منتظر بررسی ادمین
+  PAID
+  FAILED
+}
+
+// وقتی ادمین یا مشتری اقلام سفارش رو ویرایش می‌کنه، این فیلد مشخص می‌کنه نوبت
+// کیه که واکنش نشون بده -- برای اینکه سفارش بدون تأیید طرف مقابل مستقیم به
+// پرداخت نره
+enum ItemsNegotiationStatus {
+  AGREED // پیش‌فرض -- کسی چیزی رو منتظر تأیید طرف مقابل نذاشته
+  AWAITING_CUSTOMER_REVIEW // ادمین ویرایش کرده، منتظر واکنش مشتریه
+  AWAITING_ADMIN_REVIEW // مشتری ویرایش کرده، منتظر بررسی ادمینه
+}
+
+// شماره کارت‌های بانکی که ادمین برای پرداخت کارت‌به‌کارت ثبت می‌کنه -- موقع
+// بررسی هر سفارش، ادمین یکی از این‌ها رو انتخاب و به مشتری تخصیص می‌ده
+model BankCard {
+  id          String   @id @default(cuid())
+  cardNumber  String
+  shebaNumber String? // شماره شبا -- اختیاری، برای مشتری‌هایی که واریز شبایی راحت‌تره
+  holderName  String
+  label       String? // اختیاری، مثلاً "بانک ملی" -- فقط برای تشخیص راحت‌تر توی لیست ادمین
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("bank_cards")
+}
+
+// دور دوم پرداخت کارت‌به‌کارت، فقط برای هزینه‌ی ارسال سفارش‌های حاوی کالای
+// خارجی (ترندیول) -- بعد از این‌که خودِ کالا خریداری/تحویل/وزن‌کشی شد و هزینه‌ی
+// واقعی باربری مشخص شد. عمداً جدا از فیلدهای دور اول روی Order نگه داشته شده
+// تا تاریخچه‌ی پرداخت دور اول (فیش/کارت همون مرحله) پاک نشه
+model ShippingPayment {
+  id                  String        @id @default(cuid())
+  orderId             String        @unique
+  amount              Int // مبلغ باقی‌مانده که باید کارت‌به‌کارت پرداخت شود (بعد از کسر walletOffset)
+  shippingCost        Int // تحویل داخلی (انبار باربری تا آدرس مشتری)
+  cargoCost           Int // حمل بین‌المللی (ترکیه→ایران)
+  // اگه مشتری از قبل موجودی کیف پول داشت (مثلاً بابت رفاند اقلام مغایر)، همون
+  // لحظه‌ی تعیین هزینه‌ی ارسال به‌صورت خودکار از این هزینه کسر می‌شه -- amount
+  // بالا فقط باقی‌مانده‌ست، نه هزینه‌ی کامل
+  walletOffset        Int           @default(0)
+  status              PaymentStatus @default(AWAITING_PAYMENT)
+  assignedCardNumber  String?
+  assignedShebaNumber String?
+  assignedCardHolder  String?
+  receiptImage        String?
+  receiptSubmittedAt  DateTime?
+  paidAt              DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("shipping_payments")
+}
+
+// تاریخچه تغییر وضعیت سفارش - برای پیگیری زنده با زمان دقیق هر مرحله
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_status_history")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  // برای محصولات مزون: productId پر می‌شه. برای ترندیول: externalId + source
+  productId   String?
+  variantId   String?
+  externalId  String? // id محصول از Fake Store API
+  flashSaleId String?
+  source      ProductSource
+  title       String // snapshot از عنوان محصول در لحظه خرید
+  image       String?
+  price       Int // قیمت واحد در لحظه خرید
+  quantity    Int
+
+  // فقط برای اقلام ترندیول معنی داره -- «در صف خرید» به‌جای یه وضعیت واحد
+  // برای کل سفارش، هر قلم جدا پیگیری می‌شه: خریداری شد (با تگ فیزیکی برای
+  // ردیابی)، یا ادمین نتونست بخره (رفاند فوری)؛ بعداً وقتی کالا فیزیکی به
+  // انبار/نمایندگی می‌رسه، با همون تگ دوباره پیدا می‌شه و نتیجه‌ی نهایی
+  // (رسید/گم‌شد/سایز‌اشتباه/رنگ‌اشتباه/دلخواه) ثبت می‌شه
+  purchaseStatus      OrderItemPurchaseStatus @default(PENDING)
+  purchaseTag         String?                 @unique
+  purchaseNote        String? // دلیل کنسلی/گم‌شدن/سایزاشتباه/رنگ‌اشتباه/دلخواه
+  purchasePriceActual Int? // قیمت واقعی خریداری‌شده، اگه با price فرق داشت -- تسویه‌ش موقع پرداخت باربری/ارسال
+  purchaseResolvedAt  DateTime?
+  itemWeightGrams     Int? // وزن این قلم -- برای محاسبه‌ی خودکار هزینه‌ی باربری
+  itemCargoCost       Int? // هزینه‌ی باربری این قلم به‌صورت جدا (اگه ادمین دستی وارد کرده باشه)
+  // فقط وقتی purchaseStatus="AWAITING_CUSTOMER_DECISION" پر می‌شه -- یادآوریِ
+  // این‌که مغایرت اصلی WRONG_SIZE بوده یا WRONG_COLOR، تا اگه مشتری رفاند رو
+  // ترجیح داد، وضعیتِ نهاییِ درست (نه یه برچسبِ عمومی) ثبت بشه
+  mismatchOutcome     String?
+
+  order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product?        @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  flashSale FlashSale?      @relation(fields: [flashSaleId], references: [id])
+  returnItems ReturnRequestItem[]
+
+  @@map("order_items")
+}
+
+enum OrderItemPurchaseStatus {
+  PENDING                     // پیش‌فرض -- برای اقلام مزون همیشه همینه، بی‌معنیه
+  PURCHASED                   // خریداری و تگ‌گذاری شد، منتظر رسیدن فیزیکی به انبار/نمایندگی
+  RECEIVED                    // فاز دوم: سالم به انبار/نمایندگی رسید (یا مشتری با مغایرت موافقت کرد)
+  CANCELLED                   // فاز اول: ادمین نتونست بخرد (ناموجود و...) -- رفاند فوری
+  LOST                        // فاز دوم -- رفاند فوری
+  WRONG_SIZE                  // فاز دوم -- مشتری رفاند رو ترجیح داد -- رفاند فوری
+  WRONG_COLOR                 // فاز دوم -- مشتری رفاند رو ترجیح داد -- رفاند فوری
+  ISSUE_OTHER                 // فاز دوم، دلیل دلخواه -- رفاند فوری
+  AWAITING_CUSTOMER_DECISION  // فاز دوم: مغایرت (سایز/رنگ) پیدا شد -- منتظر تصمیم مشتریه (نگه‌داشتن یا رفاند)
+}
+
+enum ProductSource {
+  MAZON
+  TRENDYOL
+}
+
+// ================= نظرات (مزون و ترندیول) =================
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  // برای مزون: productId پر می‌شه. برای ترندیول: externalId + source، دقیقاً
+  // مثل الگوی WishlistItem/OrderItem -- این‌ها نظرات واقعی مشتری‌های مُداشاپن،
+  // نه import از خودِ ترندیول (که اصلاً چنین داده‌ای رو اسکرپ نمی‌کنیم)
+  source        ProductSource @default(MAZON)
+  productId     String?
+  externalId    String?
+  rating    Int // 1 تا 5
+  comment   String
+  images    String   @default("[]") // JSON array به صورت string (مثل images محصول) -- عکس‌های ضمیمه‌ی نظر
+  verifiedPurchase Boolean @default(false)
+  isApproved Boolean @default(false) // تا وقتی ادمین تایید نکنه، زیر محصول نمایش داده نمی‌شه
+  createdAt DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id])
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // هر دو @@unique زیر با وجود nullable بودن productId/externalId درست کار
+  // می‌کنن، دقیقاً مثل WishlistItem (چندتا NULL توی ایندکس یکتای SQLite/Postgres
+  // با هم تداخل ندارن)
+  @@unique([userId, productId])
+  @@unique([userId, externalId])
+  @@map("reviews")
+}
+
+// ================= پرسش و پاسخ محصول =================
+
+model ProductQuestion {
+  id        String   @id @default(cuid())
+  // برای مزون: productId پر می‌شه. برای ترندیول: externalId + source (همون الگوی Review)
+  source        ProductSource @default(MAZON)
+  productId     String?
+  externalId    String?
+  userId    String? // پرسنده -- سوال‌های قدیمی‌تر این فیلد رو ندارن، پس نال‌پذیره
+  question  String
+  answer    String?
+  createdAt DateTime @default(now())
+  answeredAt DateTime?
+
+  product Product?        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  replies QuestionReply[]
+
+  @@map("product_questions")
+}
+
+// پیام‌های بعدی همون گفتگو -- هم پرسنده‌ی اصلی می‌تونه دوباره بنویسه، هم ادمین
+model QuestionReply {
+  id         String   @id @default(cuid())
+  questionId String
+  userId     String
+  message    String
+  isAdmin    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  question ProductQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id])
+
+  @@map("question_replies")
+}
+
+// ================= کیف پول =================
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(0) // به تومان
+  updatedAt DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id          String            @id @default(cuid())
+  walletId    String
+  type        WalletTxType
+  amount      Int // همیشه مثبت؛ جهت واریز/برداشت از type مشخص می‌شه
+  description String
+  orderId     String?
+  createdAt   DateTime          @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_transactions")
+}
+
+enum WalletTxType {
+  TOPUP // شارژ کیف پول
+  PURCHASE // پرداخت با کیف پول در سفارش
+  REFUND // بازگشت وجه (مثلا بعد از لغو سفارش)
+  WITHDRAWAL // درخواست واریز موجودی کیف پول به حساب مشتری
+}
+
+// درخواست مشتری برای واریز موجودی کیف پولش به حسابش -- موجودی همون لحظه‌ی
+// درخواست از کیف پول کسر می‌شه (تا دوبار خرج نشه)؛ اگه ادمین رد کرد، به کیف
+// پول برمی‌گرده
+model WalletWithdrawalRequest {
+  id           String                    @id @default(cuid())
+  userId       String
+  amount       Int
+  cardNumber   String
+  shebaNumber  String?
+  holderName   String
+  status       WalletWithdrawalStatus    @default(PENDING)
+  receiptImage String? // عکس فیش واریزیِ ادمین به حساب مشتری -- فقط برای PAID
+  rejectReason String?
+  createdAt    DateTime                  @default(now())
+  resolvedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_withdrawal_requests")
+}
+
+enum WalletWithdrawalStatus {
+  PENDING
+  PAID
+  REJECTED
+}
+
+// ================= کوپن تخفیف =================
+
+model Coupon {
+  id             String     @id @default(cuid())
+  code           String     @unique
+  type           CouponType
+  value          Int // درصد (برای PERCENT) یا مبلغ ثابت به تومان (برای FIXED) - برای FREE_SHIP/FIRST_BUY نادیده گرفته می‌شه
+  minOrderAmount Int        @default(0)
+  maxUses        Int? // null = نامحدود
+  usedCount      Int        @default(0)
+  isActive       Boolean    @default(true)
+  expiresAt      DateTime?
+  createdAt      DateTime   @default(now())
+
+  @@map("coupons")
+}
+
+enum CouponType {
+  PERCENT
+  FIXED
+  FREE_SHIP
+  FIRST_BUY // فقط برای اولین خرید کاربر معتبره
+}
+
+// ================= حراج فلش =================
+
+model FlashSale {
+  id              String   @id @default(cuid())
+  productId       String
+  discountPercent Int // درصد تخفیف حراج (جایگزین تخفیف عادی محصول در بازه زمانی فعال)
+  stock           Int // موجودی مخصوص حراج، جدا از موجودی عادی variant ها
+  startsAt        DateTime
+  endsAt          DateTime
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@map("flash_sales")
+}
+
+// ================= مرجوعی و بازگشت وجه =================
+
+model ReturnRequest {
+  id          String       @id @default(cuid())
+  orderId     String       @unique // هر سفارش فقط یک درخواست مرجوعی می‌تونه داشته باشه
+  userId      String
+  reason      ReturnReason
+  description String? // توضیح تکمیلی (مثلا برای "سایر دلایل")
+  status      ReturnStatus @default(PENDING)
+  refundAmount Int // مبلغی که در نهایت به کیف پول برمی‌گرده
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  order Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items ReturnRequestItem[]
+
+  @@map("return_requests")
+}
+
+// اگه مشتری چند دلیل مرجوعی مختلف داشته باشه که هرکدوم مربوط به یه کالای
+// خاصه (مثلاً کالای اول معیوبه، کالای دوم فقط سایزش اشتباهه)، هرکدوم یه ردیف
+// جدا اینجا می‌گیره -- reason/description سطح‌بالای خودِ ReturnRequest برای
+// حالت ساده‌ی «کل سفارش یه دلیل داره» (سازگاری با قبل) همچنان باقی می‌مونه
+model ReturnRequestItem {
+  id              String       @id @default(cuid())
+  returnRequestId String
+  orderItemId     String
+  reason          ReturnReason
+  description     String?
+
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem     @relation(fields: [orderItemId], references: [id])
+
+  @@map("return_request_items")
+}
+
+enum ReturnReason {
+  DEFECTIVE // کالای معیوب
+  WRONG_ITEM // ارسال کالای اشتباه
+  WRONG_SIZE // سایز/مشخصات نامناسب
+  CHANGED_MIND // انصراف بدون دلیل خاص
+  OTHER
+}
+
+enum ReturnStatus {
+  PENDING // در انتظار بررسی
+  APPROVED // تأیید شد، منتظر ارسال کالا از طرف مشتری
+  REJECTED // رد شد
+  ITEM_RECEIVED // کالا برگردونده شد و رسید
+  REFUNDED // وجه به کیف پول برگشت
+}
+
+// متن‌های عمومی سایت که ادمین بتونه بدون نیاز به کد، تغییرشون بده -- مثل شرایط مرجوعی
+// ذخیره‌ی کلید-مقدار ساده؛ هر متن جدید فقط یه ردیف جدیده، نیازی به migration نداره
+model SiteSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("site_settings")
+}
+
+// ================= نرخ ارز =================
+// نرخ روزانه‌ی هر ارز به تومان + درصد سود ما -- دستی توی پنل ادمین ثبت/به‌روز
+// می‌شه. قیمت نمایشی محصولات سایت‌های خارجی = قیمت ارزی × rate × (1 +
+// profitPercent/100)، همیشه با نرخ ذخیره‌شده‌ی *فعلی* لحظه‌ی محاسبه (نه نرخ
+// لحظه‌ی سفارش قدیمی) -- طبق تصمیم مهدی، عمداً قفل/snapshot نمی‌شه.
+model ExchangeRate {
+  id            String   @id @default(cuid())
+  currency      String   @unique // کد ارز، مثلاً "TRY"، "USD"، "EUR"
+  currencyLabel String // اسم فارسی برای نمایش توی پنل، مثلاً "لیر ترکیه"
+  rate          Float // نرخ پایه‌ی خرید هر ۱ واحد ارز، به تومان
+  profitPercent Float    @default(0) // درصد سودی که روی نرخ پایه اضافه می‌کنیم
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  @@map("exchange_rates")
+}
+
+// «موجود شد خبرم کن» -- روی یه ترکیب خاص از ویژگی (مثلا "سایز: L") نه لزوما یه variant دقیق،
+// چون وقتی چند ویژگی با هم ترکیب می‌شن، یه مقدار به‌تنهایی معادل یه variant واحد نیست
+model StockNotification {
+  id            String    @id @default(cuid())
+  userId        String
+  productId     String
+  description   String // مثلا "سایز: L" یا "سایز: 36 / رنگ: سبز"
+  notifiedAt    DateTime?
+  // تا کِی این نفر اولویتِ اطلاع‌رسانی داره (صرفاً برای ترتیب پیام، نه رزرو واقعی موجودی)
+  reservedUntil DateTime?
+  createdAt     DateTime  @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId, description])
+  @@map("stock_notifications")
+}
+
+// اعلان‌های داخل سایت -- بدون نیاز به ایمیل/پیامک، فقط زنگوله‌ی بالای هدر
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// ================= سایت‌های خارجی (ترندیول، ترندیول‌میلا، و بعداً هر سایت دیگه) =================
+// هدف: بتونیم برای هر دسته‌بندی/ویژگی مزون، بگیم توی هر سایت خارجی معادلش با چه
+// پارامتر URL ساخته می‌شه، و از روی این نگاشت‌ها لینک نهایی رو خودکار بسازیم.
+// مثال: پوشاک مردانه سایز L روی ترندیول = baseUrl + wc=75 + wg=2 + vr=size|group-l
+
+// آینه‌ی محلی درخت دسته‌بندی ترندیول (اسم اصلی ترکی + آیدی واقعی) که با دکمه‌ی
+// «به‌روزرسانی همه» توی پنل ادمین از API عمومی ترندیول پر/به‌روز می‌شه. اسم
+// فارسی (nameFa) رو ادمین دستی وارد می‌کنه؛ هر بار «به‌روزرسانی همه» دوباره
+// زده بشه، فقط ردیف‌های جدید/تغییرکرده لمس می‌شن، ترجمه‌های قبلی دست‌نخورده
+// می‌مونن. مستقل از ExternalSite چون این taxonomy بین trendyol.com و
+// trendyol-milla.com مشترکه.
+// هر بار درخواستی به ترندیول با خطا مواجه بشه (چه موقع اعتبارسنجی فیلتر، چه
+// موقع لود اولیه‌ی صفحه، چه موقع «بارگذاری بیشتر») این‌جا ثبت می‌شه -- تا
+// بشه بعداً دقیقاً همون شرایط رو شبیه‌سازی کرد و روش کار کرد، به‌جای اینکه
+// فقط یه پیام کلی به کاربر نشون داده بشه و خطا برای همیشه گم بشه
+model TrendyolFetchLog {
+  id        String   @id @default(cuid())
+  url       String
+  error     String
+  source    String // "check-url" | "page-load" | "load-more"
+  siteSlug  String?
+  createdAt DateTime @default(now())
+
+  @@map("trendyol_fetch_logs")
+}
+
+// نگاشت contentId (شناسه‌ی محصول ترندیول) به آدرس کامل trendyol.com -- چون
+// URL داخلی مداشاپ برای صفحه‌ی محصول فقط از contentId + یه اسلاگ سئو ساخته
+// می‌شه (مثل خودِ ترندیول)، ولی برای fetch واقعی صفحه از ترندیول به آدرس
+// کاملش نیاز داریم. این ردیف یه‌بار وقتی کاربر روی کارتی در گرید کلیک می‌کنه
+// (جایی که p.url کامل رو از قبل داریم) ذخیره می‌شه، و صفحه‌ی جزئیات بعداً
+// از همینجا می‌خونتش.
+model TrendyolProductUrlCache {
+  id        String   @id @default(cuid())
+  contentId String   @unique
+  url       String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("trendyol_product_url_cache")
+}
+
+// همه‌ی گروه‌های فیلتر واقعی ترندیول (رنگ، برند، نوع کیف، ...) و مقادیرشون --
+// هم عنوان خودِ گروه (با valueId خالی) هم تک‌تک مقادیرش یه ردیفن. با دکمه‌ی
+// «به‌روزرسانی» توی پنل ادمین (با دادن یه wc/wg نمونه) پر/به‌روز می‌شه.
+// مثل TrendyolCategoryCache، فقط ترجمه‌های جدید (nameFa خالی) دست‌نخورده
+// می‌مونن؛ برای برندها معمولاً نیازی به ترجمه نیست (اسم خاصن) و همون Turkish
+// می‌مونه -- تا وقتی nameFa خالیه، نمایش از nameTr میاد
+// ترندیول (trendyol.com) و میلا (trendyol-milla.com) دو سایت واقعاً جدا هستن
+// -- ممکنه یه برند/دسته/کد فیلتر توی یکی باشه و توی دیگری نباشه، یا کدش فرق
+// کنه. برای همین کش‌های زیر (TrendyolCategoryCache/TrendyolFilterCache) باید
+// به‌ازای هر سایت جدا نگه داشته شن
+enum ExternalSiteKind {
+  TRENDYOL
+  TRENDYOL_MILLA
+}
+
+model TrendyolFilterCache {
+  id                  String   @id @default(cuid())
+  site                ExternalSiteKind @default(TRENDYOL)
+  filterKey           String // کلید گروه توی aggregations ترندیول، مثلا "Renk" یا "WebBrand" یا "348"
+  valueId             String // "" یعنی این ردیف خودِ عنوان گروهه، نه یه مقدار داخلش
+  nameTr              String // اسم ترکی (یا عنوان گروه یا متن مقدار)
+  nameFa              String?
+  nameFaSuggested     Boolean  @default(false)
+  // ادمین دستی می‌گه «این نیاز به ترجمه نداره» (مثلاً کدهای سایز عجیبی مثل
+  // "10XL" که تشخیص خودکارِ عددی/بازه‌ای شناساییش نکرده) -- با این تیک، از
+  // لیست عادی پنهون می‌شه، ولی توی یه لیست جدا («فقط بدون‌نیاز به ترجمه») قابل بازبینی می‌مونه
+  noTranslationNeeded Boolean  @default(false)
+  groupTitleTr        String? // برای ردیف‌های مقدار (نه خودِ گروه)، اسم گروه مادر برای نمایش بهتر توی پنل
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([site, filterKey, valueId])
+  @@map("trendyol_filter_cache")
+}
+
+// دیکشنری کلمه‌به‌کلمه‌ی اصطلاحات مد ترکی -- برای ساختن ترجمه‌ی خودکارِ
+// عنوان محصولات ترندیول بدون نیاز به API خارجی. هر ردیف یه توکن ترکی (یا
+// عبارت چندکلمه‌ای پرتکرار مثل "Uzun Kol") رو به فارسی نگاشت می‌کنه.
+// termTr همیشه lowercase ذخیره می‌شه تا lookup حساس به بزرگ/کوچیکی حروف نباشه.
+model TrendyolTitleTermDictionary {
+  id        String   @id @default(cuid())
+  termTr    String   @unique // اصطلاح ترکی، lowercase، بدون فاصله‌ی اضافه
+  termFa    String // معادل فارسی -- برای ردیف‌های noTranslationNeeded همون termTr ذخیره می‌شه
+  priority  Int      @default(0) // برای عبارت‌های چندکلمه‌ای که با هم تداخل دارن -- بزرگ‌تر اول امتحان می‌شه
+  // ادمین دستی می‌گه «این کلمه نیاز به ترجمه نداره» (مثلاً برند یا اسم خاص) --
+  // با ثبت این، از لیست «کلمات ناشناخته» (unknown-terms) دیگه حذف می‌شه، چون
+  // همون‌جوری که هست (termFa=termTr) به دیکشنری اضافه شده و دیگه "ناشناخته" نیست
+  noTranslationNeeded Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("trendyol_title_term_dictionary")
+}
+
+// کش عنوان کامل هر محصول -- تا هر بار محصول لود می‌شه نیازی به دوباره
+// tokenize کردن و جایگزینی نباشه. originalTitle کلید یکتاست چون عنوان دقیق
+// محصول تغییر نمی‌کنه (برخلاف قیمت/موجودی).
+model TrendyolTitleCache {
+  id             String   @id @default(cuid())
+  originalTitle  String   @unique
+  translatedTitle String
+  // چندتا توکن که توی دیکشنری پیدا نشدن (برای این‌که ادمین ببینه چی رو باید
+  // به دیکشنری اضافه کنه) -- جدا شده با "|"
+  unknownTerms   String?
+  // نسخه‌ی الگوریتم ترجمه‌ای که این ردیف رو تولید کرده -- هر بار الگوریتم
+  // tokenizeAndTranslate توی trendyolTitleTranslation.ts عوض بشه (مثلاً معکوس
+  // کردن ترتیب کلمات، یا حذف کلمات ناشناخته)، عدد ثابت TITLE_ALGO_VERSION
+  // توی کد یکی بالا می‌ره. اگه این عدد با نسخه‌ی فعلی یکی نباشه، یعنی این ردیف
+  // با الگوریتم قدیمی ساخته شده و باید از نو ترجمه بشه -- وگرنه بعد از هر
+  // بهبود الگوریتم، عنوان‌های قبلاً کش‌شده برای همیشه با نسخه‌ی قدیمی/غلط می‌موندن
+  algorithmVersion Int    @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("trendyol_title_cache")
+}
+
+model TrendyolCategoryCache {
+  id              String   @id @default(cuid())
+  site            ExternalSiteKind @default(TRENDYOL)
+  // چندتا مسیر متفاوت (مثلا "Kadın > Giyim" و "Anne & Çocuk > Erkek Çocuk")
+  // می‌تونن کاملاً مشروع به یه wc= مشترک اشاره کنن -- برای همین اینجا @unique
+  // نیست (اگه بود، یکی این‌ها رو بازنویسی می‌کرد و بقیه گم می‌شدن)
+  param           String // پارامتر واقعی، مثلا "wc=82" یا "wc=104443,1123,104444"
+  nameTr          String // اسم اصلی (ترکی) که از منوی ترندیول میاد
+  nameFa          String? // ترجمه‌ی فارسی -- تا وارد نشه null می‌مونه
+  // true یعنی این ترجمه خودکار (فرهنگ‌لغت داخلی) یا از طریق import گروهی
+  // اومده و هنوز ادمین دستی تأییدش نکرده؛ همین که ادمین از پنل ویرایشش کنه
+  // (PATCH)، false می‌شه
+  nameFaSuggested Boolean  @default(false)
+  // مسیر کامل -- هر گره‌ی منو توی یه سایت دقیقاً یه‌جای مشخص توی درخته، مثلا
+  // "Kadın > Giyim > Elbise"؛ ولی چون همین مسیر متنی توی دو سایت جدا هم ممکنه
+  // تکرار شه، یکتایی با site ترکیب شده (پایین‌تر)، نه به‌تنهایی
+  path            String
+  // میلا منوی دسته‌بندیِ درختیِ خودش رو ندارد (فروشگاه تک‌برنده) -- برای همین
+  // دسته‌بندی‌های ترندیول به‌عنوان نقطه‌ی شروع براش کپی می‌شن، ولی خیلی‌هاشون
+  // روی میلا اصلاً محصولی ندارن. هر بار که جست‌وجوی واقعی برای یه دسته (روی
+  // یه سایت خاص) صفر نتیجه برگردوند، همین‌جا ثبت می‌شه تا دیگه توی
+  // منو/سایدبار همون سایت پیشنهاد نشه -- بدون اینکه لازم باشه از قبل بدونیم
+  // کدوم دسته‌ها خالی‌ان
+  confirmedEmpty   Boolean   @default(false)
+  confirmedEmptyAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([site, path])
+  @@map("trendyol_category_cache")
+}
+
+model ExternalSite {
+  id        String   @id @default(cuid())
+  name      String // مثلاً "ترندیول"
+  slug      String   @unique // مثلاً "trendyol"
+  baseUrl   String // شامل ? انتهایی، مثلاً "https://www.trendyol.com/sr?"
+  // واحد پول این سایت (کد ISO مثل "TRY"، "USD"، "EUR") -- باید یک ردیف
+  // متناظر توی جدول ExchangeRate داشته باشه تا قیمت‌هاش به تومان تبدیل بشه.
+  // پیش‌فرض TRY چون فعلاً همه‌ی سایت‌های فعال (ترندیول/ترندیول‌میلا) ترکی‌ان
+  currency  String   @default("TRY")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  categoryParams  ExternalSiteCategoryParam[]
+  attributeParams ExternalSiteAttributeParam[]
+
+  @@map("external_sites")
+}
+
+// پارامتر دسته‌بندی مخصوص هر سایت -- مثلاً برای دسته‌ی «پوشاک» روی ترندیول: "wc=75"
+model ExternalSiteCategoryParam {
+  id         String  @id @default(cuid())
+  siteId     String
+  categoryId String
+  param      String // مثلاً "wc=75" -- کامل با کلید و مقدار، آماده‌ی چسبوندن به URL
+  isDefault  Boolean @default(false) // تیک «به عنوان صفحه‌ی اول» -- این دسته جزو فیلترهای پیش‌فرض همین سایته
+
+  site     ExternalSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  category Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, categoryId])
+  @@map("external_site_category_params")
+}
+
+// پارامتر ویژگی مخصوص هر سایت -- دو‌جوره:
+// ۱) value پر باشه: این mapping فقط برای همون مقدار خاصه (جنسیت=مردانه -> paramTemplate="wg=2")
+// ۲) value خالی (null) باشه: یه قالب عمومیه که با جایگزینی {value} روی هر مقداری از
+//    این ویژگی اعمال می‌شه (سایز -> paramTemplate="vr=size|group-{value}", برای L میشه vr=size|group-l)
+model ExternalSiteAttributeParam {
+  id            String  @id @default(cuid())
+  siteId        String
+  attributeId   String
+  value         String? // مقدار خاص (مثلاً "مردانه") یا null برای قالب عمومی
+  paramTemplate String // معمولاً پارامتر کامل مثل "wg=2" -- ولی وقتی sharedKey پر
+  // باشه، این فقط بخش تبدیل مقدار میشه (مثلاً "group-{value}" یا "{value}-yas")،
+  // نه کل پارامتر
+  sharedKey     String? // وقتی چندتا ویژگی (مثلاً «سایز حرفی»، «سایز عددی»، «سایز
+  // سنی») باید زیر یه کلید مشترک ترکیب بشن (مثلاً "vr=size|") -- طبق نمونه‌ی واقعی
+  // ترندیول: vr=size|group-l_32_10-yas (هرکدوم با paramTemplate خودشون تبدیل و
+  // با _ به‌هم چسبیده می‌شن، sharedKey فقط یه‌بار جلوشون میاد)
+  isDefault     Boolean @default(false) // تیک «به عنوان صفحه‌ی اول» -- فقط برای ردیف‌هایی
+  // که value مشخص دارن معنی داره (نه قالب عمومی، چون قالب عمومی مقدار ثابتی نداره)
+
+  site      ExternalSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  attribute Attribute    @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, attributeId, value])
+  @@map("external_site_attribute_params")
+}

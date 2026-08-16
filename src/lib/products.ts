@@ -1,0 +1,458 @@
+import { prisma } from "@/lib/prisma";
+import { UnifiedProduct } from "@/types/product";
+import { fetchTrendyolProducts } from "@/lib/trendyol";
+import { normalizeSlug } from "@/lib/slug";
+import type { Product, Prisma } from "@prisma/client";
+
+type ProductWithVariants = Prisma.ProductGetPayload<{
+  include: {
+    category: true;
+    brand: true;
+    variants: { include: { values: true } };
+    specifications: true;
+  };
+}>;
+
+type ActiveFlashSale = {
+  id: string;
+  productId: string;
+  discountPercent: number;
+  stock: number;
+  endsAt: Date;
+};
+
+function parseImages(images: string): string[] {
+  try {
+    const arr = JSON.parse(images);
+    return Array.isArray(arr) ? arr : [images];
+  } catch {
+    return [images];
+  }
+}
+
+// نگاشت رنگ -> لیست عکس اختصاصی همون رنگ (برای عوض شدن گالری صفحه محصول با انتخاب رنگ)
+function parseColorImages(colorImages: string | null | undefined): Record<string, string[]> {
+  if (!colorImages) return {};
+  try {
+    const obj = JSON.parse(colorImages);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+// حراج‌های فعال الان (برای override قیمت محصول در بازه زمانی)
+export async function fetchActiveFlashSales(): Promise<ActiveFlashSale[]> {
+  const now = new Date();
+  return prisma.flashSale.findMany({
+    where: {
+      isActive: true,
+      stock: { gt: 0 },
+      startsAt: { lte: now },
+      endsAt: { gte: now },
+    },
+    select: { id: true, productId: true, discountPercent: true, stock: true, endsAt: true },
+  });
+}
+
+export function normalizeMazonProduct(
+  p: Product & { category?: { slug: string; name: string } | null; brand?: { name: string } | null },
+  flashSale?: ActiveFlashSale
+): UnifiedProduct {
+  const images = parseImages(p.images);
+  // حراج فلش (اگه فعال باشه) جایگزین تخفیف عادی می‌شه، نه جمع باهاش
+  const effectiveDiscount = flashSale ? flashSale.discountPercent : p.discount;
+  const finalPrice = Math.round(p.basePrice * (1 - effectiveDiscount / 100));
+
+  return {
+    id: p.id,
+    source: "MAZON",
+    slugOrId: p.slug,
+    title: p.title,
+    brand: p.brand?.name ?? null,
+    price: finalPrice,
+    originalPrice: p.basePrice,
+    discount: effectiveDiscount,
+    image: images[0] ?? "",
+    images,
+    categorySlug: p.category?.slug,
+    categoryName: p.category?.name,
+    description: p.description,
+    createdAt: p.createdAt.toISOString(),
+    fastShipping: p.fastShipping,
+    colorImages: parseColorImages(p.colorImages),
+    flashSale: flashSale
+      ? {
+          id: flashSale.id,
+          endsAt: flashSale.endsAt.toISOString(),
+          stock: flashSale.stock,
+          discountPercent: flashSale.discountPercent,
+        }
+      : undefined,
+  };
+}
+
+// امتیاز میانگین، تعداد نظرات تاییدشده، و تعداد علاقه‌مندی هر محصول رو یه‌جا (بدون N+1 query)
+// روی لیستی از محصولات می‌شونه -- محصولات ترندیول دست‌نخورده می‌مونن چون این آمار فقط برای مزونه
+async function attachSocialStats(products: UnifiedProduct[]): Promise<UnifiedProduct[]> {
+  const mazonIds = products.filter((p) => p.source === "MAZON").map((p) => p.id);
+  if (mazonIds.length === 0) return products;
+
+  const [reviewStats, wishlistCounts] = await Promise.all([
+    prisma.review.groupBy({
+      by: ["productId"],
+      where: { productId: { in: mazonIds }, isApproved: true },
+      _avg: { rating: true },
+      _count: { rating: true },
+    }),
+    prisma.wishlistItem.groupBy({
+      by: ["productId"],
+      where: { productId: { in: mazonIds } },
+      _count: { productId: true },
+    }),
+  ]);
+
+  const reviewMap = new Map(
+    reviewStats.map((r) => [r.productId, { avg: r._avg.rating ?? 0, count: r._count.rating }])
+  );
+  const wishlistMap = new Map(wishlistCounts.map((w) => [w.productId, w._count.productId]));
+
+  return products.map((p) => {
+    if (p.source !== "MAZON") return p;
+    const stats = reviewMap.get(p.id);
+    return {
+      ...p,
+      rating: stats?.avg ?? p.rating,
+      reviewCount: stats?.count ?? 0,
+      wishlistCount: wishlistMap.get(p.id) ?? 0,
+    };
+  });
+}
+
+// تعداد بازدید ۲۴ ساعت اخیر + آیا قیمت فعلی کمترین قیمت ۱۰ روز اخیره -- یه‌جا و
+// بدون N+1 روی لیستی از محصولات (مثل attachSocialStats بالا)
+async function attachInsightStats(products: UnifiedProduct[]): Promise<UnifiedProduct[]> {
+  const mazonIds = products.filter((p) => p.source === "MAZON").map((p) => p.id);
+  if (mazonIds.length === 0) return products;
+
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const since10d = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+
+  const [viewCounts, priceMins] = await Promise.all([
+    prisma.productView.groupBy({
+      by: ["productId"],
+      where: { productId: { in: mazonIds }, createdAt: { gte: since24h } },
+      _count: { _all: true },
+    }),
+    prisma.priceSnapshot.groupBy({
+      by: ["productId"],
+      where: { productId: { in: mazonIds }, recordedAt: { gte: since10d } },
+      _min: { price: true },
+    }),
+  ]);
+
+  const viewMap = new Map(viewCounts.map((v) => [v.productId, v._count._all]));
+  const minPriceMap = new Map(priceMins.map((m) => [m.productId, m._min.price ?? Infinity]));
+
+  return products.map((p) => {
+    if (p.source !== "MAZON") return p;
+    const minPrice = minPriceMap.get(p.id);
+    return {
+      ...p,
+      viewCount24h: viewMap.get(p.id) ?? 0,
+      isLowestPrice10d: minPrice !== undefined ? p.price <= minPrice : false,
+    };
+  });
+}
+
+// ثبت یک بازدید صفحه‌ی محصول (برای «در ۲۴ ساعت گذشته X نفر بازدید کرده‌اند»)
+export async function recordProductView(productId: string) {
+  await prisma.productView.create({ data: { productId } }).catch(() => {});
+}
+
+// حداکثر یک عکس قیمت در روز برای هر محصول ثبت می‌شه (برای بج «کمترین قیمت ۱۰ روز اخیر»)
+export async function recordPriceSnapshotIfNeeded(productId: string, price: number) {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const existing = await prisma.priceSnapshot.findFirst({
+    where: { productId, recordedAt: { gte: startOfDay } },
+    select: { id: true },
+  });
+  if (!existing) {
+    await prisma.priceSnapshot.create({ data: { productId, price } }).catch(() => {});
+  }
+}
+
+export async function fetchMazonProducts(): Promise<UnifiedProduct[]> {
+  const [products, activeFlashSales] = await Promise.all([
+    prisma.product.findMany({
+      where: { isActive: true },
+      include: { category: true, brand: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    fetchActiveFlashSales(),
+  ]);
+
+  const flashByProductId = new Map(activeFlashSales.map((f) => [f.productId, f]));
+  const unified = products.map((p) => normalizeMazonProduct(p, flashByProductId.get(p.id)));
+  return attachInsightStats(await attachSocialStats(unified));
+}
+
+// نسخه‌ی تک‌محصولی (برای صفحه‌ی جزئیات، نه لیست) -- بدون نیاز به batch
+export async function fetchViewCount24h(productId: string): Promise<number> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return prisma.productView.count({ where: { productId, createdAt: { gte: since } } });
+}
+
+export async function fetchIsLowestPrice10d(productId: string, currentPrice: number): Promise<boolean> {
+  const since = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+  const result = await prisma.priceSnapshot.aggregate({
+    where: { productId, recordedAt: { gte: since } },
+    _min: { price: true },
+  });
+  const minPrice = result._min.price;
+  return minPrice !== null ? currentPrice <= minPrice : false;
+}
+
+export async function fetchMazonProductBySlug(slug: string): Promise<
+  | (UnifiedProduct & {
+      variants: ProductWithVariants["variants"];
+      specifications: ProductWithVariants["specifications"];
+      attributeGroupMap: Record<string, string>; // نام ویژگی -> نام گروهش (اگه عضو گروهی باشه)
+      colorImages: Record<string, string[]>; // مقدار رنگ -> عکس‌های اختصاصی اون رنگ
+      categoryId: string; // برای محاسبه‌ی ویژگی‌های ثابت ارث‌بری‌شده (مثلا جنسیت)
+      brandId: string | null; // برای پیدا کردن راهنمای سایز مخصوص این دسته‌بندی+برند
+    })
+  | null
+> {
+  const product: ProductWithVariants | null = await prisma.product.findUnique({
+    where: { slug: normalizeSlug(slug) },
+    include: {
+      category: true,
+      brand: true,
+      variants: { include: { values: true } },
+      specifications: { orderBy: { order: "asc" } },
+    },
+  });
+  if (!product) return null;
+
+  const activeFlashSales = await fetchActiveFlashSales();
+  const flashSale = activeFlashSales.find((f) => f.productId === product.id);
+
+  // به‌جای مقایسه متنی اسم ویژگی (که با کاراکترهای نامرئی فارسی می‌تونه به‌ظاهر یکی
+  // ولی از نظر بایت متفاوت باشه)، از جدول ProductAttribute که موقع ساخت محصول با
+  // شناسه واقعی ویژگی پر شده استفاده می‌کنیم -- این دقیق و قابل‌اتکاست
+  const productAttributes = await prisma.productAttribute.findMany({
+    where: { productId: product.id },
+    include: { attribute: { include: { group: true } } },
+  });
+
+  const attributeGroupMap: Record<string, string> = {};
+  for (const pa of productAttributes) {
+    if (pa.attribute.group) attributeGroupMap[pa.attribute.name] = pa.attribute.group.name;
+  }
+
+  return {
+    ...normalizeMazonProduct(product, flashSale),
+    variants: product.variants,
+    specifications: product.specifications,
+    attributeGroupMap,
+    colorImages: parseColorImages(product.colorImages),
+    categoryId: product.categoryId,
+    brandId: product.brandId,
+  };
+}
+
+// عکس راهنمای سایز مخصوص ترکیب دسته‌بندی+برند این محصول -- اگه تعریف نشده باشه null برمی‌گردونه
+export async function fetchSizeGuideImage(
+  categoryId: string,
+  brandId: string | null
+): Promise<string | null> {
+  if (!brandId) return null;
+  const guide = await prisma.sizeGuide.findUnique({
+    where: { categoryId_brandId: { categoryId, brandId } },
+    select: { imageUrl: true },
+  });
+  return guide?.imageUrl ?? null;
+}
+
+// ترکیب هر دو منبع - برای صفحه اصلی/لیست محصولات
+export async function fetchAllProducts(): Promise<UnifiedProduct[]> {
+  const [mazon, trendyol] = await Promise.all([
+    fetchMazonProducts(),
+    fetchTrendyolProducts(),
+  ]);
+  return [...mazon, ...trendyol];
+}
+
+// تعداد فروش هر محصول مزون (بر اساس OrderItem) - برای مرتب‌سازی "پرفروش‌ترین"
+// محصولات ترندیول فروش واقعی ثبت نمی‌شه، پس همیشه صفر می‌گیرن
+export async function fetchPopularityMap(): Promise<Record<string, number>> {
+  const grouped = await prisma.orderItem.groupBy({
+    by: ["productId"],
+    where: { productId: { not: null } },
+    _sum: { quantity: true },
+  });
+
+  const map: Record<string, number> = {};
+  for (const g of grouped) {
+    if (g.productId) map[g.productId] = g._sum.quantity ?? 0;
+  }
+  return map;
+}
+
+// میانگین امتیاز نظرات هر محصول مزون - برای فیلتر «حداقل امتیاز»
+export async function fetchRatingMap(): Promise<Record<string, number>> {
+  const grouped = await prisma.review.groupBy({
+    by: ["productId"],
+    where: { isApproved: true, productId: { not: null } },
+    _avg: { rating: true },
+  });
+
+  const map: Record<string, number> = {};
+  for (const g of grouped) {
+    if (g.productId) map[g.productId] = g._avg.rating ?? 0;
+  }
+  return map;
+}
+
+// "این محصولات هم با هم خریده می‌شن" -- بر اساس اینکه چه محصولات دیگه‌ای
+// (فقط محصولات مزون) توی همون سفارش‌هایی بودن که این محصول توشون بوده
+export async function fetchFrequentlyBoughtTogether(
+  productId: string,
+  limit = 4
+): Promise<UnifiedProduct[]> {
+  // سفارش‌هایی که این محصول توشونه
+  const ordersWithProduct = await prisma.orderItem.findMany({
+    where: { productId },
+    select: { orderId: true },
+  });
+  const orderIds = Array.from(new Set(ordersWithProduct.map((o) => o.orderId)));
+  if (orderIds.length === 0) return [];
+
+  // سایر آیتم‌های مزون همون سفارش‌ها (به‌جز خود این محصول)
+  const coItems = await prisma.orderItem.findMany({
+    where: { orderId: { in: orderIds }, productId: { not: null, notIn: [productId] } },
+    select: { productId: true },
+  });
+
+  const countByProduct = new Map<string, number>();
+  for (const item of coItems) {
+    if (!item.productId) continue;
+    countByProduct.set(item.productId, (countByProduct.get(item.productId) ?? 0) + 1);
+  }
+
+  const topProductIds = Array.from(countByProduct.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([id]) => id);
+
+  if (topProductIds.length === 0) return [];
+
+  const products = await prisma.product.findMany({
+    where: { id: { in: topProductIds }, isActive: true },
+    include: { category: true, brand: true },
+  });
+  const activeFlashSales = await fetchActiveFlashSales();
+  const flashByProductId = new Map(activeFlashSales.map((f) => [f.productId, f]));
+
+  // ترتیب رو طبق فراوانی هم‌خریدی حفظ می‌کنیم
+  const unified = topProductIds
+    .map((id) => products.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map((p) => normalizeMazonProduct(p, flashByProductId.get(p.id)));
+  return attachInsightStats(await attachSocialStats(unified));
+}
+
+// کد نمایشی کوتاه محصول (چیزی شبیه CH3888 توی مدیسه) -- از روی id ساخته می‌شه، نیازی به فیلد جدید توی دیتابیس نیست
+export function productDisplayCode(id: string): string {
+  const alnum = id.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return `MZ-${alnum.slice(-6)}`;
+}
+
+// زنجیره‌ی دسته‌بندی از ریشه تا برگ -- برای بردکرامب صفحه محصول (با اسلاگ دسته‌ی برگ صدا زده می‌شه)
+export async function fetchCategoryBreadcrumb(
+  categorySlug: string
+): Promise<{ name: string; slug: string }[]> {
+  const leaf = await prisma.category.findUnique({
+    where: { slug: categorySlug },
+    select: { id: true },
+  });
+  if (!leaf) return [];
+
+  const chain: { name: string; slug: string }[] = [];
+  let currentId: string | null = leaf.id;
+
+  // حداکثر ۵ سطح بالا می‌ریم تا از حلقه بی‌نهایت در داده خراب جلوگیری بشه
+  for (let i = 0; i < 5 && currentId; i++) {
+    const category: { id: string; name: string; slug: string; parentId: string | null } | null =
+      await prisma.category.findUnique({
+        where: { id: currentId },
+        select: { id: true, name: true, slug: true, parentId: true },
+      });
+    if (!category) break;
+    chain.unshift({ name: category.name, slug: category.slug });
+    currentId = category.parentId;
+  }
+
+  return chain;
+}
+
+// خلاصه امتیاز یک محصول -- میانگین و تعداد نظرات (برای نمایش ستاره بالای صفحه محصول)
+export async function fetchProductRatingSummary(
+  productId: string
+): Promise<{ avg: number; count: number }> {
+  const agg = await prisma.review.aggregate({
+    where: { productId, isApproved: true },
+    _avg: { rating: true },
+    _count: { rating: true },
+  });
+  return { avg: agg._avg.rating ?? 0, count: agg._count.rating };
+}
+
+// تعداد نفراتی که این محصول رو واقعا خریدن (سفارش‌های پرداخت‌شده و لغونشده) -- برای شمارنده اجتماعی
+export async function fetchProductPurchaseCount(productId: string): Promise<number> {
+  const count = await prisma.orderItem.findMany({
+    where: {
+      productId,
+      order: {
+        paymentStatus: "PAID",
+        status: { not: "CANCELLED" },
+      },
+    },
+    select: { orderId: true },
+  });
+  return new Set(count.map((c) => c.orderId)).size;
+}
+
+// تعداد سوال‌های ثبت‌شده برای این محصول -- برای شمارنده‌ی «X سوال‌وپاسخ» بالای صفحه محصول
+export async function fetchProductQuestionCount(productId: string): Promise<number> {
+  return prisma.productQuestion.count({ where: { productId } });
+}
+
+// «محصولات مزیت‌دار» -- بر خلاف بج‌های بازاریابی ترندیول («İyi Fiyat»، «Avantajlı
+// Ürün») که دستی/الگوریتم داخلی‌ان و ما معادل واقعی‌شون رو نداریم، این تابع صرفاً
+// روی سیگنال‌های واقعی خودمون حساب می‌کنه: امتیاز بالا (با حداقل چند نظر واقعی)،
+// کمترین قیمت ۱۰ روز اخیر، داشتن تخفیف، و تعداد قابل توجه پسندیدن. محصولی که
+// حداقل ۲ تا از این سیگنال‌ها رو داشته باشه «مزیت‌دار» حساب می‌شه.
+function countAdvantageSignals(p: UnifiedProduct): number {
+  let signals = 0;
+  if ((p.rating ?? 0) >= 4.3 && (p.reviewCount ?? 0) >= 3) signals += 1;
+  if (p.isLowestPrice10d) signals += 1;
+  if (p.discount > 0) signals += 1;
+  if ((p.wishlistCount ?? 0) >= 5) signals += 1;
+  return signals;
+}
+
+export function pickAdvantageousProducts(products: UnifiedProduct[], limit = 10): UnifiedProduct[] {
+  return products
+    .map((p) => ({ product: p, signals: countAdvantageSignals(p) }))
+    .filter((x) => x.signals >= 2)
+    .sort((a, b) => {
+      if (b.signals !== a.signals) return b.signals - a.signals;
+      return (b.product.wishlistCount ?? 0) - (a.product.wishlistCount ?? 0);
+    })
+    .slice(0, limit)
+    .map((x) => x.product);
+}

@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+:root {
+  --color-ink: #1a1a1a;
+  --color-linen: #ffffff;
+  --color-linen-dim: #f6f6f6;
+  --color-wine: #f27a1a;
+  --color-wine-dark: #d9670f;
+  --color-ochre: #ffa000;
+  --color-muted: #767676;
+  --color-line: #e5e5e5;
+}
+
+@theme inline {
+  --color-background: var(--color-linen);
+  --color-foreground: var(--color-ink);
+  --font-sans: var(--font-vazir);
+}
+
+body {
+  background: var(--color-linen);
+  color: var(--color-ink);
+  font-family: var(--font-vazir), sans-serif;
+}
+
+/* هدر چسبناک هر بار که نوار بالا/منو جمع می‌شه ارتفاعش کم می‌شه؛ بدون این،
+   مرورگر با scroll anchoring سعی می‌کنه موقعیت اسکرول رو در هر فریم انیمیشن
+   جبران کنه تا محتوای زیرش «نپره» -- همین جبران‌های ریز پشت‌سرهم دقیقاً حین
+   انیمیشن جمع‌شدن، به چشم شبیه لرزش میاد. غیرفعال کردنش روی خودِ هدر کافی
+   نبود چون anchor واقعی از محتوای main انتخاب می‌شه، نه از خودِ هدر -- برای
+   همین باید کل صفحه (html) از این قابلیت معاف بشه */
+html {
+  overflow-anchor: none;
+}
+
+/* خط جداکننده -- حاشیه‌ی کارت‌ها و جداکننده‌ها (قبلاً خط‌چین «برش خیاطی» بود، حالا صاف مثل ترندیول) */
+.cut-line {
+  border-style: solid;
+  border-color: var(--color-line);
+}
+
+/* برچسب روبان‌مانند برای تخفیف/جدید */
+.ribbon-tag {
+  background: var(--color-wine);
+  color: #fff;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.6rem 0.2rem 0.5rem;
+  clip-path: polygon(0 0, 100% 0, 88% 50%, 100% 100%, 0 100%);
+}
+
+.swatch-chip {
+  transition: transform 0.15s ease;
+}
+.swatch-chip:hover {
+  transform: translateY(-2px);
+}
+
+/* اسکرول‌بار سراسری صفحه -- سفید/هم‌رنگ پس‌زمینه، که تو رنگ سایت گم بشه */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff transparent;
+}
+html::-webkit-scrollbar {
+  width: 6px;
+}
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb {
+  background: #ffffff;
+  border-radius: 999px;
+}
+html::-webkit-scrollbar-thumb:hover {
+  background: #f0f0f0;
+}
+
+/* اسکرول‌بار مخفی -- برای ردیف‌های اسکرول‌افقی (میان‌برها، کمپین‌ها، حراج فلش) که
+   نباید نوار اسکرول زشت نشون بدن */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+::selection {
+  background: var(--color-ochre);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-wine);
+  outline-offset: 2px;
+}
+
+/* فیلدهای ضروری که خالی مونده باشن، بعد از تلاش برای ذخیره (یا خروج از فیلد)
+   دورشون قرمز می‌شه -- کار هر فرمی رو خودکار پوشش می‌ده، نیازی به کد جدا نداره */
+input:required:user-invalid,
+select:required:user-invalid,
+textarea:required:user-invalid {
+  border-color: #dc2626 !important;
+}
+
+/* اسلایدر دو-دسته‌ای قیمت: خود ترک نامرئی و بدون کلیک، فقط دستگیره‌ها قابل کشیدن‌اند */
+.range-thumb {
+  height: 0;
+}
+.range-thumb::-webkit-slider-runnable-track {
+  background: transparent;
+}
+.range-thumb::-webkit-slider-thumb {
+  pointer-events: auto;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-wine);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  margin-top: 0;
+}
+.range-thumb::-moz-range-track {
+  background: transparent;
+}
+.range-thumb::-moz-range-thumb {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-wine);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}

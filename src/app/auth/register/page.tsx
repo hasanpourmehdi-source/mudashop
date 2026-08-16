@@ -1,0 +1,95 @@
+"use client";
+
+import { useState } from "react";
+import { signIn } from "next-auth/react";
+import Link from "next/link";
+
+export default function RegisterPage() {
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error ?? "خطایی رخ داد");
+      setLoading(false);
+      return;
+    }
+
+    // بعد از ثبت‌نام موفق، خودکار وارد می‌کنیم
+    await signIn("credentials", {
+      email: form.email,
+      password: form.password,
+      redirect: false,
+    });
+    window.location.href = "/";
+  }
+
+  return (
+    <div className="max-w-sm mx-auto px-4 py-16">
+      <h1 className="text-xl font-bold mb-6 text-center">ثبت‌نام در مُداشاپ</h1>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">نام</label>
+          <input
+            type="text"
+            required
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className="w-full border cut-line rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">ایمیل</label>
+          <input
+            type="email"
+            required
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            className="w-full border cut-line rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">رمز عبور</label>
+          <input
+            type="password"
+            required
+            minLength={6}
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className="w-full border cut-line rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
+        >
+          {loading ? "در حال ثبت‌نام..." : "ثبت‌نام"}
+        </button>
+      </form>
+
+      <p className="text-sm text-center mt-6 text-[var(--color-muted)]">
+        قبلاً ثبت‌نام کرده‌اید؟{" "}
+        <Link href="/auth/login" className="text-[var(--color-wine)] font-medium">
+          وارد شوید
+        </Link>
+      </p>
+    </div>
+  );
+}

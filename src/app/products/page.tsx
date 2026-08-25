@@ -6,7 +6,25 @@ import { fetchCategoryTree, expandSelectedSlugs, findNodeBySlug } from "@/lib/ca
 import { fetchProductFacets, buildAvailableFacets } from "@/lib/facets";
 import { ProductCard } from "@/components/ProductCard";
 import { ProductFilters } from "@/components/ProductFilters";
-import { fuzzyTextMatch } from "@/lib/fuzzySearch";
+import { scoreRelevance } from "@/lib/fuzzySearch";
+import { toMetaDescription } from "@/lib/seo";
+import type { Metadata } from "next";
+
+// متادیتای صفحه‌ی لیست محصولات -- عنوان پویا بر اساس جستجو/دسته‌بندی انتخابی
+export async function generateMetadata({ searchParams }: { searchParams: Promise<SearchParams> }): Promise<Metadata> {
+  const params = await searchParams;
+  const parts = [params.q && `جستجو: ${params.q}`, params.flashSaleOnly === "true" && "حراج فلش", params.fastShipping === "true" && "ارسال فوری"]
+    .filter(Boolean);
+  const title = parts.length > 0 ? parts.join(" — ") : "محصولات";
+  const description = toMetaDescription(`لیست کامل محصولات مُداشاپ${parts.length > 0 ? ` — ${parts.join("، ")}` : ""} با قیمت به‌روز، تخفیف و ارسال به سراسر کشور`);
+
+  return {
+    title,
+    description,
+    alternates: { canonical: "/products" },
+    openGraph: { type: "website", title, description },
+  };
+}
 
 type SearchParams = {
   q?: string;
@@ -76,13 +94,19 @@ export default async function ProductsPage({
 
   let filtered = allProducts;
 
+  // عنوان مهم‌ترینه، بعد برند و دسته‌بندی، بعد توضیحات -- امتیازها بعداً برای
+  // مرتب‌سازی بر اساس ربط استفاده می‌شن (نه فقط فیلتر دودویی)
+  const relevanceByProductId = new Map<string, number>();
   if (params.q) {
-    // جست‌وجوی فازی -- غلط تایپی کوچیک رو هم تحمل می‌کنه (مثلا "کفش" به‌جای "کقش")
     filtered = filtered.filter((p) => {
-      const haystack = [p.title, p.brand, p.categoryName, p.description]
-        .filter(Boolean)
-        .join(" ");
-      return fuzzyTextMatch(params.q!, haystack);
+      const score = scoreRelevance(params.q!, [
+        { text: p.title, weight: 3 },
+        { text: p.brand, weight: 2 },
+        { text: p.categoryName, weight: 1 },
+        { text: p.description, weight: 0.5 },
+      ]);
+      if (score > 0) relevanceByProductId.set(p.id, score);
+      return score > 0;
     });
   }
   // فیلترهای چندانتخابی: داخل هر گروه OR ، بین گروه‌ها AND
@@ -113,9 +137,17 @@ export default async function ProductsPage({
   }
   filtered = filtered.filter((p) => p.price >= minPrice && p.price <= maxPrice);
 
-  // مرتب‌سازی
+  // مرتب‌سازی -- وقتی جست‌وجوی متنی داریم و کاربر خودش صراحتاً مرتب‌سازی‌ای
+  // انتخاب نکرده (یعنی params.sort ست نشده)، ربط به عبارت جست‌وجو باید معیار
+  // اصلی باشه، نه پرفروش‌بودن؛ وگرنه محصولی که دقیقاً همون کلمه رو توی عنوانش
+  // داره ممکنه پایین‌تر از یه محصول پرفروش‌تر ولی کم‌ربط‌تر بیفته
   const sort = params.sort ?? "recommended";
+  const useRelevanceSort = !!params.q && !params.sort;
   filtered = [...filtered].sort((a, b) => {
+    if (useRelevanceSort) {
+      const relevanceDiff = (relevanceByProductId.get(b.id) ?? 0) - (relevanceByProductId.get(a.id) ?? 0);
+      if (relevanceDiff !== 0) return relevanceDiff;
+    }
     switch (sort) {
       case "price_asc":
         return a.price - b.price;

@@ -103,6 +103,18 @@ textarea:required:user-invalid {
   border-color: #dc2626 !important;
 }
 
+/* چاپ: هدر/فوتر و عناصر تعامل‌پذیر در فاکتور چاپی/PDF نمایش داده نمی‌شن */
+@media print {
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}
+
 /* اسلایدر دو-دسته‌ای قیمت: خود ترک نامرئی و بدون کلیک، فقط دستگیره‌ها قابل کشیدن‌اند */
 .range-thumb {
   height: 0;

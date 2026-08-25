@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ProductCard } from "@/components/ProductCard";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 import type { UnifiedProduct } from "@/types/product";
 
 type TabKey = "flash" | "discounted" | "popular" | "newest" | "fastShipping";
@@ -70,13 +71,13 @@ export function DiscoverableProductsSection({
       {filteredProducts.length === 0 ? (
         <p className="text-sm text-[var(--color-muted)]">فعلاً محصولی توی این دسته نیست.</p>
       ) : (
-        <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+        <HorizontalScroller>
           {filteredProducts.map((p) => (
             <div key={p.id} className="w-44 sm:w-52 shrink-0">
               <ProductCard product={p} isWishlisted={wishlistSet.has(p.id)} />
             </div>
           ))}
-        </div>
+        </HorizontalScroller>
       )}
     </section>
   );

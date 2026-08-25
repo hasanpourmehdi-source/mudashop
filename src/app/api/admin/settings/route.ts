@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
+import { logAdminAction } from "@/lib/adminAudit";
 import { SITE_SETTING_KEYS, getSiteSettings } from "@/lib/siteSettings";
 import { z } from "zod";
 
@@ -10,7 +11,7 @@ const schema = z.object({
 });
 
 export async function GET() {
-  const { ok } = await requireAdmin();
+  const { ok } = await requireAdmin("SETTINGS");
   if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const settings = await getSiteSettings(Object.values(SITE_SETTING_KEYS));
@@ -18,8 +19,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const { ok } = await requireAdmin();
-  if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
+  const { ok, session } = await requireAdmin("SETTINGS");
+  if (!ok || !session) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const body = await req.json();
   const parsed = schema.safeParse(body);
@@ -32,6 +33,15 @@ export async function PUT(req: Request) {
     where: { key },
     create: { key, value },
     update: { value },
+  });
+
+  await logAdminAction({
+    adminId: session.user.id,
+    adminName: session.user.name ?? "",
+    adminEmail: session.user.email ?? "",
+    action: "SETTINGS_UPDATED",
+    targetType: "SiteSetting",
+    targetId: key,
   });
 
   return NextResponse.json({ success: true });

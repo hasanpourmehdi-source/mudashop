@@ -20,14 +20,14 @@ import { levenshtein } from "@/lib/fuzzySearch";
 //   ۴. توکن‌های ناشناخته (برند، رنگ خاص، کلمات نایاب) دست‌نخورده می‌مونن
 //   ۵. نتیجه + لیست توکن‌های ناشناخته رو کش کن (برای این‌که ادمین بعداً دیکشنری رو کامل کنه)
 
-type DictionaryEntry = { termTr: string; termFa: string; priority: number };
+export type DictionaryEntry = { termTr: string; termFa: string; priority: number };
 
 // هر بار منطق tokenizeAndTranslate عوض بشه (مثلاً همین تغییر اخیر: معکوس‌کردن
 // ترتیب عبارت‌ها + حذف کامل کلمات ناشناخته)، این عدد یکی بالا می‌ره -- وگرنه
 // عنوان‌هایی که با نسخه‌ی قدیمی الگوریتم از قبل کش شده بودن، تا ابد همون
 // ترجمه‌ی غلط/قدیمی رو نشون می‌دن، چون findUnique همیشه cache رو برمی‌گردونه
 // و هیچ‌وقت دوباره ترجمه نمی‌شه
-export const TITLE_ALGO_VERSION = 5;
+export const TITLE_ALGO_VERSION = 7;
 
 // عدد (با یا بدون % یا اعشار) نیازی به دیکشنری ندارد -- ترجمه‌ی خودش خودشه
 // (مثلاً "50" یا "%100")؛ برای همین نه باید کلمه‌ی ناشناخته حساب بشه، نه از
@@ -138,12 +138,34 @@ function translateCompoundToken(
   return out.length > 0 ? out.join("") : null;
 }
 
-function tokenizeAndTranslate(title: string, dictionary: DictionaryEntry[]): {
+// کلمه‌ی/عبارتِ نام برندِ همین محصول (اگه از قبل معلوم باشه) هرگز نباید توی
+// دیکشنری جستجو شود یا به‌عنوانِ «ناشناخته» حذف شود -- برندها اسم خاص‌اند، نه
+// اصطلاحِ مد ترکی. نرمال‌سازیش دقیقاً مثلِ خودِ کلمات عنوان (foldTurkish +
+// حذف نقطه‌گذاری) تا تطبیقش قابل‌اعتماد باشه
+function normalizeBrandWords(brand: string | null | undefined): string[] {
+  if (!brand) return [];
+  return brand
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => turkishLowercase(w.replace(/[.,!?;:()"']/g, "")));
+}
+
+// جدا و export شده که توی تست‌ها بدون DB هم بشه منطقش رو بازبینی کرد -- انتظار
+// می‌ره آرگومان dictionary هم‌ترتیبِ خروجیِ loadDictionary باشه (طولان‌ترین
+// عبارت‌ها اول؛ سپس priority نزولی). brand اختیاریه -- اگه داده شود، هر جا از
+// عنوان که با نامِ برند (کلمه‌به‌کلمه) جفت شود، عیناً (بدون ترجمه، بدون افتادن
+// توی unknownTerms) در خروجی نگه داشته می‌شود
+export function tokenizeAndTranslate(
+  title: string,
+  dictionary: DictionaryEntry[],
+  brand?: string | null
+): {
   translated: string;
   unknownTerms: string[];
 } {
   const rawWords = title.split(/\s+/).filter(Boolean);
   const normalizedWords = rawWords.map((w) => turkishLowercase(w.replace(/[.,!?;:()"']/g, "")));
+  const brandWords = normalizeBrandWords(brand);
 
   // segments: عبارت‌های *ترجمه‌شده*، هرکدوم یه واحد معنایی (می‌تونه چندکلمه‌ای
   // باشه، مثلاً یه ورودی دیکشنری دوکلمه‌ای مثل "Beli Lastikli" -> "کمر کش‌دار")،
@@ -155,6 +177,20 @@ function tokenizeAndTranslate(title: string, dictionary: DictionaryEntry[]): {
 
   while (i < rawWords.length) {
     let matched = false;
+
+    // اولویتِ اول: نامِ برندِ همین محصول -- قبل از هر بررسیِ دیگه، چون باید حتی
+    // اگه تصادفاً با یه اصطلاحِ دیکشنری هم قاطی شد (مثلاً برندی که اسمش یه
+    // کلمه‌ی رایجِ مد ترکیه‌ست)، ترجمه/ناشناخته حساب نشه. طبق تصمیمِ صریح، برند
+    // اصلاً توی عنوانِ نمایشی تکرار نمی‌شود (چون همیشه جدا از عنوان -- مثلاً
+    // بالای عنوان -- نشون داده می‌شود)، پس فقط از روی توکن‌ها رد می‌شیم بدون
+    // این‌که به segments اضافه‌ش کنیم
+    if (brandWords.length > 0) {
+      const candidate = normalizedWords.slice(i, i + brandWords.length).join(" ");
+      if (candidate === brandWords.join(" ")) {
+        i += brandWords.length;
+        continue;
+      }
+    }
 
     // اول طولانی‌ترین عبارت چندکلمه‌ای ممکن رو امتحان کن (دیکشنری از قبل بر
     // اساس طول عبارت نزولی مرتبه)
@@ -207,8 +243,9 @@ function tokenizeAndTranslate(title: string, dictionary: DictionaryEntry[]): {
   return { translated, unknownTerms: Array.from(unknownTerms) };
 }
 
-// نقطه‌ی ورود اصلی -- کش را چک می‌کند، و در صورت نبود، ترجمه می‌کند و ذخیره می‌کند
-export async function translateTrendyolTitle(originalTitle: string): Promise<string> {
+// نقطه‌ی ورود اصلی -- کش را چک می‌کند، و در صورت نبود، ترجمه می‌کند و ذخیره می‌کند.
+// brand (اگه معلوم باشه) از تجزیه/حذف‌شدن به‌عنوان کلمه‌ی ناشناخته مستثنی می‌شود
+export async function translateTrendyolTitle(originalTitle: string, brand?: string | null): Promise<string> {
   if (!originalTitle) return originalTitle;
 
   const cached = await prisma.trendyolTitleCache.findUnique({
@@ -218,7 +255,7 @@ export async function translateTrendyolTitle(originalTitle: string): Promise<str
   if (cached && cached.algorithmVersion === TITLE_ALGO_VERSION) return cached.translatedTitle;
 
   const dictionary = await loadDictionary();
-  const { translated, unknownTerms } = tokenizeAndTranslate(originalTitle, dictionary);
+  const { translated, unknownTerms } = tokenizeAndTranslate(originalTitle, dictionary, brand);
 
   // ذخیره‌ی نتیجه در کش -- best-effort، اگه ذخیره خطا داد نباید کل ترجمه رو بترکونه
   try {
@@ -243,11 +280,19 @@ export async function translateTrendyolTitle(originalTitle: string): Promise<str
   return translated;
 }
 
-// برای batch fetch (لیست محصولات) -- همه رو موازی ترجمه می‌کند به‌جای یکی‌یکی
-export async function translateTrendyolTitles(titles: string[]): Promise<Map<string, string>> {
-  const uniqueTitles = Array.from(new Set(titles.filter(Boolean)));
+// برای batch fetch (لیست محصولات) -- همه رو موازی ترجمه می‌کند به‌جای یکی‌یکی.
+// brand هر محصول (اگه معلوم باشه) از حذف‌شدن به‌عنوان کلمه‌ی ناشناخته مستثنی می‌شود
+export async function translateTrendyolTitles(
+  items: { title: string; brand?: string | null }[]
+): Promise<Map<string, string>> {
+  const uniqueByTitle = new Map<string, string | null | undefined>();
+  for (const item of items) {
+    if (item.title && !uniqueByTitle.has(item.title)) uniqueByTitle.set(item.title, item.brand);
+  }
   const results = await Promise.all(
-    uniqueTitles.map(async (title) => [title, await translateTrendyolTitle(title)] as const)
+    Array.from(uniqueByTitle.entries()).map(
+      async ([title, brand]) => [title, await translateTrendyolTitle(title, brand)] as const
+    )
   );
 
   // بعد از هر batch، یه چک سبک برای کلمات ناشناخته‌ی پرتکرار -- notifyAdminsOnce

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { UnifiedProduct } from "@/types/product";
 import { fetchTrendyolProducts } from "@/lib/trendyol";
 import { normalizeSlug } from "@/lib/slug";
+import { buildPriceHistory } from "@/lib/priceHistory";
 import type { Product, Prisma } from "@prisma/client";
 
 type ProductWithVariants = Prisma.ProductGetPayload<{
@@ -21,7 +22,7 @@ type ActiveFlashSale = {
   endsAt: Date;
 };
 
-function parseImages(images: string): string[] {
+export function parseImages(images: string): string[] {
   try {
     const arr = JSON.parse(images);
     return Array.isArray(arr) ? arr : [images];
@@ -215,6 +216,23 @@ export async function fetchIsLowestPrice10d(productId: string, currentPrice: num
   return minPrice !== null ? currentPrice <= minPrice : false;
 }
 
+// تاریخچه‌ی قیمت برای نمودار -- ۹۰ روز اخیر، صعودی، با آمار کمترین/بیشترین/میانگین
+export async function fetchPriceHistory(
+  productId: string,
+  currentPrice: number
+): Promise<ReturnType<typeof buildPriceHistory>> {
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const snapshots = await prisma.priceSnapshot.findMany({
+    where: { productId, recordedAt: { gte: since } },
+    select: { price: true, recordedAt: true },
+    orderBy: { recordedAt: "asc" },
+  });
+  return buildPriceHistory(
+    snapshots.map((s) => ({ price: s.price, recordedAt: s.recordedAt.toISOString() })),
+    currentPrice
+  );
+}
+
 export async function fetchMazonProductBySlug(slug: string): Promise<
   | (UnifiedProduct & {
       variants: ProductWithVariants["variants"];
@@ -264,17 +282,18 @@ export async function fetchMazonProductBySlug(slug: string): Promise<
   };
 }
 
-// عکس راهنمای سایز مخصوص ترکیب دسته‌بندی+برند این محصول -- اگه تعریف نشده باشه null برمی‌گردونه
+// راهنمای سایز مخصوص ترکیب دسته‌بندی+برند این محصول -- اگه تعریف نشده باشه null برمی‌گردونه.
+// id هم برمی‌گردونه تا ویجتِ «پیشنهاد سایز بر اساس قد/وزن» بتونه ردیف‌های عددی‌ش رو بگیره
 export async function fetchSizeGuideImage(
   categoryId: string,
   brandId: string | null
-): Promise<string | null> {
+): Promise<{ id: string; imageUrl: string } | null> {
   if (!brandId) return null;
   const guide = await prisma.sizeGuide.findUnique({
     where: { categoryId_brandId: { categoryId, brandId } },
-    select: { imageUrl: true },
+    select: { id: true, imageUrl: true },
   });
-  return guide?.imageUrl ?? null;
+  return guide;
 }
 
 // ترکیب هر دو منبع - برای صفحه اصلی/لیست محصولات
@@ -317,36 +336,69 @@ export async function fetchRatingMap(): Promise<Record<string, number>> {
   return map;
 }
 
+// وزن تازگی: خریدِ جدیدتر در «هم‌خریدی» وزن بیشتری داره تا پیشنهادهای داغ و
+// فعلی بالاتر بیان. هر روز به این ضریب ضرب می‌شه (۰.۹۸۵ ≈ نیمه‌عمر ~۴۶ روز)
+export const RECENCY_DECAY_PER_DAY = 0.985;
+
+// رتبه‌بندی محصولات هم‌خرید: از لیست {productId, createdAt} یک امتیاز تازگی‌دار
+// می‌سازه و مرتب‌شده برمی‌گردونه. خالص و بدون DB -- برای تست.
+export type CoPurchaseOccurrence = { productId: string; createdAt: Date };
+
+export function rankFrequentlyBoughtTogether(
+  occurrences: CoPurchaseOccurrence[],
+  limit = 4,
+  now: Date = new Date()
+): { productId: string; score: number }[] {
+  const scoreByProduct = new Map<string, number>();
+  for (const { productId, createdAt } of occurrences) {
+    const days = Math.max(0, (now.getTime() - createdAt.getTime()) / 86_400_000);
+    const weight = Math.pow(RECENCY_DECAY_PER_DAY, days);
+    scoreByProduct.set(productId, (scoreByProduct.get(productId) ?? 0) + weight);
+  }
+  return Array.from(scoreByProduct.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([productId, score]) => ({ productId, score }));
+}
+
+// فقط سفارش‌هایی که واقعاً پرداخت شده‌اند و لغو/برگشتی نیستند -- وگرنه
+// سفارش‌های رها/لغوشده هم توی پیشنهاد «هم‌خریدی» حساب می‌شدن
+const RECOMMENDABLE_ORDER_FILTER: Prisma.OrderWhereInput = {
+  paymentStatus: "PAID",
+  status: { notIn: ["CANCELLED", "RETURNED"] },
+};
+
 // "این محصولات هم با هم خریده می‌شن" -- بر اساس اینکه چه محصولات دیگه‌ای
-// (فقط محصولات مزون) توی همون سفارش‌هایی بودن که این محصول توشون بوده
+// (فقط محصولات مزون) توی همون سفارش‌های پرداخت‌شده‌ای بودن که این محصول توشون
+// بوده، با وزن‌دهی به تازگی خرید
 export async function fetchFrequentlyBoughtTogether(
   productId: string,
   limit = 4
 ): Promise<UnifiedProduct[]> {
-  // سفارش‌هایی که این محصول توشونه
+  // سفارش‌های پرداخت‌شده‌ای که این محصول توشونه
   const ordersWithProduct = await prisma.orderItem.findMany({
-    where: { productId },
+    where: { productId, order: RECOMMENDABLE_ORDER_FILTER },
     select: { orderId: true },
   });
   const orderIds = Array.from(new Set(ordersWithProduct.map((o) => o.orderId)));
   if (orderIds.length === 0) return [];
 
-  // سایر آیتم‌های مزون همون سفارش‌ها (به‌جز خود این محصول)
+  // سایر آیتم‌های مزون همون سفارش‌ها (به‌جز خود این محصول) -- به‌همراه تاریخ
+  // سفارش برای وزن تازگی
   const coItems = await prisma.orderItem.findMany({
-    where: { orderId: { in: orderIds }, productId: { not: null, notIn: [productId] } },
-    select: { productId: true },
+    where: {
+      orderId: { in: orderIds },
+      productId: { not: null, notIn: [productId] },
+      order: RECOMMENDABLE_ORDER_FILTER,
+    },
+    select: { productId: true, order: { select: { createdAt: true } } },
   });
 
-  const countByProduct = new Map<string, number>();
-  for (const item of coItems) {
-    if (!item.productId) continue;
-    countByProduct.set(item.productId, (countByProduct.get(item.productId) ?? 0) + 1);
-  }
+  const occurrences: CoPurchaseOccurrence[] = coItems
+    .filter((i): i is typeof i & { productId: string } => !!i.productId)
+    .map((i) => ({ productId: i.productId as string, createdAt: i.order.createdAt }));
 
-  const topProductIds = Array.from(countByProduct.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([id]) => id);
+  const topProductIds = rankFrequentlyBoughtTogether(occurrences, limit).map((r) => r.productId);
 
   if (topProductIds.length === 0) return [];
 

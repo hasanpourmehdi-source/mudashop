@@ -326,13 +326,6 @@ export default async function MarketplaceSitePage({
               {/* فیلترهای فعال، جلوی عنوان لیست، همه توی یه ردیف کم‌ارتفاع --
                   به‌جای دو بلوکِ جدا (عنوان+مرتب‌سازی، بعد چیپ‌ها زیرش) */}
               <div className="flex items-center gap-3 mb-3">
-                <ActiveFilterChipsBar
-                  chips={otherChips}
-                  attrsParam={query.attrs}
-                  categoryParam={query.category}
-                  sstParam={query.sst}
-                  slug={slug}
-                />
                 <h2 className="text-base font-bold shrink-0 whitespace-nowrap">
                   {categoryChip?.label ?? options.site.name}
                   {initialTotal !== null && (
@@ -341,6 +334,13 @@ export default async function MarketplaceSitePage({
                     </span>
                   )}
                 </h2>
+                <ActiveFilterChipsBar
+                  chips={otherChips}
+                  attrsParam={query.attrs}
+                  categoryParam={query.category}
+                  sstParam={query.sst}
+                  slug={slug}
+                />
                 <div className="shrink-0 ms-auto">
                   <TrendyolSortDropdown />
                 </div>

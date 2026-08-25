@@ -96,7 +96,7 @@ export function QASection({
       <h2 className="font-bold text-lg mb-6">پرسش و پاسخ</h2>
 
       {status === "authenticated" ? (
-        <form onSubmit={handleAsk} className="mb-6 flex gap-2">
+        <form onSubmit={handleAsk} noValidate className="mb-6 flex gap-2">
           <input
             placeholder="سوال خود را بپرسید..."
             required

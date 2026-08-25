@@ -1,15 +1,21 @@
 {
+  "id": "mudashop-pwa",
   "name": "مُداشاپ - فروشگاه پوشاک و مد ایرانی",
   "short_name": "مُداشاپ",
-  "description": "فروشگاه آنلاین پوشاک با محصولات اختصاصی مزون و کاتالوگ متنوع",
-  "start_url": "/",
+  "description": "فروشگاه آنلاین پوشاک با محصولات اختصاصی مزون و کاتالوگ متنوع ترندیول",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait-primary",
   "dir": "rtl",
   "lang": "fa",
   "background_color": "#ffffff",
   "theme_color": "#f27a1a",
+  "categories": ["shopping", "fashion"],
+  "launch_handler": {
+    "client_mode": ["navigate-existing"]
+  },
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -32,13 +38,33 @@
   ],
   "shortcuts": [
     {
+      "name": "خانه",
+      "url": "/",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "دسته‌بندی‌ها",
+      "url": "/products",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "سبد خرید",
       "url": "/cart",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     },
     {
+      "name": "علاقه‌مندی‌ها",
+      "url": "/wishlist",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "سفارش‌های من",
       "url": "/orders",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "کیف پول",
+      "url": "/wallet",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     }
   ]

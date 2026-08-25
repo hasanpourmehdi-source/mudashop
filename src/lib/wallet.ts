@@ -15,13 +15,13 @@ export async function applyWalletTransaction(
   params: {
     userId: string;
     amount: number;
-    type: "TOPUP" | "PURCHASE" | "REFUND" | "WITHDRAWAL";
+    type: "TOPUP" | "PURCHASE" | "REFUND" | "WITHDRAWAL" | "LOYALTY" | "GIFT_CARD" | "REFERRAL";
     description: string;
     orderId?: string;
   }
 ) {
   const wallet = await getOrCreateWallet(params.userId, client);
-  const isCredit = params.type === "TOPUP" || params.type === "REFUND";
+  const isCredit = ["TOPUP", "REFUND", "LOYALTY", "GIFT_CARD", "REFERRAL"].includes(params.type);
 
   if (!isCredit && wallet.balance < params.amount) {
     throw new Error("موجودی کیف پول کافی نیست");

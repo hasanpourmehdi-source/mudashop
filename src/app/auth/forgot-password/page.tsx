@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
           )}
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">ایمیل</label>
             <input

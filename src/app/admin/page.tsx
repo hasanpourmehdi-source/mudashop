@@ -8,6 +8,8 @@ import {
   type OrderStage,
 } from "@/lib/orderAlerts";
 import { sendDueReassurancePings } from "@/lib/reassurancePing";
+import { runPaymentDeadlineAutoCancel } from "@/lib/orderPaymentDeadline";
+import { runAbandonedCartReminders } from "@/lib/abandonedCart";
 
 function formatHours(h: number): string {
   if (h < 24) return `${Math.floor(h).toLocaleString("fa-IR")} ساعت`;
@@ -50,6 +52,11 @@ export default async function AdminDashboard() {
   const thresholds = await loadAlertThresholds();
   const now = new Date();
   const reassurancePingsSent = await sendDueReassurancePings(now);
+  // مهلت پرداخت: چون پروژه cron نداره، همون‌جا که پینگ دلگرم‌کننده صدا زده
+  // می‌شه (داشبورد ادمین) خودکار هم بررسی می‌شه -- سفارش‌های منقضی لغو می‌شن
+  const deadlineResult = await runPaymentDeadlineAutoCancel(now);
+  // یادآوریِ سبدِ رهاشده -- به همون دلیل (پروژه cron ندارد) از همین‌جا صدا زده می‌شود
+  await runAbandonedCartReminders(now);
 
   const alerted = openOrders
     .map((o) => ({ order: o, alert: computeOrderAlert(o as AlertableOrder, thresholds, now) }))
@@ -81,6 +88,17 @@ export default async function AdminDashboard() {
           مشاهده‌ی گزارشات کامل ←
         </Link>
       </div>
+
+      {deadlineResult.cancelled > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+          {deadlineResult.cancelled.toLocaleString("fa-IR")} سفارش به دلیل عدم پرداخت در مهلت به‌صورت خودکار لغو شد.
+        </div>
+      )}
+      {deadlineResult.warned > 0 && (
+        <div className="bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)]/30 rounded-lg p-3 text-sm text-[var(--color-ochre)]">
+          {deadlineResult.warned.toLocaleString("fa-IR")} سفارش مهلت پرداخت ارسال منقضی شده دارد -- بررسی کنید.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {stats.map((s) => (

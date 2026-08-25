@@ -10,6 +10,9 @@ const schema = z.object({
   quantity: z.number().int().positive(),
   price: z.number().int().nonnegative(),
   reason: z.string().max(500).optional(),
+  // لینک تامین‌کننده‌ی دوم -- کاملاً داخلی/فقط-ادمین، هیچ‌وقت به مشتری نمایش
+  // داده نمی‌شه (نه توی این درخواست چیزی به مشتری می‌ره، نه هیچ‌جای دیگه)
+  secondarySourceUrl: z.string().trim().url("لینک معتبر نیست").max(1000).optional().or(z.literal("")),
 });
 
 const deleteSchema = z.object({
@@ -55,6 +58,11 @@ export async function PATCH(
     return NextResponse.json({ error: "قلم سفارش یافت نشد" }, { status: 404 });
   }
 
+  // «لینک اصلی ۲» کاملاً داخلی/فقط-ادمینه -- اگه فقط همین یکی عوض شده باشه
+  // (تعداد/قیمت دست‌نخورده مونده)، نباید مشتری هیچ اطلاعی از این ویرایش پیدا
+  // کنه (نه نوتیف، نه ردیف تاریخچه‌ی «منتظر تأیید شما»)
+  const itemActuallyChanged = parsed.data.quantity !== item.quantity || parsed.data.price !== item.price;
+
   try {
     await prisma.$transaction(async (tx) => {
       if (item.source === "MAZON" && item.variantId) {
@@ -62,10 +70,18 @@ export async function PATCH(
       }
       await tx.orderItem.update({
         where: { id: itemId },
-        data: { quantity: parsed.data.quantity, price: parsed.data.price },
+        data: {
+          quantity: parsed.data.quantity,
+          price: parsed.data.price,
+          ...(parsed.data.secondarySourceUrl !== undefined
+            ? { secondarySourceUrl: parsed.data.secondarySourceUrl || null }
+            : {}),
+        },
       });
       await recomputeOrderTotals(tx, id);
-      await markAwaitingCustomerReview(tx, id, parsed.data.reason);
+      if (itemActuallyChanged) {
+        await markAwaitingCustomerReview(tx, id, parsed.data.reason);
+      }
     });
   } catch (err) {
     return NextResponse.json(

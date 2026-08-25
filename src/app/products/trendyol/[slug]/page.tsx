@@ -11,6 +11,7 @@ import { TRENDYOL_RAW_CATEGORY_SENTINEL, buildExternalSiteUrl, encodeTrendyolCat
 import { parseAttrsQuery } from "@/lib/attrsQuery";
 import { AddToCartForm } from "@/components/AddToCartForm";
 import { ProductGallery } from "@/components/ProductGallery";
+import { ProductCampaigns } from "@/components/ProductCampaigns";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { TrendyolProductLink } from "@/components/TrendyolProductLink";
 import { TrendyolSimilarProducts } from "@/components/TrendyolSimilarProducts";
@@ -18,7 +19,13 @@ import { TrendyolBestSellers } from "@/components/TrendyolBestSellers";
 import { ReviewsSection } from "@/components/ReviewsSection";
 import { QASection } from "@/components/QASection";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
+import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
+import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
+import { RecentlyViewedRecorder } from "@/components/RecentlyViewedRecorder";
 import { auth } from "@/lib/auth";
+import { ProductJsonLd } from "@/components/ProductJsonLd";
+import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
+import type { Metadata } from "next";
 
 // از segment آدرس (مثلاً "896710400-cep-detayli-gri-basic-tisort-...") فقط
 // contentId رو درمیاره -- همیشه اولین بخش قبل از اولین "-" هست
@@ -27,11 +34,49 @@ function extractContentIdFromSlug(slug: string): string | null {
   return match ? match[1] : null;
 }
 
-// محصولات دموی قدیمی (Fake Store API) با slug کاملاً عددی و بدون خط تیره
-// شناسایی می‌شن (مثلاً "3") -- محصولات لایو واقعی همیشه بعد از contentId
-// یه "-" و اسلاگ سئو دارن (مثلاً "896710400-cep-detayli-...")
+// محصولات دموی قدیمی (Fake Store API) با شناسه‌های ۱ تا ۲۰ ثبت شدن، پس یه
+// slug کاملاً عددی و کوتاه (مثلاً "3") همیشه دمویی‌ست. محصولات لایو واقعی
+// معمولاً بعد از contentId یه "-" و اسلاگ سئو دارن (مثلاً "896710400-cep-
+// detayli-...")، ولی بعضی جاها (مثل لینک‌سازیِ صفحه‌ی wishlist از روی
+// snapshot) فقط contentId خام رو بدون اسلاگ می‌سازن -- چون contentId های
+// واقعیِ ترندیول همیشه چندین‌رقمی‌ان (هیچ‌وقت زیر هزار)، صرفاً «تماماً عددی
+// بودن» کافی نیست؛ باید کوتاه هم باشه، وگرنه یه contentId واقعیِ بدون اسلاگ
+// به‌اشتباه به صفحه‌ی دموی قدیمی (که notFound می‌ده) می‌رفت
 function isLegacyDemoSlug(slug: string): boolean {
-  return /^\d+$/.test(slug);
+  return /^\d{1,3}$/.test(slug);
+}
+
+// متادیتای سئو صفحه‌ی محصول ترندیول -- آدرس از کشِ URL کامل خوانده می‌شود و
+// جزئیات از خود ترندیول (best-effort؛ اگه خطا داد متادیتای پیش‌فرض می‌ماند)
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const contentId = extractContentIdFromSlug(slug);
+  if (!contentId || isLegacyDemoSlug(slug)) return {};
+
+  try {
+    const trendyolUrl = await getCachedTrendyolProductUrl(contentId);
+    if (!trendyolUrl) return {};
+    const product = await fetchTrendyolProductDetail(trendyolUrl);
+    if (!product) return {};
+
+    const description = toMetaDescription(product.name);
+    const url = siteUrl(`/products/trendyol/${encodeURIComponent(slug)}`);
+
+    return {
+      title: product.nameFa,
+      description: description || `خرید ${product.nameFa} — ${priceFa(product.price ?? 0)}`,
+      alternates: { canonical: `/products/trendyol/${encodeURIComponent(slug)}` },
+      openGraph: {
+        type: "website",
+        title: product.nameFa,
+        description,
+        url,
+        images: product.images.slice(0, 4).map((img) => ({ url: img })),
+      },
+    };
+  } catch {
+    return {};
+  }
 }
 
 // بعضی additionalProperty های ترندیول (مثل «Yıkama Talimatı» / دستورالعمل
@@ -140,13 +185,31 @@ export default async function TrendyolProductPage({
   }
 
   // سبد خرید variant سایز رو با همون ساختار عمومی AddToCartForm پاس می‌دیم --
-  // هر سایز یه "attribute" با نام "Beden" است؛ چون قیمت لحظه‌ای دقیق هر سایز
-  // رو نداریم (فقط سایزهای موجود رو از JSON-LD داریم)، فعلاً priceDiff صفره
+  // هر سایز یه "attribute" با نام «سایز» است (این اسمِ گروه، خودمون می‌سازیمش،
+  // نه از عنوانِ خامِ ترندیول -- پس نیازی به دیکشنری/ترجمه ندارد)؛ چون قیمت
+  // لحظه‌ای دقیق هر سایز رو نداریم (فقط سایزهای موجود رو از JSON-LD داریم)،
+  // فعلاً priceDiff صفره
+  // product.quantity از فیلدِ آنالیتیکسِ product_quantity توی dataLayer میاد که
+  // طبق استانداردِ GA4 ecommerce، «تعدادِ موردنظر برای این ایونتِ مشاهده»ست (تقریباً
+  // همیشه ۱)، نه موجودیِ واقعیِ انبار -- با تستِ زنده هم تایید شد: یه محصول که
+  // خودِ ترندیول می‌گفت «بیش از ۵۰ عدد موجود»، همین فیلد ۱ برگردونده بود. پس
+  // فقط علامتِ دودوییِ inStock رو معتبر می‌دونیم، نه این عدد -- تا سقفِ کاذب
+  // نشون ندیم؛ اگه موجوده، سقفِ مشخصی نمی‌ذاریم (null)
+  // برخلاف سایز، رنگ توی ترندیول یه attribute قابل‌انتخاب توی همین صفحه نیست --
+  // هر رنگ صفحه‌ی محصول جدای خودشو داره (سوییچ رنگ بالاتر = ناوبری به صفحه‌ی
+  // دیگه). پس رنگِ «انتخاب‌شده» همیشه همون رنگِ همین صفحه‌ست؛ باید جدا به
+  // سبد/سفارش پاس بشه، وگرنه توی سبد/فاکتور فقط سایز دیده می‌شه، نه رنگ.
+  // ترجیحاً از additionalProperty «رنگ» (که مثل بقیه‌ی ویژگی‌ها ترجمه‌شده، مثلاً
+  // «مشکی») استفاده می‌کنیم، نه colorName خامِ JSON-LD (که ترکی/انگلیسیه مثل SİYAH)
+  const currentColorName =
+    product.attributes.find((a) => a.name === "رنگ")?.value ??
+    product.colorVariants.find((v) => v.contentId === product!.contentId)?.colorName;
+
   const variantOptions = product.sizes.map((size) => ({
     id: `${product!.contentId}-${size}`,
-    stock: product!.inStock ? (product!.quantity ?? 1) : 0,
+    stock: product!.inStock ? null : 0,
     priceDiff: 0,
-    values: [{ attribute: "Beden", value: size }],
+    values: [{ attribute: "سایز", value: size }],
   }));
 
   const discountPercent =
@@ -179,12 +242,25 @@ export default async function TrendyolProductPage({
     }
   })();
 
+  // اسمِ همون سایتِ خارجی (ترندیول/میلا) برای بخشِ دومِ breadcrumb -- دقیقاً از
+  // همون جدولِ ExternalSite که اسمِ نمایشیِ لینک‌های بالای صفحه رو هم می‌ده، تا
+  // اگه ادمین اسمش رو عوض کرد، اینجا هم خودکار هماهنگ بمونه
+  const externalSite = await prisma.externalSite.findUnique({
+    where: { slug: siteSlug },
+    select: { name: true },
+  });
+  const siteLabel = externalSite?.name ?? (siteSlug === "trendyol-milla" ? "میلا" : "ترندیول");
+
   let categoryLabel = product.categoryName;
   let categoryHref: string | undefined;
   let bestSellers: Awaited<ReturnType<typeof fetchTrendyolProductsFromUrl>>["products"] = [];
-  if (product.categoryName) {
+  // برای پیدا کردن ردیفِ کش، باید اسمِ خامِ ترکی رو استفاده کنیم (categoryNameTr)،
+  // نه categoryName که از قبل ترجمه شده -- وگرنه چون TrendyolCategoryCache.nameTr
+  // همیشه ترکیه، تطبیق تقریباً هیچ‌وقت پیدا نمی‌شه (حتی وقتی برچسبِ فارسی درست
+  // نشون داده می‌شه، چون آن از مسیر ترجمه‌ی جدای دیگه‌ای اومده)
+  if (product.categoryNameTr) {
     const cachedCategory = await prisma.trendyolCategoryCache.findFirst({
-      where: { site: siteSlugToKind(siteSlug), nameTr: product.categoryName },
+      where: { site: siteSlugToKind(siteSlug), nameTr: product.categoryNameTr },
     });
     if (cachedCategory) {
       categoryLabel = cachedCategory.nameFa || cachedCategory.nameTr;
@@ -221,8 +297,37 @@ export default async function TrendyolProductPage({
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 pt-4 pb-8">
+      <ProductJsonLd
+        product={{
+          id: `trendyol-${product.contentId}`,
+          title: product.nameFa,
+          description: product.name,
+          images: product.images,
+          brand: product.brand,
+          price: product.price ?? 0,
+          originalPrice: product.originalPrice ?? product.price ?? 0,
+          discount: discountPercent,
+          categoryName: product.categoryName ?? undefined,
+        }}
+        url={siteUrl(`/products/trendyol/${encodeURIComponent(slug)}`)}
+      />
+      <RecentlyViewedRecorder
+        product={{
+          id: `trendyol-${product.contentId}`,
+          source: "TRENDYOL",
+          slugOrId: slug,
+          title: product.nameFa,
+          image: product.images[0] ?? "",
+          price: product.price ?? 0,
+          originalPrice: product.originalPrice ?? product.price ?? 0,
+          discount: discountPercent,
+          href: `/products/trendyol/${slug}`,
+          viewedAt: new Date().toISOString(),
+        }}
+      />
       <Breadcrumb
         items={[
+          { name: siteLabel, href: `/marketplaces/${siteSlug}` },
           ...(categoryLabel ? [{ name: categoryLabel, href: categoryHref }] : []),
           { name: product.nameFa },
         ]}
@@ -232,7 +337,7 @@ export default async function TrendyolProductPage({
           خودِ ProductGallery داره) تعریف شده -- وگرنه با grid-cols-2 (۱fr ۱fr)،
           چون گالری خودش max-w دارد و توضیحات ندارد، یه فضای خالی حدود ۱۶۰px
           بین عکس و توضیحات می‌افتاد که هیچ محتوایی توش نبود */}
-      <div className="grid md:grid-cols-[440px_1fr] gap-8">
+      <div className="grid md:grid-cols-[440px_1fr] lg:grid-cols-[440px_1fr_280px] gap-8">
         <ProductGallery images={product.images} title={product.nameFa} />
 
         <div>
@@ -253,7 +358,10 @@ export default async function TrendyolProductPage({
           )}
 
           <h1 className="text-2xl font-extrabold mb-3">{product.nameFa}</h1>
-          <AdminOriginalTitleCopy originalTitle={product.name} isAdmin={isAdmin} alwaysVisible />
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <AdminOriginalTitleCopy originalTitle={product.name} isAdmin={isAdmin} alwaysVisible />
+            <AdminOriginalLinkCopy url={product.url} isAdmin={isAdmin} />
+          </div>
 
           {/* رنگ‌های دیگه‌ی همین محصول -- هرکدوم لینک به صفحه‌ی جدای خودش، با
               کش خودکار آدرس ترندیول قبل از ناوبری (وگرنه صفحه‌ی مقصد 404 می‌ده) */}
@@ -292,6 +400,8 @@ export default async function TrendyolProductPage({
             discount={discountPercent}
             variants={variantOptions.length > 0 ? variantOptions : undefined}
             initialAttrs={initialAttrs}
+            fixedVariantLabel={currentColorName ? `رنگ: ${currentColorName}` : undefined}
+            siteLabel={siteLabel}
           />
 
           {product.attributes.length > 0 && (
@@ -303,7 +413,9 @@ export default async function TrendyolProductPage({
                     key={attr.name}
                     className="flex items-center justify-between gap-3 bg-[var(--color-linen-dim)] rounded-lg px-4 py-3 text-sm"
                   >
-                    <span className="text-[var(--color-muted)]">{attr.name}</span>
+                    <span className="text-[var(--color-muted)]">
+                      <AdminClickToTranslate text={attr.name} isAdmin={isAdmin} />
+                    </span>
                     {isImageUrl(attr.value) ? (
                       // بعضی ویژگی‌ها (مثل «دستورالعمل شست‌وشو») مقدارشون یه لینک
                       // عکس (آیکون) از CDN ترندیوله، نه متن -- باید خودِ عکس نشون
@@ -311,13 +423,22 @@ export default async function TrendyolProductPage({
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={attr.value} alt={attr.name} className="h-8 w-auto object-contain" />
                     ) : (
-                      <span className="font-bold">{attr.value}</span>
+                      <span className="font-bold">
+                        <AdminClickToTranslate text={attr.value} isAdmin={isAdmin} />
+                      </span>
                     )}
                   </div>
                 ))}
               </div>
             </div>
           )}
+        </div>
+
+        {/* ستونِ کنارِ محصول -- دقیقاً جایگاهِ «ÜRÜNÜN KAMPANYALARI» خودِ
+            ترندیول (کنارِ عکس/اطلاعاتِ اصلی، نه بالای عنوان). توی صفحه‌های
+            کوچیک‌تر (بدون این ستونِ سوم) زیرِ همه‌چیز می‌افته */}
+        <div className="md:col-span-2 lg:col-span-1">
+          <ProductCampaigns badges={product.campaignBadges} siteSlug={siteSlug} isAdmin={isAdmin} />
         </div>
       </div>
 

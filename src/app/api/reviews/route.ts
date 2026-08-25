@@ -36,7 +36,10 @@ export async function GET(req: Request) {
       ...(productId ? { productId } : { externalId, source: "TRENDYOL" }),
       OR: [{ isApproved: true }, ...(session?.user?.id ? [{ userId: session.user.id }] : [])],
     },
-    include: { user: { select: { name: true } } },
+    include: {
+      user: { select: { name: true } },
+      helpfulVotes: true,
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -46,7 +49,15 @@ export async function GET(req: Request) {
       ? approvedOnly.reduce((sum, r) => sum + r.rating, 0) / approvedOnly.length
       : 0;
 
-  return NextResponse.json({ reviews, avgRating, count: approvedOnly.length });
+  return NextResponse.json({
+    reviews: reviews.map(({ helpfulVotes, ...r }) => ({
+      ...r,
+      helpfulCount: helpfulVotes.length,
+      votedByMe: session?.user?.id ? helpfulVotes.some((v) => v.userId === session.user.id) : false,
+    })),
+    avgRating,
+    count: approvedOnly.length,
+  });
 }
 
 export async function POST(req: Request) {
@@ -86,7 +97,9 @@ export async function POST(req: Request) {
         comment,
         images: JSON.stringify(images),
         verifiedPurchase: Boolean(hasPurchased),
-        isApproved: false, // تا وقتی ادمین تاییدش نکنه، عمومی نمایش داده نمی‌شه
+        // نظرِ خودِ ادمین نیازی به تاییدِ دوباره‌ی ادمین ندارد (خودش صاحب‌اختیاره)؛
+        // نظرِ بقیه‌ی کاربران تا وقتی ادمین تاییدش نکنه، عمومی نمایش داده نمی‌شه
+        isApproved: session.user.role === "ADMIN",
       },
     });
     return NextResponse.json(review, { status: 201 });

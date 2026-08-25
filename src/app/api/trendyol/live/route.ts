@@ -41,7 +41,7 @@ export async function GET(req: Request) {
     console.warn("خطا در واکشی محصولات ترندیول:", err);
     await logTrendyolFetchFailure({ url, error: String(err), source: "load-more" });
     return NextResponse.json(
-      { error: "دریافت محصولات از ترندیول ناموفق بود", detail: String(err) },
+      { error: "دریافت محصولات از ترندیول ناموفق بود" },
       { status: 502 }
     );
   }

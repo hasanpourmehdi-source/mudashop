@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import {
-  customerOrderStatusLabel,
-  shippingPaymentStatusLabel,
-  pastTenseOrderLabel,
-} from "@/lib/orderStatusMessages";
+import { customerOrderStatusLabel, shippingPaymentStatusLabel } from "@/lib/orderStatusMessages";
 import { computePurchaseSummary } from "@/lib/orderPurchaseStatus";
+import { estimateDeliveryWindow, formatEta } from "@/lib/orderEta";
+import { computeDelayInfo } from "@/lib/orderDelay";
+import { buildTrackingTimeline } from "@/lib/trackingTimeline";
+import { TrackingTimeline } from "@/components/TrackingTimeline";
 
 type StatusHistoryEntry = {
   id: string;
@@ -17,7 +17,7 @@ type StatusHistoryEntry = {
   createdAt: string;
 };
 
-type OrderTrackingData = {
+export type OrderTrackingData = {
   id: string;
   status: string;
   paymentStatus: "PENDING" | "AWAITING_PAYMENT" | "AWAITING_VERIFICATION" | "PAID" | "FAILED";
@@ -27,9 +27,10 @@ type OrderTrackingData = {
   hasExternalItems: boolean;
   shippingPayment?: { status: string } | null;
   items?: { source: string; purchaseStatus: string; quantity: number }[];
+  shippingMethod?: string | null;
+  createdAt?: string;
+  packageStatuses?: string | null;
 };
-
-type HistoryEvent = { id: string; label: string; createdAt: string };
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: "در انتظار پردازش",
@@ -147,13 +148,23 @@ function computeStage(order: OrderTrackingData, hasExternalItems: boolean): Stag
   return { stepIndex: 3, sublabel: shippingPaymentStatusLabel(order.shippingPayment.status) };
 }
 
-export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingData }) {
+export function OrderTracking({
+  initialOrder,
+  disablePolling = false,
+}: {
+  initialOrder: OrderTrackingData;
+  // برای صفحه‌ی پیگیریِ سفارشِ مهمان (بدون لاگین) -- /api/orders/[id] فقط برای
+  // صاحبِ سفارشِ لاگین‌کرده پاسخ می‌ده، پس pollِ خودکار روی آن صفحه فقط ۴۰۱
+  // مکرر می‌سازه؛ مهمان به‌جاش خودش دوباره فرمِ پیگیری رو می‌فرسته
+  disablePolling?: boolean;
+}) {
   const searchParams = useSearchParams();
   const [order, setOrder] = useState(initialOrder);
   const paymentBanner = searchParams.get("payment"); // 'paid' | 'failed' از ریدایرکت درگاه
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    if (disablePolling) return;
     // فقط وقتی سفارش هنوز در جریانه (نه لغوشده/تحویل‌شده) لازم به poll کردنه
     if (order.status === "CANCELLED" || order.status === "DELIVERED" || order.status === "RETURNED")
       return;
@@ -169,20 +180,60 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [order.id, order.status]);
+  }, [order.id, order.status, disablePolling]);
 
   const steps = order.hasExternalItems ? STEPS_EXTERNAL : STEPS_MAZON;
   const { stepIndex: currentStepIndex, sublabel: currentSublabel } = computeStage(order, order.hasExternalItems);
 
-  // تاریخچه‌ی وضعیت -- الان هر اقدام و پاسکاری بین ادمین/مشتری (نه فقط تغییر
-  // status خام سفارش) یه ردیف مستقل توی OrderStatusHistory با یه توضیح کامل
-  // و مستقل (note) داره -- همون توضیح مستقیماً به‌عنوان متن ردیف نشون داده
-  // می‌شه. فقط ردیف‌های قدیمی/بدون note به برچسبِ عمومیِ status برمی‌گردن
-  const historyEvents: HistoryEvent[] = order.statusHistory.map((h) => ({
-    id: h.id,
-    label: h.note || pastTenseOrderLabel(STATUS_LABELS[h.status] ?? h.status),
-    createdAt: h.createdAt,
-  }));
+  // تخمین زمان تحویل (ETA) -- فقط وقتی نمایش داده می‌شه که سفارش هنوز بازه و
+  // تحویل نشده (سفارش بسته/لغو/مرجوع ETA نداره)
+  const eta =
+    !["CANCELLED", "RETURNED"].includes(order.status) && order.createdAt
+      ? estimateDeliveryWindow(
+          {
+            status: order.status,
+            shippingMethod: order.shippingMethod ?? null,
+            hasExternalItems: order.hasExternalItems,
+            createdAt: new Date(order.createdAt),
+            statusHistory: order.statusHistory.map((h) => ({ status: h.status, createdAt: new Date(h.createdAt) })),
+          },
+          new Date()
+        )
+      : null;
+
+  // تأخیر + علت دقیق + ETA جدید (شماره ۷) -- اگه سفارش دیر شده، بنر تأخیر با
+  // علت و تخمین جدید نمایش داده می‌شه (به‌جای ETA عادی)
+  const delayInfo =
+    !["CANCELLED", "RETURNED"].includes(order.status) && order.createdAt
+      ? computeDelayInfo(
+          {
+            status: order.status,
+            paymentStatus: order.paymentStatus,
+            hasExternalItems: order.hasExternalItems,
+            itemsNegotiationStatus: order.itemsNegotiationStatus,
+            shippingMethod: order.shippingMethod ?? null,
+            createdAt: new Date(order.createdAt),
+            statusHistory: order.statusHistory.map((h) => ({
+              status: h.status,
+              createdAt: new Date(h.createdAt),
+              note: h.note,
+            })),
+            shippingPayment: order.shippingPayment ? { status: order.shippingPayment.status } : null,
+          },
+          new Date()
+        )
+      : null;
+
+  // سفارش‌های لغو/مرجوع نباید بنر پرداخت یا دکمه‌ی «ادامه پرداخت» نشون بدن
+  const isClosed = order.status === "CANCELLED" || order.status === "RETURNED";
+
+  // تایملاین رهگیری مرحله‌به‌مرحله -- ترکیب تاریخچه‌ی وضعیت + تحویلِ تکی
+  // بسته‌ها (ETA در هدر نمایش داده می‌شه و این‌جا تکرار نمی‌شه)
+  const timelineEntries = buildTrackingTimeline({
+    status: order.status,
+    statusHistory: order.statusHistory,
+    packageStatuses: order.packageStatuses,
+  });
 
   return (
     <div>
@@ -197,7 +248,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.paymentStatus === "PENDING" && (
+      {!isClosed && order.paymentStatus === "PENDING" && (
         <div className="mb-6 bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)] rounded-lg p-4 text-center">
           <span className="text-sm font-medium">
             سفارش شما ثبت شده و در انتظار بررسی ادمین است.
@@ -205,7 +256,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.paymentStatus === "AWAITING_PAYMENT" && order.paymentAuthority && (
+      {!isClosed && order.paymentStatus === "AWAITING_PAYMENT" && order.paymentAuthority && (
         <div className="mb-6 bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)] rounded-lg p-4 flex items-center justify-between">
           <span className="text-sm font-medium">شماره کارت برای پرداخت آماده است.</span>
           <Link
@@ -217,7 +268,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.paymentStatus === "AWAITING_VERIFICATION" && (
+      {!isClosed && order.paymentStatus === "AWAITING_VERIFICATION" && (
         <div className="mb-6 bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)] rounded-lg p-4 text-center">
           <span className="text-sm font-medium">
             فیش پرداخت شما ارسال شده و در انتظار تأیید است.
@@ -225,7 +276,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.shippingPayment?.status === "AWAITING_PAYMENT" && (
+      {!isClosed && order.shippingPayment?.status === "AWAITING_PAYMENT" && (
         <div className="mb-6 bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)] rounded-lg p-4 flex items-center justify-between">
           <span className="text-sm font-medium">
             {shippingPaymentStatusLabel(order.shippingPayment.status)}
@@ -242,7 +293,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.shippingPayment?.status === "AWAITING_VERIFICATION" && (
+      {!isClosed && order.shippingPayment?.status === "AWAITING_VERIFICATION" && (
         <div className="mb-6 bg-[var(--color-ochre)]/10 border border-[var(--color-ochre)] rounded-lg p-4 text-center">
           <span className="text-sm font-medium">
             {shippingPaymentStatusLabel(order.shippingPayment.status)}
@@ -253,7 +304,7 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
         </div>
       )}
 
-      {order.shippingPayment?.status === "PAID" &&
+      {!isClosed && order.shippingPayment?.status === "PAID" &&
         order.status !== "SHIPPED" &&
         order.status !== "DELIVERED" && (
           <div className="mb-6 bg-green-50 border border-green-300 rounded-lg p-4 text-center">
@@ -326,20 +377,26 @@ export function OrderTracking({ initialOrder }: { initialOrder: OrderTrackingDat
           {currentSublabel && (
             <p className="text-xs text-center text-[var(--color-muted)] mt-2">{currentSublabel}</p>
           )}
-        </div>
-      )}
-
-      {historyEvents.length > 0 && (
-        <div className="mb-4 space-y-1">
-          {historyEvents.map((ev) => (
-            <p key={ev.id} className="text-xs text-[var(--color-muted)]">
-              {ev.label} — {new Date(ev.createdAt).toLocaleString("fa-IR")}
+          {delayInfo?.delayed && delayInfo.reason ? (
+            <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-xs">
+              <p className="text-red-700 font-medium">⚠️ تأخیر در سفارش: {delayInfo.reason}</p>
+              {delayInfo.newEta && (
+                <p className="text-red-600 mt-1">
+                  تحویل تخمینی جدید: <span className="font-bold">{formatEta(delayInfo.newEta)}</span>
+                </p>
+              )}
+            </div>
+          ) : eta ? (
+            <p className="text-xs text-center text-[var(--color-wine)] font-medium mt-1.5">
+              تحویل تخمینی: {formatEta(eta)}
             </p>
-          ))}
+          ) : null}
         </div>
       )}
 
-      {order.status !== "CANCELLED" && order.status !== "DELIVERED" && order.status !== "RETURNED" && (
+      <TrackingTimeline entries={timelineEntries} />
+
+      {!disablePolling && order.status !== "CANCELLED" && order.status !== "DELIVERED" && order.status !== "RETURNED" && (
         <p className="text-[10px] text-[var(--color-muted)] mb-8">
           وضعیت هر ۸ ثانیه به‌صورت خودکار بروزرسانی می‌شود.
         </p>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -76,6 +77,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         message: `پاسخ جدید از پشتیبانی روی سفارش #${id.slice(-8)}`,
         link: `/orders/${id}`,
       },
+    });
+    await notifyCustomerOutbound({
+      userId: order.userId,
+      eventType: "SUPPORT_REPLY",
+      title: `پاسخ جدید پشتیبانی روی سفارش #${id.slice(-8)}`,
+      body: `پاسخ جدیدی از پشتیبانی روی سفارش #${id.slice(-8)} دریافت شد. آن را در صفحه‌ی سفارش ببینید.`,
     });
   }
 

@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 
 const RETURN_POLICY_KEY = "returnPolicyText";
+const POSTER_CURRENCY_KEY = "posterCurrencyText";
+const ABOUT_KEY = "aboutText";
+const TERMS_KEY = "termsText";
+const PRIVACY_KEY = "privacyText";
+const FAQ_KEY = "faqText";
 
 // جفت‌های کلید هشدار/نیمه‌هشدار برای هر مرحله‌ی «منتظر اقدام» -- عیناً همون
 // کلیدهایی که src/lib/siteSettings.ts و src/lib/orderAlerts.ts استفاده می‌کنن
@@ -47,6 +52,11 @@ const REASSURANCE_KEY = "reassurancePingAfterHours";
 
 export default function AdminSettingsPage() {
   const [returnPolicy, setReturnPolicy] = useState("");
+  const [posterCurrencyText, setPosterCurrencyText] = useState("");
+  const [aboutText, setAboutText] = useState("");
+  const [termsText, setTermsText] = useState("");
+  const [privacyText, setPrivacyText] = useState("");
+  const [faqText, setFaqText] = useState("");
   const [thresholds, setThresholds] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -60,6 +70,11 @@ export default function AdminSettingsPage() {
       .then((res) => (res.ok ? res.json() : Promise.resolve({} as Record<string, string>)))
       .then((data: Record<string, string>) => {
         setReturnPolicy(data[RETURN_POLICY_KEY] ?? "");
+        setPosterCurrencyText(data[POSTER_CURRENCY_KEY] ?? "");
+        setAboutText(data[ABOUT_KEY] ?? "");
+        setTermsText(data[TERMS_KEY] ?? "");
+        setPrivacyText(data[PRIVACY_KEY] ?? "");
+        setFaqText(data[FAQ_KEY] ?? "");
         setThresholds(data);
       })
       .finally(() => setLoading(false));
@@ -83,6 +98,11 @@ export default function AdminSettingsPage() {
     setSaving(true);
     try {
       await saveKey(RETURN_POLICY_KEY, returnPolicy);
+      await saveKey(POSTER_CURRENCY_KEY, posterCurrencyText);
+      await saveKey(ABOUT_KEY, aboutText);
+      await saveKey(TERMS_KEY, termsText);
+      await saveKey(PRIVACY_KEY, privacyText);
+      await saveKey(FAQ_KEY, faqText);
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "خطا در ذخیره");
@@ -125,6 +145,59 @@ export default function AdminSettingsPage() {
             value={returnPolicy}
             onChange={(e) => setReturnPolicy(e.target.value)}
             rows={4}
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">متنِ باکسِ بنفشِ پوسترِ اینستاگرام</p>
+          <p className="text-[10px] text-[var(--color-muted)] mb-2">
+            هر خط رو جدا بنویس (Enter بین خط‌ها) -- توی «پوستر اینستاگرام» بالای ستونِ اطلاعات نشون داده می‌شه.
+          </p>
+          <textarea
+            value={posterCurrencyText}
+            onChange={(e) => setPosterCurrencyText(e.target.value)}
+            rows={2}
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">درباره ما (صفحه‌ی /about)</p>
+          <textarea
+            value={aboutText}
+            onChange={(e) => setAboutText(e.target.value)}
+            rows={4}
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">قوانین و مقررات (صفحه‌ی /terms)</p>
+          <textarea
+            value={termsText}
+            onChange={(e) => setTermsText(e.target.value)}
+            rows={6}
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">حریم خصوصی (صفحه‌ی /privacy)</p>
+          <textarea
+            value={privacyText}
+            onChange={(e) => setPrivacyText(e.target.value)}
+            rows={4}
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">سوالات پرتکرار (صفحه‌ی /faq)</p>
+          <textarea
+            value={faqText}
+            onChange={(e) => setFaqText(e.target.value)}
+            rows={6}
             className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
           />
         </div>

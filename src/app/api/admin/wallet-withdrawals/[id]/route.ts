@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction } from "@/lib/wallet";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { logAdminAction } from "@/lib/adminAudit";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 
@@ -21,8 +23,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { ok } = await requireAdmin();
-  if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
+  const { ok, session } = await requireAdmin("PAYMENTS");
+  if (!ok || !session) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const { id } = await params;
   const withdrawal = await prisma.walletWithdrawalRequest.findUnique({ where: { id } });
@@ -70,6 +72,23 @@ export async function POST(
       },
     });
 
+    await notifyCustomerOutbound({
+      userId: withdrawal.userId,
+      eventType: "WALLET_CREDIT",
+      title: `واریز ${withdrawal.amount.toLocaleString("fa-IR")} تومان انجام شد`,
+      body: `درخواست واریز ${withdrawal.amount.toLocaleString("fa-IR")} تومانی شما به حسابتان واریز شد -- فیش واریزی در کیف پول در دسترس است.`,
+    });
+
+    await logAdminAction({
+      adminId: session.user.id,
+      adminName: session.user.name ?? "",
+      adminEmail: session.user.email ?? "",
+      action: "WALLET_WITHDRAWAL_APPROVED",
+      targetType: "WalletWithdrawalRequest",
+      targetId: id,
+      detail: `${withdrawal.amount.toLocaleString("fa-IR")} تومان`,
+    });
+
     return NextResponse.json(updated);
   }
 
@@ -100,6 +119,25 @@ export async function POST(
         )} تومانی شما رد شد -- ${reason} (مبلغ به کیف پول شما بازگشت داده شد)`,
         link: "/wallet",
       },
+    });
+
+    await notifyCustomerOutbound({
+      userId: withdrawal.userId,
+      eventType: "WALLET_CREDIT",
+      title: `درخواست واریز ${withdrawal.amount.toLocaleString("fa-IR")} تومانی رد شد`,
+      body: `درخواست واریز ${withdrawal.amount.toLocaleString(
+        "fa-IR"
+      )} تومانی شما رد شد -- ${reason} (مبلغ به کیف پول شما بازگشت داده شد).`,
+    });
+
+    await logAdminAction({
+      adminId: session.user.id,
+      adminName: session.user.name ?? "",
+      adminEmail: session.user.email ?? "",
+      action: "WALLET_WITHDRAWAL_REJECTED",
+      targetType: "WalletWithdrawalRequest",
+      targetId: id,
+      detail: reason,
     });
 
     return NextResponse.json(updated);

@@ -6,11 +6,14 @@ import { AdminOrderActions } from "@/components/AdminOrderActions";
 import { AdminOrderItemsEditor } from "@/components/AdminOrderItemsEditor";
 import { OrderMessageThread } from "@/components/OrderMessageThread";
 import { AdminReturnRequestPanel } from "@/components/AdminReturnRequestPanel";
+import { AdminCancellationRequestPanel } from "@/components/AdminCancellationRequestPanel";
 import { OrderPaymentHistory } from "@/components/OrderPaymentHistory";
 import { parseTrackingCodes } from "@/lib/trackingCodes";
 import { checkTrendyolItemsStock } from "@/lib/orderStockCheck";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
+import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
 import { AdminItemPurchasePanel } from "@/components/AdminItemPurchasePanel";
+import { OrderInvoice } from "@/components/OrderInvoice";
 import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,11 +46,12 @@ export default async function AdminOrderDetailPage({
   const order = await prisma.order.findUnique({
     where: { id },
     include: {
-      items: true,
+      items: { include: { product: { select: { slug: true } } } },
       statusHistory: { orderBy: { createdAt: "asc" } },
       user: { select: { name: true, email: true } },
       shippingPayment: true,
       returnRequest: { include: { items: true } },
+      cancellationRequest: true,
       paymentEvents: { orderBy: { assignedAt: "asc" } },
     },
   });
@@ -95,17 +99,31 @@ export default async function AdminOrderDetailPage({
   }
   const outOfStockItems = order.items.filter((i) => stockStatusByItemId.get(i.id) === false);
 
-  // موقع خرید واقعی از ترندیول، ادمین باید بتونه مستقیم به صفحه‌ی محصول
-  // اصلی بره -- لینک از همون کشِ آدرسِ محصول (که با هر بازدید از صفحه‌ی
-  // محصول/نگاه‌سریع پر می‌شه) بر اساس externalId درمیاد
+  // ادمین باید در هر مرحله‌ای از سفارش (نه فقط بعد از پرداخت) بتونه مستقیم به
+  // صفحه‌ی محصول اصلی روی ترندیول بره -- لینک از همون کشِ آدرسِ محصول (که با
+  // هر بازدید از صفحه‌ی محصول/نگاه‌سریع پر می‌شه) بر اساس externalId درمیاد
   const productUrlByItemId = new Map<string, string | null>();
-  if (order.paymentStatus === "PAID") {
-    const externalItemsForUrl = order.items.filter((i) => i.source === "TRENDYOL" && i.externalId);
-    await Promise.all(
-      externalItemsForUrl.map(async (i) => {
-        productUrlByItemId.set(i.id, await getCachedTrendyolProductUrl(i.externalId!));
-      })
-    );
+  const externalItemsForUrl = order.items.filter((i) => i.source === "TRENDYOL" && i.externalId);
+  await Promise.all(
+    externalItemsForUrl.map(async (i) => {
+      productUrlByItemId.set(i.id, await getCachedTrendyolProductUrl(i.externalId!));
+    })
+  );
+
+  // لینک داخلی صفحه‌ی محصول (خودِ مداشاپ) برای هر قلم -- برای کلیک روی عنوان
+  // که ادمین رو وارد صفحه‌ی محصول کنه، جدا از لینک اصلی/خارجی ترندیول
+  const productHrefByItemId = new Map<string, string | null>();
+  for (const item of order.items) {
+    if (item.source === "MAZON") {
+      productHrefByItemId.set(item.id, item.product?.slug ? `/products/mazon/${item.product.slug}` : null);
+    } else if (item.source === "TRENDYOL" && item.externalId) {
+      productHrefByItemId.set(
+        item.id,
+        internalTrendyolProductHref(item.externalId, productUrlByItemId.get(item.id) ?? null)
+      );
+    } else {
+      productHrefByItemId.set(item.id, null);
+    }
   }
 
   const addressSnapshot = JSON.parse(order.addressSnapshot) as {
@@ -170,6 +188,7 @@ export default async function AdminOrderDetailPage({
       {order.paymentStatus === "PAID" && (
         <AdminItemPurchasePanel
           orderId={order.id}
+          hasPendingCancellationRequest={order.cancellationRequest?.status === "PENDING"}
           items={order.items
             .filter((i) => i.source === "TRENDYOL")
             .map((i) => ({
@@ -181,9 +200,13 @@ export default async function AdminOrderDetailPage({
               purchaseTag: i.purchaseTag,
               purchaseNote: i.purchaseNote,
               purchasePriceActual: i.purchasePriceActual,
+              purchaseUrl: i.purchaseUrl,
               url: productUrlByItemId.get(i.id) ?? null,
+              productHref: productHrefByItemId.get(i.id) ?? null,
               itemWeightGrams: i.itemWeightGrams,
               itemCargoCost: i.itemCargoCost,
+              variantLabel: i.variantLabel,
+              secondarySourceUrl: i.secondarySourceUrl,
             }))}
         />
       )}
@@ -197,6 +220,20 @@ export default async function AdminOrderDetailPage({
             </p>
           ))}
         </section>
+      )}
+
+      {order.cancellationRequest && (
+        <AdminCancellationRequestPanel
+          orderId={order.id}
+          orderStatus={order.status}
+          cancellationRequest={{
+            id: order.cancellationRequest.id,
+            status: order.cancellationRequest.status,
+            reason: order.cancellationRequest.reason,
+            adminNote: order.cancellationRequest.adminNote,
+            createdAt: order.cancellationRequest.createdAt.toISOString(),
+          }}
+        />
       )}
 
       {order.returnRequest && (
@@ -265,6 +302,10 @@ export default async function AdminOrderDetailPage({
             price: item.price,
             quantity: item.quantity,
             source: item.source,
+            url: productHrefByItemId.get(item.id) ?? null,
+            originalUrl: item.source === "TRENDYOL" ? productUrlByItemId.get(item.id) ?? null : null,
+            variantLabel: item.variantLabel,
+            secondarySourceUrl: item.secondarySourceUrl,
           }))}
           itemsNegotiationStatus={order.itemsNegotiationStatus}
         />
@@ -281,13 +322,46 @@ export default async function AdminOrderDetailPage({
 
           {order.items.map((item) => {
             const stock = stockStatusByItemId.get(item.id);
+            const itemHref = productHrefByItemId.get(item.id);
+            const originalUrl = item.source === "TRENDYOL" ? productUrlByItemId.get(item.id) : null;
             return (
               <div
                 key={item.id}
                 className="flex justify-between text-sm border cut-line rounded-lg p-3 bg-white"
               >
                 <span>
-                  {item.title} × {item.quantity}
+                  {itemHref ? (
+                    <a href={itemHref} className="text-[var(--color-wine)] hover:underline">
+                      {item.title}
+                    </a>
+                  ) : (
+                    item.title
+                  )}
+                  {item.variantLabel && (
+                    <span className="text-xs text-[var(--color-muted)]"> ({item.variantLabel})</span>
+                  )}
+                  {originalUrl && (
+                    <a
+                      href={originalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[10px] text-[var(--color-wine)] hover:underline"
+                    >
+                      🔗 لینک اصلی
+                    </a>
+                  )}
+                  {item.secondarySourceUrl && (
+                    <a
+                      href={item.secondarySourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[10px] text-[var(--color-ochre)] hover:underline"
+                    >
+                      🔗 لینک اصلی ۲ (فقط ادمین)
+                    </a>
+                  )}
+                  {" × "}
+                  {item.quantity}
                   {stock === false && (
                     <span className="mr-2 ml-2 text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
                       دیگر موجود نیست
@@ -345,6 +419,18 @@ export default async function AdminOrderDetailPage({
             <span>{order.cargoCost.toLocaleString("fa-IR")} تومان</span>
           </div>
         )}
+        {order.shippingPayment && order.shippingPayment.walletOffset > 0 && (
+          <div className="flex justify-between text-green-700">
+            <span>کسر از کیف پول (بابت ارسال/باربری)</span>
+            <span>−{order.shippingPayment.walletOffset.toLocaleString("fa-IR")} تومان</span>
+          </div>
+        )}
+        {order.shippingPayment && order.shippingPayment.walletOffset > 0 && order.shippingPayment.amount > 0 && (
+          <div className="flex justify-between">
+            <span className="text-[var(--color-muted)]">باقی‌مانده‌ی ارسال/باربری (پرداخت با کارت)</span>
+            <span>{order.shippingPayment.amount.toLocaleString("fa-IR")} تومان</span>
+          </div>
+        )}
         {order.shippingMethod && (
           <div className="flex justify-between">
             <span className="text-[var(--color-muted)]">نحوه ارسال</span>
@@ -379,6 +465,10 @@ export default async function AdminOrderDetailPage({
           </span>
         </div>
       </section>
+
+      <div className="mt-4">
+        <OrderInvoice orderId={order.id} />
+      </div>
     </div>
   );
 }

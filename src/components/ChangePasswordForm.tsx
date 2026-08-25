@@ -41,7 +41,7 @@ export function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="border cut-line rounded-lg p-6 bg-white space-y-3">
+    <form onSubmit={handleSubmit} noValidate className="border cut-line rounded-lg p-6 bg-white space-y-3">
       <h2 className="font-bold mb-1">تغییر رمز عبور</h2>
       <div>
         <label className="block text-xs font-medium mb-1">رمز فعلی</label>

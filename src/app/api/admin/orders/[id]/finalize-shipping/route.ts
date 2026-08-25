@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction, getOrCreateWallet } from "@/lib/wallet";
 import { NO_COST_SHIPPING_METHODS } from "@/lib/shipping";
+import { computePaymentDeadline } from "@/lib/orderPaymentDeadline";
+import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { applyReferralRewardIfEligible } from "@/lib/referral";
 import { z } from "zod";
 
 const schema = z.object({
@@ -138,6 +142,10 @@ export async function POST(
               assignedCardNumber: assignedCard!.cardNumber,
               assignedShebaNumber: assignedCard!.shebaNumber,
               assignedCardHolder: assignedCard!.holderName,
+              paymentDeadlineAt: computePaymentDeadline(
+                new Date(),
+                Number(await getSiteSetting(SITE_SETTING_KEYS.PAYMENT_DEADLINE_H)) || 48
+              ),
             }),
       },
     });
@@ -181,6 +189,16 @@ export async function POST(
       link: `/orders/${order.id}`,
     },
   });
+  await notifyCustomerOutbound({
+    userId: order.userId,
+    eventType: "ORDER_SHIPPED",
+    title: `سفارش #${shortId} ارسال شد`,
+    body: `هزینه ارسال سفارش #${shortId} مشخص شد و در صورت تسویه، سفارش ارسال می‌شود. جزئیات رهگیری را در صفحه‌ی سفارش ببینید.`,
+  });
+
+  if (finalTotal === 0) {
+    await applyReferralRewardIfEligible(order.id);
+  }
 
   return NextResponse.json(updated);
 }

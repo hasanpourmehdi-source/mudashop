@@ -9,6 +9,8 @@ type OrderItemRow = {
   price: number;
   quantity: number;
   source: "MAZON" | "TRENDYOL";
+  url?: string;
+  variantLabel?: string;
 };
 
 // وقتی ادمین اقلام سفارش رو ویرایش کرده (itemsNegotiationStatus !== "AGREED")،
@@ -96,9 +98,23 @@ export function CustomerOrderItemsReview({
         >
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium">
-              {item.title}
+              {item.url ? (
+                <a
+                  href={item.url}
+                  target={item.url.startsWith("http") ? "_blank" : undefined}
+                  rel={item.url.startsWith("http") ? "noopener noreferrer" : undefined}
+                  className="text-[var(--color-wine)] hover:underline"
+                >
+                  {item.title}
+                </a>
+              ) : (
+                item.title
+              )}
               {item.source === "TRENDYOL" && (
                 <span className="text-[10px] text-[var(--color-muted)] mr-1">(ترندیول)</span>
+              )}
+              {item.variantLabel && (
+                <span className="text-xs text-[var(--color-muted)] mr-1">({item.variantLabel})</span>
               )}
             </span>
             {isCustomerTurn && (

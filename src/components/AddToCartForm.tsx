@@ -8,10 +8,14 @@ import { useColorSync } from "@/components/ColorSyncProvider";
 import { WishlistButton } from "@/components/WishlistButton";
 import { SizeGuideButton } from "@/components/SizeGuideButton";
 import { AdminAddToOrderButton } from "@/components/AdminAddToOrderButton";
+import { trackAddToCart } from "@/lib/analytics";
 
 type VariantOption = {
   id: string;
-  stock: number;
+  // null یعنی داده‌ی موجودیِ واقعی نداریم (مثلاً ترندیول همیشه عددِ دقیق
+  // نمی‌ده) -- در این حالت نباید فرضِ «فقط ۱ عدد موجوده» بذاریم، چون این یه
+  // پیغامِ کمبودِ کاذب به مشتری می‌ده. null یعنی «موجوده، بدون سقفِ مشخص»
+  stock: number | null;
   priceDiff: number;
   values: { attribute: string; value: string }[];
 };
@@ -65,7 +69,10 @@ export function AddToCartForm({
   isWishlisted = false,
   fastShipping = false,
   sizeGuideImage = null,
+  sizeGuideId,
   initialAttrs,
+  fixedVariantLabel,
+  siteLabel,
 }: {
   productId: string;
   slugOrId: string;
@@ -84,9 +91,18 @@ export function AddToCartForm({
   isWishlisted?: boolean;
   fastShipping?: boolean; // نشون‌دادن بج «ارسال فوری» گوشه‌ی دکمه‌ی افزودن به سبد
   sizeGuideImage?: string | null; // عکس راهنمای سایز مخصوص دسته‌بندی+برند این محصول -- اگه null باشه دکمه نشون داده نمی‌شه
+  sizeGuideId?: string; // برای گرفتنِ ردیف‌های عددی (قد/وزن) ویجتِ پیشنهاد سایز
   // ویژگی‌هایی که از فیلترهای صفحه‌ی لیست یا کلیک روی رنگ کارت محصول از قبل مشخص شدن
   // (attribute -> value) -- اگه موجود و معتبر باشن از قبل انتخاب می‌شن
   initialAttrs?: Record<string, string>;
+  // برای ترندیول: رنگ، برخلاف سایز، توی همین صفحه انتخاب نمی‌شه (هر رنگ صفحه‌ی
+  // جدای خودشو داره) -- پس به‌جای یه attribute توی selected، مستقیم از بیرون
+  // (خودِ صفحه‌ی محصول) به‌عنوان بخش ثابتِ برچسبِ سبد/سفارش پاس داده می‌شه
+  fixedVariantLabel?: string;
+  // فقط ترندیول -- اسم دقیقِ سایتِ خارجی («ترندیول» یا «میلا») که این محصول
+  // ازش اومده؛ روی خودِ قلمِ سبد ذخیره می‌شه تا وقتی سبد هم‌زمان از هر دو سایت
+  // قلم داشت، بشه فرقشون رو نشون داد (هردو source="TRENDYOL" دارن)
+  siteLabel?: string;
 }) {
   const { addItem, items } = useCart();
   const { setSelectedColor } = useColorSync();
@@ -230,7 +246,7 @@ export function AddToCartForm({
       const fixed = Object.entries(s);
       const candidates = variants.filter(
         (v) =>
-          v.stock > 0 &&
+          (v.stock === null || v.stock > 0) &&
           fixed.every(([groupKey, slot]) =>
             v.values.some(
               (val) =>
@@ -278,7 +294,7 @@ export function AddToCartForm({
     if (!variants) return false;
     const myGroupKey = groupKeyOf(attribute);
     return variants.some((v) => {
-      if (v.stock <= 0) return false;
+      if (v.stock !== null && v.stock <= 0) return false;
       const matchesThisValue = v.values.some(
         (val) => val.attribute === attribute && val.value === value
       );
@@ -293,10 +309,12 @@ export function AddToCartForm({
   const needsVariant = attributeGroups.length > 0;
   const cartId = `${productId}${matchedVariant ? "-" + matchedVariant.id : ""}`;
   const alreadyInCart = items.find((i) => i.id === cartId)?.quantity ?? 0;
-  const remainingStock = matchedVariant ? Math.max(0, matchedVariant.stock - alreadyInCart) : null;
-  const atStockLimit = !!matchedVariant && matchedVariant.stock > 0 && remainingStock === 0;
+  const remainingStock =
+    matchedVariant && matchedVariant.stock !== null ? Math.max(0, matchedVariant.stock - alreadyInCart) : null;
+  const atStockLimit = !!matchedVariant && matchedVariant.stock !== null && matchedVariant.stock > 0 && remainingStock === 0;
   const canAdd =
-    !needsVariant || (matchedVariant && matchedVariant.stock > 0 && !atStockLimit && quantity > 0);
+    !needsVariant ||
+    (matchedVariant && (matchedVariant.stock === null || matchedVariant.stock > 0) && !atStockLimit && quantity > 0);
   const finalPrice = basePrice + (matchedVariant?.priceDiff ?? 0);
 
   // با عوض شدن ترکیب انتخابی، تعداد رو به ۱ برمی‌گردونیم و اگه از موجودی جدید بیشتره کم می‌کنیم
@@ -305,10 +323,13 @@ export function AddToCartForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchedVariant?.id]);
 
+  const currentVariantLabel = [
+    ...(fixedVariantLabel ? [fixedVariantLabel] : []),
+    ...Object.values(selected).map((s) => `${s.attribute}: ${s.value}`),
+  ].join(" / ");
+
   function buildCartItem() {
-    const variantLabel = Object.values(selected)
-      .map((s) => `${s.attribute}: ${s.value}`)
-      .join(" / ");
+    const variantLabel = currentVariantLabel;
 
     return {
       id: cartId,
@@ -325,21 +346,26 @@ export function AddToCartForm({
           : undefined,
       quantity,
       variantLabel: variantLabel || undefined,
-      maxStock: matchedVariant?.stock,
+      maxStock: matchedVariant?.stock ?? undefined,
       fastShipping,
+      siteLabel,
     };
   }
 
   function handleAdd() {
     if (!canAdd) return;
-    addItem(buildCartItem());
+    const item = buildCartItem();
+    addItem(item);
+    trackAddToCart({ id: item.id, title: item.title, price: item.price, quantity: item.quantity });
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   }
 
   function handleBuyNow() {
     if (!canAdd) return;
-    addItem(buildCartItem());
+    const item = buildCartItem();
+    addItem(item);
+    trackAddToCart({ id: item.id, title: item.title, price: item.price, quantity: item.quantity });
     router.push("/checkout");
   }
 
@@ -389,7 +415,9 @@ export function AddToCartForm({
                   </span>
                 )}
               </p>
-              {isSizeGroup && sizeGuideImage && <SizeGuideButton imageUrl={sizeGuideImage} />}
+              {isSizeGroup && sizeGuideImage && (
+                <SizeGuideButton imageUrl={sizeGuideImage} sizeGuideId={sizeGuideId} />
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               {(isGroup
@@ -626,6 +654,7 @@ export function AddToCartForm({
         image={image}
         price={finalPrice}
         quantity={quantity}
+        variantLabel={currentVariantLabel || undefined}
         disabled={!canAdd}
       />
     </div>

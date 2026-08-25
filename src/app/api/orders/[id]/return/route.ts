@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { z } from "zod";
 
 const RETURN_WINDOW_DAYS = 7;
@@ -147,6 +148,13 @@ export async function POST(
       })),
     });
   }
+
+  await notifyCustomerOutbound({
+    userId: order.userId,
+    eventType: "RETURN_SUBMITTED",
+    title: `درخواست مرجوعی سفارش #${id.slice(-8)} ثبت شد`,
+    body: `درخواست مرجوعی برای ${parsed.data.items.length.toLocaleString("fa-IR")} کالای سفارش #${id.slice(-8)} ثبت شد و پس از بررسی ادمین، نتیجه اطلاع‌رسانی می‌شود.`,
+  });
 
   return NextResponse.json(returnRequest, { status: 201 });
 }

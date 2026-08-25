@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { PhotoReview } from "@/lib/reviews";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 
 // «نظرات عکس‌دار محبوب» -- مثل بخش ترندیول، ولی بر پایه‌ی نظرات واقعی تاییدشده‌ی
 // خودمون که کاربر عکس ضمیمه‌شون کرده
@@ -13,7 +14,7 @@ export function PhotoReviewsShowcase({ reviews }: { reviews: PhotoReview[] }) {
         style={{ background: "linear-gradient(90deg, #f2a71a, #f27a1a)" }}
       >
         <h2 className="text-white font-extrabold text-lg mb-4">نظرات عکس‌دار محبوب</h2>
-        <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+        <HorizontalScroller>
           {reviews.map((r) => (
             <Link
               key={r.id}
@@ -51,7 +52,7 @@ export function PhotoReviewsShowcase({ reviews }: { reviews: PhotoReview[] }) {
               </div>
             </Link>
           ))}
-        </div>
+        </HorizontalScroller>
       </div>
     </section>
   );

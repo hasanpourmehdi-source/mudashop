@@ -10,6 +10,10 @@ type OrderItemRow = {
   price: number;
   quantity: number;
   source: "MAZON" | "TRENDYOL";
+  url?: string | null; // لینک داخلیِ صفحه‌ی محصول -- برای کلیک روی عنوان
+  originalUrl?: string | null; // فقط ترندیول -- آدرس واقعیِ محصول روی ترندیول
+  variantLabel?: string | null;
+  secondarySourceUrl?: string | null; // فقط ترندیول -- لینک تامین‌کننده‌ی دوم، فقط برای ادمین
 };
 
 // ویرایش اقلام سفارش (تعداد/قیمت/حذف) -- فقط تا وقتی سفارش منتظر تأیید
@@ -27,15 +31,20 @@ export function AdminOrderItemsEditor({
   itemsNegotiationStatus: string;
 }) {
   const router = useRouter();
-  const [drafts, setDrafts] = useState<Record<string, { quantity: string; price: string; reason: string }>>(
+  const [drafts, setDrafts] = useState<
+    Record<string, { quantity: string; price: string; reason: string; secondarySourceUrl: string }>
+  >(
     Object.fromEntries(
-      items.map((i) => [i.id, { quantity: String(i.quantity), price: String(i.price), reason: "" }])
+      items.map((i) => [
+        i.id,
+        { quantity: String(i.quantity), price: String(i.price), reason: "", secondarySourceUrl: i.secondarySourceUrl ?? "" },
+      ])
     )
   );
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  function updateDraft(id: string, field: "quantity" | "price" | "reason", value: string) {
+  function updateDraft(id: string, field: "quantity" | "price" | "reason" | "secondarySourceUrl", value: string) {
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   }
 
@@ -50,6 +59,7 @@ export function AdminOrderItemsEditor({
         quantity: Number(draft.quantity || 0),
         price: Number(draft.price || 0),
         reason: draft.reason.trim() || undefined,
+        secondarySourceUrl: draft.secondarySourceUrl.trim(),
       }),
     });
     setSavingId(null);
@@ -96,14 +106,45 @@ export function AdminOrderItemsEditor({
       )}
 
       {items.map((item) => {
-        const draft = drafts[item.id] ?? { quantity: String(item.quantity), price: String(item.price), reason: "" };
+        const draft =
+          drafts[item.id] ??
+          { quantity: String(item.quantity), price: String(item.price), reason: "", secondarySourceUrl: "" };
         return (
           <div key={item.id} className="border cut-line rounded-lg p-3 bg-white text-sm space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium">
-                {item.title}
+                {item.url ? (
+                  <a href={item.url} className="text-[var(--color-wine)] hover:underline">
+                    {item.title}
+                  </a>
+                ) : (
+                  item.title
+                )}
                 {item.source === "TRENDYOL" && (
                   <span className="text-[10px] text-[var(--color-muted)] mr-1">(ترندیول)</span>
+                )}
+                {item.variantLabel && (
+                  <span className="text-xs text-[var(--color-muted)] mr-1">({item.variantLabel})</span>
+                )}
+                {item.originalUrl && (
+                  <a
+                    href={item.originalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[10px] text-[var(--color-wine)] hover:underline mt-0.5"
+                  >
+                    🔗 لینک اصلی
+                  </a>
+                )}
+                {item.secondarySourceUrl && (
+                  <a
+                    href={item.secondarySourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[10px] text-[var(--color-ochre)] hover:underline mt-0.5"
+                  >
+                    🔗 لینک اصلی ۲ (فقط ادمین)
+                  </a>
                 )}
               </span>
               <button
@@ -153,6 +194,21 @@ export function AdminOrderItemsEditor({
                 placeholder="مثلاً: این کالا دیگه موجود نیست، این مورد مشابه رو پیشنهاد می‌کنیم"
               />
             </div>
+            {item.source === "TRENDYOL" && (
+              <div>
+                <span className="text-[10px] text-[var(--color-muted)] block mb-0.5">
+                  لینک اصلی ۲ (اختیاری -- اگه لینک اصلی مشکل داشت/ناموجود بود و همین کالا رو از یه تامین‌کننده‌ی
+                  دیگه پیدا کردی؛ فقط برای خودت، مشتری هیچ‌وقت این لینک رو نمی‌بینه)
+                </span>
+                <input
+                  value={draft.secondarySourceUrl}
+                  onChange={(e) => updateDraft(item.id, "secondarySourceUrl", e.target.value)}
+                  dir="ltr"
+                  className="w-full border cut-line rounded-lg px-2 py-1 text-sm"
+                  placeholder="https://..."
+                />
+              </div>
+            )}
           </div>
         );
       })}

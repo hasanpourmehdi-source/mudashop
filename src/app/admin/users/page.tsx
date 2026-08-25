@@ -10,6 +10,8 @@ type User = {
   role: "CUSTOMER" | "ADMIN";
   status: "ACTIVE" | "BANNED";
   createdAt: string;
+  lockedUntil: string | null;
+  emailVerified: string | null;
   _count: { orders: number };
 };
 
@@ -47,6 +49,17 @@ export default function AdminUsersPage() {
     load();
   }
 
+  async function handleUnlock(id: string) {
+    setError((e) => ({ ...e, [id]: "" }));
+    const res = await fetch(`/api/admin/users/${id}/unlock`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError((e) => ({ ...e, [id]: body.error ?? "خطا در باز کردن قفل" }));
+      return;
+    }
+    load();
+  }
+
   async function handleResetPassword(id: string) {
     if (newPassword.trim().length < 6) {
       setError((e) => ({ ...e, [id]: "رمز جدید باید حداقل ۶ کاراکتر باشد" }));
@@ -76,11 +89,22 @@ export default function AdminUsersPage() {
       <div className="space-y-3 max-w-2xl">
         {users.map((user) => {
           const isSelf = user.id === session?.user?.id;
+          const isLocked = !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
           return (
             <div key={user.id} className="border cut-line rounded-lg p-4 bg-white text-sm">
               <div className="flex items-center justify-between mb-1">
                 <span className="font-medium">{user.name ?? user.email}</span>
                 <div className="flex items-center gap-2">
+                  {isLocked && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                      🔒 قفل تا {new Date(user.lockedUntil!).toLocaleTimeString("fa-IR")}
+                    </span>
+                  )}
+                  {!user.emailVerified && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                      ایمیل تأیید‌نشده
+                    </span>
+                  )}
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                       user.status === "ACTIVE"
@@ -126,6 +150,14 @@ export default function AdminUsersPage() {
                   >
                     {user.status === "ACTIVE" ? "غیرفعال کردن" : "فعال کردن"}
                   </button>
+                  {isLocked && (
+                    <button
+                      onClick={() => handleUnlock(user.id)}
+                      className="text-xs px-3 py-1 rounded-full font-medium bg-amber-100 text-amber-700"
+                    >
+                      باز کردن قفل
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setPasswordEditId(passwordEditId === user.id ? null : user.id);

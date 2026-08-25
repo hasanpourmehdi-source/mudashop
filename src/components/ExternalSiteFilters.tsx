@@ -372,15 +372,19 @@ export function ExternalSiteFilters({
   // اگه جواب داد، همون‌جا commit می‌شه (URL عوض می‌شه). اگه نداد، هیچ‌وقت
   // searchParams عوض نشده بوده، پس چک‌باکس خودکار به حالت قبلی برمی‌گرده --
   // مشتری می‌فهمه این فیلتر مجاز نیست، بدون اینکه صفحه‌ی نتایج خراب بشه
+  // خروجی: true اگه ترکیب قبول شد و واقعاً commit شد (URL عوض شد)، false اگه رد
+  // شد یا خطا داد -- صدازننده‌ها باید هر state محلی/optimistic (مثل categoryStack)
+  // رو فقط وقتی true برگشت commit کنن، وگرنه چک‌باکس/چیپ باید به حالت قبلی برگرده
   const validateAndCommit = useCallback(
-    async (candidateCategory: string | null, candidateAttrTokens: string[]) => {
+    async (candidateCategory: string | null, candidateAttrTokens: string[]): Promise<boolean> => {
       // یه درخواست در حال انجامه -- تا تموم نشه (و وقفه‌ش هم رعایت نشه)، درخواست
       // جدید قبول نمی‌کنیم (محافظ اضافه، چون overlay هم جلوی کلیک رو می‌گیره)
-      if (isChecking) return;
+      if (isChecking) return false;
 
       setIsChecking(true);
       setShowRejected(false);
       const startedAt = Date.now();
+      let success = false;
       try {
         const res = await fetch(`/api/marketplaces/${siteSlug}/check-url`, {
           method: "POST",
@@ -396,6 +400,7 @@ export function ExternalSiteFilters({
             category: candidateCategory,
             attrs: candidateAttrTokens.join(",") || null,
           });
+          success = true;
         } else {
           setShowRejected(true);
         }
@@ -409,6 +414,7 @@ export function ExternalSiteFilters({
         }
         setIsChecking(false);
       }
+      return success;
     },
     [siteSlug, updateParams, isChecking]
   );
@@ -457,33 +463,34 @@ export function ExternalSiteFilters({
     return [...withoutGender, `جنسیت~${section.fa}`];
   }
 
-  function checkCategory(category: DynamicCategory) {
+  async function checkCategory(category: DynamicCategory) {
     const newStack = [...categoryStack, category];
     const newToken = activeTokenFor(newStack);
     const withoutOld = withGenderTokenForCurrentSection(removeAllCategoryTokens(selectedAttrs));
     const nextAttrs = newToken ? [...withoutOld, newToken] : withoutOld;
-    validateAndCommit(selectedCategory || null, nextAttrs);
-    setCategoryStack(newStack);
+    const committed = await validateAndCommit(selectedCategory || null, nextAttrs);
+    if (committed) setCategoryStack(newStack);
   }
 
   // برداشتن تیک یه چیپ خاص، هم خودش هم هر چیپ عمیق‌تری که بعدش انتخاب شده رو
   // پاک می‌کنه -- چون اون‌ها منطقاً به این یکی وابسته بودن. بعدش اگه هنوز
   // چیپی مونده باشه، عمیق‌ترینِ باقی‌مونده می‌شه توکن فعال جدید
-  function uncheckChipAt(index: number) {
+  async function uncheckChipAt(index: number) {
     const newStack = categoryStack.slice(0, index);
     const newToken = activeTokenFor(newStack);
     const withoutOld = withGenderTokenForCurrentSection(removeAllCategoryTokens(selectedAttrs));
     const nextAttrs = newToken ? [...withoutOld, newToken] : withoutOld;
-    validateAndCommit(selectedCategory || null, nextAttrs);
-    setCategoryStack(newStack);
+    const committed = await validateAndCommit(selectedCategory || null, nextAttrs);
+    if (committed) setCategoryStack(newStack);
   }
 
   // بازگشت کامل به گرید ۱۰تایی -- هم دسته‌بندی خام (اگه انتخاب شده بود) از
   // URL پاک می‌شه، هم selectedTopSection ریست می‌شه
-  function clearTopSection() {
+  async function clearTopSection() {
     const withoutCategory = removeAllCategoryTokens(selectedAttrs);
     if (withoutCategory.length !== selectedAttrs.length) {
-      validateAndCommit(selectedCategory || null, withoutCategory);
+      const committed = await validateAndCommit(selectedCategory || null, withoutCategory);
+      if (!committed) return;
     }
     setCategoryStack([]);
     setSelectedTopSection(null);
@@ -661,8 +668,13 @@ export function ExternalSiteFilters({
           پشت‌سرهم باعث چندتا درخواست هم‌زمان به ترندیول نشه */}
       {busy && <div className="fixed inset-0 z-50 cursor-wait" aria-hidden="true" />}
 
+      {/* sticky+محدودیت‌ارتفاع فقط توی چیدمان دوستونه (md به بالا) معنی داره --
+          پایین‌تر از md که فیلترها و نتیجه‌ها زیر هم قرار می‌گیرن (نه کنار هم)،
+          sticky باعث می‌شد این باکس تا نزدیک ارتفاع کامل صفحه بچسبه و کاربر
+          حس کنه لیست محصولات اصلاً وجود نداره (باید کلی اسکرول داخلیِ خودِ
+          فیلتر رو رد می‌کرد تا به نتیجه‌ها برسه) */}
       <aside
-        className={`space-y-4 text-sm transition-opacity sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto pl-1 pb-4 ${
+        className={`space-y-4 text-sm transition-opacity md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto pl-1 pb-4 ${
           busy ? "opacity-60 pointer-events-none cursor-wait" : "opacity-100"
         }`}
       >

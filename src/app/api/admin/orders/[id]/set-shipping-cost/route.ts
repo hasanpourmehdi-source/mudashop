@@ -3,7 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { shippingPaymentStatusLabel } from "@/lib/orderStatusMessages";
 import { applyWalletTransaction, getOrCreateWallet } from "@/lib/wallet";
-import { SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { SITE_SETTING_KEYS, getSiteSetting } from "@/lib/siteSettings";
+import { computePaymentDeadline } from "@/lib/orderPaymentDeadline";
+import { computePurchaseSummary } from "@/lib/orderPurchaseStatus";
 import { z } from "zod";
 
 const itemBreakdownSchema = z.object({
@@ -59,6 +61,23 @@ export async function POST(
   if (order.paymentStatus !== "PAID") {
     return NextResponse.json(
       { error: "ابتدا باید پرداخت مبلغ اقلام این سفارش تکمیل شده باشد" },
+      { status: 400 }
+    );
+  }
+  // نباید بشه هزینه ارسال (و در ادامه‌ش کل سفارش) رو جلو برد مگه این‌که فاز ۲
+  // (رسیدنِ فیزیکی/بررسی) هم برای همه‌ی اقلام خارجی تموم شده باشه -- نه فقط
+  // فاز ۱ (خریداری‌شده). صرفاً PURCHASED کافی نیست چون یعنی هنوز فیزیکی به
+  // انبار نرسیده/بررسی نشده (ممکنه گم بشه یا مغایرت داشته باشه)؛ allArrived
+  // همون تعریفیه که خودِ سیستم (notifyIfAllArrived) برای «آماده‌ی ارسال» داره.
+  // بدون این گارد، سفارش می‌تونه بدون تکمیل فاز ۲ تا SHIPPED/DELIVERED بره، و
+  // چون canCustomerCancelOrder دقیقاً روی purchaseStatus اقلام تکیه می‌کنه،
+  // این باعث می‌شه مشتری بتونه سفارشِ تحویل‌داده‌شده رو هم «درخواست لغو» بزنه
+  if (hasExternalItems && !computePurchaseSummary(order.items).allArrived) {
+    return NextResponse.json(
+      {
+        error:
+          "ابتدا باید همه‌ی اقلام خارجی این سفارش خریداری/کنسل و (در صورت خرید) نتیجه‌ی نهایی رسیدنشون ثبت شده باشد",
+      },
       { status: 400 }
     );
   }
@@ -235,6 +254,21 @@ export async function POST(
         receiptSubmittedAt: null,
       },
     });
+
+    // وقتی هزینه ارسال/باربری اعلام می‌شه و هنوز پرداخت نشده، یه مهلت پرداخت
+    // (PAYMENT_DEADLINE_H ساعت) ست می‌شه -- اگه مشتری تا اون موقع واریز نکنه،
+    // سفارش (در صورتی که هنوز خریدی انجام نشده باشه) به‌صورت خودکار لغو می‌شه
+    if (!paidNow) {
+      await tx.order.update({
+        where: { id },
+        data: {
+          paymentDeadlineAt: computePaymentDeadline(
+            new Date(),
+            Number(await getSiteSetting(SITE_SETTING_KEYS.PAYMENT_DEADLINE_H)) || 48
+          ),
+        },
+      });
+    }
 
     // هر بار که کارتی برای دور دوم تخصیص داده می‌شه (حتی اگه دفعه‌ی قبلی رد
     // شده باشه و الان کارت دیگه‌ای انتخاب شده) یه ردیف جدید ثبت می‌شه، نه

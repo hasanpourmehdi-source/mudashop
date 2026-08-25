@@ -130,7 +130,7 @@ export function ProductCard({
         ) : (
           <WishlistButton
             trendyol={{
-              externalId: product.slugOrId,
+              externalId: product.externalId ?? product.slugOrId,
               title: product.title,
               image: product.image,
               url: product.sourceUrl,

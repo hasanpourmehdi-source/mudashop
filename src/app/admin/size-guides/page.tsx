@@ -8,6 +8,14 @@ import { ImageUploadField } from "@/components/ImageUploadField";
 
 type Category = { id: string; name: string; parentId: string | null };
 type Brand = { id: string; name: string };
+type SizeChartRow = {
+  id: string;
+  sizeLabel: string;
+  minHeightCm: number | null;
+  maxHeightCm: number | null;
+  minWeightKg: number | null;
+  maxWeightKg: number | null;
+};
 type SizeGuide = {
   id: string;
   categoryId: string;
@@ -15,10 +23,116 @@ type SizeGuide = {
   imageUrl: string;
   category: { name: string };
   brand: { name: string };
+  rows: SizeChartRow[];
 };
+
+// مدیریتِ ردیف‌های عددیِ (سایز -> بازه‌ی قد/وزن) یک راهنمای سایز -- برای
+// ویجتِ «پیشنهاد سایز» توی صفحه‌ی محصول. هر ردیف کاملاً اختیاریه (بازه‌ی خالی
+// یعنی «بدون محدودیت»)
+function SizeRowsEditor({ sizeGuideId, rows, onChanged }: { sizeGuideId: string; rows: SizeChartRow[]; onChanged: () => void }) {
+  const [sizeLabel, setSizeLabel] = useState("");
+  const [minHeightCm, setMinHeightCm] = useState("");
+  const [maxHeightCm, setMaxHeightCm] = useState("");
+  const [minWeightKg, setMinWeightKg] = useState("");
+  const [maxWeightKg, setMaxWeightKg] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function addRow(e: React.FormEvent) {
+    e.preventDefault();
+    if (!sizeLabel.trim()) return;
+    setSaving(true);
+    await fetch(`/api/admin/size-guides/${sizeGuideId}/rows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sizeLabel: sizeLabel.trim(),
+        minHeightCm: minHeightCm ? Number(minHeightCm) : null,
+        maxHeightCm: maxHeightCm ? Number(maxHeightCm) : null,
+        minWeightKg: minWeightKg ? Number(minWeightKg) : null,
+        maxWeightKg: maxWeightKg ? Number(maxWeightKg) : null,
+      }),
+    });
+    setSaving(false);
+    setSizeLabel("");
+    setMinHeightCm("");
+    setMaxHeightCm("");
+    setMinWeightKg("");
+    setMaxWeightKg("");
+    onChanged();
+  }
+
+  async function deleteRow(rowId: string) {
+    await fetch(`/api/admin/size-guides/${sizeGuideId}/rows/${rowId}`, { method: "DELETE" });
+    onChanged();
+  }
+
+  return (
+    <div className="mt-2 border-t cut-line pt-2 space-y-2">
+      {rows.length > 0 && (
+        <ul className="text-xs space-y-1">
+          {rows.map((r) => (
+            <li key={r.id} className="flex items-center justify-between gap-2">
+              <span>
+                {r.sizeLabel}: قد {r.minHeightCm ?? "—"}–{r.maxHeightCm ?? "—"} / وزن {r.minWeightKg ?? "—"}–
+                {r.maxWeightKg ?? "—"}
+              </span>
+              <button onClick={() => deleteRow(r.id)} className="text-red-600 hover:underline shrink-0">
+                حذف
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={addRow} className="grid grid-cols-2 gap-1.5">
+        <input
+          placeholder="سایز (مثلا M)"
+          value={sizeLabel}
+          onChange={(e) => setSizeLabel(e.target.value)}
+          className="border cut-line rounded px-2 py-1 text-xs col-span-2"
+        />
+        <input
+          type="number"
+          placeholder="حداقل قد"
+          value={minHeightCm}
+          onChange={(e) => setMinHeightCm(e.target.value)}
+          className="border cut-line rounded px-2 py-1 text-xs"
+        />
+        <input
+          type="number"
+          placeholder="حداکثر قد"
+          value={maxHeightCm}
+          onChange={(e) => setMaxHeightCm(e.target.value)}
+          className="border cut-line rounded px-2 py-1 text-xs"
+        />
+        <input
+          type="number"
+          placeholder="حداقل وزن"
+          value={minWeightKg}
+          onChange={(e) => setMinWeightKg(e.target.value)}
+          className="border cut-line rounded px-2 py-1 text-xs"
+        />
+        <input
+          type="number"
+          placeholder="حداکثر وزن"
+          value={maxWeightKg}
+          onChange={(e) => setMaxWeightKg(e.target.value)}
+          className="border cut-line rounded px-2 py-1 text-xs"
+        />
+        <button
+          type="submit"
+          disabled={saving || !sizeLabel.trim()}
+          className="col-span-2 border cut-line rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+        >
+          {saving ? "..." : "+ افزودن ردیف"}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default function AdminSizeGuidesPage() {
   const [sizeGuides, setSizeGuides] = useState<SizeGuide[]>([]);
+  const [expandedRowsId, setExpandedRowsId] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
 
@@ -146,9 +260,20 @@ export default function AdminSizeGuidesPage() {
               </div>
               <p className="font-medium">{g.brand.name}</p>
               <p className="text-[var(--color-muted)] text-xs mb-2">{g.category.name}</p>
-              <button onClick={() => handleDelete(g.id)} className="text-red-600 hover:underline text-xs">
-                حذف
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => handleDelete(g.id)} className="text-red-600 hover:underline text-xs">
+                  حذف
+                </button>
+                <button
+                  onClick={() => setExpandedRowsId(expandedRowsId === g.id ? null : g.id)}
+                  className="text-[var(--color-wine)] hover:underline text-xs"
+                >
+                  ردیف‌های قد/وزن ({g.rows.length})
+                </button>
+              </div>
+              {expandedRowsId === g.id && (
+                <SizeRowsEditor sizeGuideId={g.id} rows={g.rows} onChanged={load} />
+              )}
             </div>
           ))}
           {sizeGuides.length === 0 && (

@@ -79,7 +79,7 @@ function ResetPasswordForm() {
     <div className="max-w-sm mx-auto px-4 py-16">
       <h1 className="text-xl font-bold mb-6 text-center">تعیین رمز جدید</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">رمز عبور جدید</label>
           <input

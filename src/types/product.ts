@@ -2,7 +2,12 @@
 export type UnifiedProduct = {
   id: string; // برای مزون: cuid ، برای ترندیول: "trendyol-<id>"
   source: "MAZON" | "TRENDYOL";
-  slugOrId: string; // برای لینک به صفحه جزئیات
+  slugOrId: string; // برای لینک به صفحه جزئیات -- ممکنه شاملِ اسلاگِ سئو هم باشه (مثلاً "928069663-...")
+  // فقط وقتی slugOrId خودِ externalId خام نیست (مثلاً وقتی شاملِ اسلاگِ سئو هم
+  // شده) پر می‌شه -- برای ویشلیست/سبد که به contentId خامِ ترندیول نیاز دارن،
+  // نه به اسلاگِ کاملِ آدرس. وقتی خالیه، همون slugOrId به‌عنوان externalId خام
+  // استفاده می‌شه (رفتار قبلی، برای محصولات دموی قدیمی)
+  externalId?: string;
   title: string;
   brand?: string | null;
   price: number; // قیمت نهایی (با تخفیف اعمال‌شده) به تومان

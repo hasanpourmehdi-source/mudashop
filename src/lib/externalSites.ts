@@ -200,7 +200,7 @@ const TURKISH_CHAR_MAP: Record<string, string> = {
 // و علامت + («50 x 60 + 60 x 100» -> 50-x-60---60-x-100) همه با خط‌تیره
 // جایگزین می‌شن -- هرکدوم جدا (نه اینکه چندتا پشت‌سرهم یه خط‌تیره بشن، برای
 // همین از [ ] ساده استفاده می‌کنیم نه [ ]+ که رشته‌های پشت‌سرهم رو یکی می‌کنه)
-function normalizeUrlValue(value: string): string {
+export function normalizeUrlValue(value: string): string {
   const lowered = value.trim().toLowerCase();
   const transliterated = lowered.replace(/[üşığçö]/g, (ch) => TURKISH_CHAR_MAP[ch] ?? ch);
   return transliterated.replace(/[\s,+]/g, "-");
@@ -210,7 +210,7 @@ function normalizeUrlValue(value: string): string {
 // دقیقاً همون چیزی که تو URL واقعی ترندیول دیده رو کپی می‌کنه. ولی "|" یه کاراکتر
 // خامه که تو query string معتبر نیست -- باید حتماً %7C بشه، وگرنه ترندیول 404
 // می‌ده (برخلاف "=" و "&" که بخشی از ساختار خود query هستن و نباید encode بشن)
-function encodeRawPipe(part: string): string {
+export function encodeRawPipe(part: string): string {
   return part.replace(/\|/g, "%7C");
 }
 
@@ -411,6 +411,10 @@ export async function resolveActiveFilterChips(
     string,
     { valueId: string; filterKey: string; chip: ActiveFilterChip }[]
   >();
+  // ویژگی‌ها/سایزها (attr=/vr=) از قبل خودِ filterKey رو توی توکن دارن، پس
+  // نیازی به نگاشتِ groupTitle→filterKey ندارن -- فقط اگه کش نشده باشن، یکجا
+  // با یه fetchTrendyolAggregations بدون فیلترِ عنوان (همه‌ی گروه‌ها) حل می‌شن
+  const pendingAttrItems: { filterKey: string; valueId: string; chip: ActiveFilterChip }[] = [];
 
   for (const filter of selectedAttrs) {
     const token = `${filter.attributeName}~${filter.value}`;
@@ -451,7 +455,12 @@ export async function resolveActiveFilterChips(
       const cached = await prisma.trendyolFilterCache.findUnique({
         where: { site_filterKey_valueId: { site, filterKey: attrFilterKey, valueId } },
       });
-      chips.push({ token, label: cached?.nameFa ?? cached?.nameTr ?? filter.value });
+      const chip = { token, label: cached?.nameFa ?? cached?.nameTr ?? filter.value };
+      chips.push(chip);
+      // اگه هنوز کش نشده (مثلاً سایزی که تازه از سرچ/گرید انتخاب شده، نه از
+      // سایدبار سینک‌شده)، به‌جای نشون‌دادنِ خودِ توکنِ خام (filterKey|valueId)،
+      // پایین‌تر یکجا با aggregations زنده جایگزینش می‌کنیم
+      if (!cached) pendingAttrItems.push({ filterKey: attrFilterKey, valueId, chip });
       continue;
     }
 
@@ -508,6 +517,38 @@ export async function resolveActiveFilterChips(
         // زنده هم شکست خورد -- همون آیدی خام (که قبلاً به‌عنوان لیبل موقت
         // گذاشته شده) می‌مونه؛ حداقل صفحه از کار نمی‌افته
       }
+    }
+  }
+
+  if (pendingAttrItems.length > 0) {
+    try {
+      // بدون فیلترِ عنوان -- چون filterKey رو از قبل داریم، نیازی به دونستنِ
+      // عنوانِ ترکیِ گروه (مثل «Beden») نیست؛ فقط لازمه بین همه‌ی گروه‌های
+      // برگشتی، گروهِ هم‌filterKey رو پیدا کنیم
+      const allGroups = await fetchTrendyolAggregations({ wc: wcForLiveLookup }, undefined, site);
+      for (const p of pendingAttrItems) {
+        const group = allGroups.find((g) => g.filterKey === p.filterKey);
+        const value = group?.values.find((v) => v.id === p.valueId);
+        if (!value) continue;
+        p.chip.label = value.text;
+        const suggested = await suggestTranslation(value.text);
+        await prisma.trendyolFilterCache.upsert({
+          where: { site_filterKey_valueId: { site, filterKey: p.filterKey, valueId: p.valueId } },
+          update: { nameTr: value.text },
+          create: {
+            site,
+            filterKey: p.filterKey,
+            valueId: p.valueId,
+            nameTr: value.text,
+            nameFa: suggested,
+            nameFaSuggested: suggested !== null,
+            groupTitleTr: group?.title,
+          },
+        });
+      }
+    } catch {
+      // زنده هم شکست خورد -- همون توکنِ خامِ filterKey|valueId که قبلاً
+      // به‌عنوان لیبلِ موقت گذاشته شده می‌مونه؛ حداقل صفحه از کار نمی‌افته
     }
   }
 

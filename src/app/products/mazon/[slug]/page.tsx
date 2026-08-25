@@ -12,8 +12,9 @@ import {
   recordPriceSnapshotIfNeeded,
   fetchViewCount24h,
   fetchIsLowestPrice10d,
-} from "@/lib/products";
-import { advanceExpiredReservationQueues } from "@/lib/stockNotify";
+  fetchPriceHistory,
+} from "@/lib/products";import { advanceExpiredReservationQueues } from "@/lib/stockNotify";
+import { checkPriceAlerts } from "@/lib/priceAlert";
 import { auth } from "@/lib/auth";
 import { fetchFixedAttributesForCategory } from "@/lib/facets";
 import { fetchWishlistedProductIds } from "@/lib/wishlist";
@@ -26,7 +27,38 @@ import { ProductGallery } from "@/components/ProductGallery";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { ColorSyncProvider } from "@/components/ColorSyncProvider";
 import { HorizontalProductCarousel } from "@/components/HorizontalProductCarousel";
+import { RecentlyViewedRecorder } from "@/components/RecentlyViewedRecorder";
+import { CompareToggleButton } from "@/components/CompareToggleButton";
+import { PriceAlertWidget } from "@/components/PriceAlertWidget";
+import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { fetchRelatedProducts } from "@/lib/recommend";
+import { ProductJsonLd } from "@/components/ProductJsonLd";
+import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
+import type { Metadata } from "next";
+
+// متادیتای سئو صفحه‌ی محصول مزون -- عنوان، توضیح، تصویر OG و canonical
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const product = await fetchMazonProductBySlug(slug);
+  if (!product) return {};
+
+  const description = toMetaDescription(product.description);
+  const url = siteUrl(`/products/mazon/${product.slugOrId}`);
+
+  return {
+    title: product.title,
+    description: description || `خرید ${product.title} — ${priceFa(product.price)}`,
+    alternates: { canonical: `/products/mazon/${product.slugOrId}` },
+    openGraph: {
+      type: "website",
+      title: product.title,
+      description,
+      url,
+      images: product.images.slice(0, 4).map((img) => ({ url: img })),
+    },
+  };
+}
 
 export default async function MazonProductPage({
   params,
@@ -48,6 +80,7 @@ export default async function MazonProductPage({
 
   const [
     relatedProducts,
+    similarProducts,
     breadcrumb,
     ratingSummary,
     purchaseCount,
@@ -58,8 +91,10 @@ export default async function MazonProductPage({
     sizeGuideImage,
     viewCount24h,
     isLowestPrice10d,
+    priceHistory,
   ] = await Promise.all([
     fetchFrequentlyBoughtTogether(product.id),
+    fetchRelatedProducts(product.id),
     product.categorySlug ? fetchCategoryBreadcrumb(product.categorySlug) : Promise.resolve([]),
     fetchProductRatingSummary(product.id),
     fetchProductPurchaseCount(product.id),
@@ -70,11 +105,14 @@ export default async function MazonProductPage({
     fetchSizeGuideImage(product.categoryId, product.brandId),
     fetchViewCount24h(product.id),
     fetchIsLowestPrice10d(product.id, product.price),
+    fetchPriceHistory(product.id, product.price),
   ]);
 
   // ثبت این بازدید و عکس قیمت امروز -- بدون بلاک کردن رندر صفحه
   recordProductView(product.id);
   recordPriceSnapshotIfNeeded(product.id, product.price);
+  // چک اخطارهای کاهش قیمت با قیمتِ فعلی -- lazy روی بازدید صفحه (مثل صف موجودی)
+  checkPriceAlerts(product.id, product.price);
 
   const variantOptions = product.variants.map((v) => ({
     id: v.id,
@@ -104,6 +142,36 @@ export default async function MazonProductPage({
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 pt-4 pb-8">
+      <ProductJsonLd
+        product={{
+          id: product.id,
+          title: product.title,
+          description: product.description,
+          images: product.images,
+          brand: product.brand,
+          price: product.price,
+          originalPrice: product.originalPrice,
+          discount: product.discount,
+          rating: ratingSummary.avg,
+          reviewCount: ratingSummary.count,
+          categoryName: product.categoryName,
+        }}
+        url={siteUrl(`/products/mazon/${product.slugOrId}`)}
+      />
+      <RecentlyViewedRecorder
+        product={{
+          id: product.id,
+          source: "MAZON",
+          slugOrId: product.slugOrId,
+          title: product.title,
+          image: product.image,
+          price: product.price,
+          originalPrice: product.originalPrice,
+          discount: product.discount,
+          href: `/products/mazon/${product.slugOrId}`,
+          viewedAt: new Date().toISOString(),
+        }}
+      />
       <Breadcrumb
         items={[
           ...breadcrumbItems,
@@ -191,9 +259,35 @@ export default async function MazonProductPage({
           colorImages={product.colorImages}
           isWishlisted={wishlistedIds.has(product.id)}
           fastShipping={product.fastShipping}
-          sizeGuideImage={sizeGuideImage}
+          sizeGuideImage={sizeGuideImage?.imageUrl}
+          sizeGuideId={sizeGuideImage?.id}
           initialAttrs={initialAttrs}
         />
+
+        <div className="mt-3">
+          <CompareToggleButton
+            product={{
+              id: product.id,
+              slug: product.slugOrId,
+              title: product.title,
+              image: product.image,
+              price: product.price,
+              originalPrice: product.originalPrice,
+              discount: product.discount,
+              brand: product.brand ?? null,
+              categoryName: product.categoryName ?? null,
+              fastShipping: Boolean(product.fastShipping),
+              rating: {
+                avg: ratingSummary.avg,
+                count: ratingSummary.count,
+              },
+              specifications: [],
+              attributes: [],
+            }}
+          />
+        </div>
+
+        <PriceAlertWidget productId={product.id} currentPrice={product.price} />
 
         <p className="mt-4 text-xs text-[var(--color-muted)] leading-relaxed border-t cut-line pt-4">
           <strong className="text-[var(--color-ink)]">شرایط مرجوع کردن کالا: </strong>
@@ -236,6 +330,44 @@ export default async function MazonProductPage({
       </div>
       </ColorSyncProvider>
 
+      {priceHistory.points.length >= 2 && (
+        <section className="mt-10 pt-8 border-t cut-line">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="font-bold text-lg">تاریخچه قیمت</h2>
+            <p className="text-xs text-[var(--color-muted)]">
+              {priceHistory.isLowest && (
+                <span className="font-bold text-emerald-700 ml-2">↘ قیمت فعلی کمترین قیمت است</span>
+              )}
+              در {priceHistory.dayCount.toLocaleString("fa-IR")} روز اخیر
+            </p>
+          </div>
+          <div className="grid md:grid-cols-[1fr_180px] gap-6 items-start">
+            <PriceHistoryChart history={priceHistory} />
+            <div className="grid grid-cols-2 md:grid-cols-1 gap-2 text-sm">
+              <div className="bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
+                <p className="text-[11px] text-[var(--color-muted)]">کمترین</p>
+                <p className="font-bold">{priceHistory.min.toLocaleString("fa-IR")} تومان</p>
+              </div>
+              <div className="bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
+                <p className="text-[11px] text-[var(--color-muted)]">بیشترین</p>
+                <p className="font-bold">{priceHistory.max.toLocaleString("fa-IR")} تومان</p>
+              </div>
+              <div className="bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
+                <p className="text-[11px] text-[var(--color-muted)]">میانگین</p>
+                <p className="font-bold">{priceHistory.avg.toLocaleString("fa-IR")} تومان</p>
+              </div>
+              <div className="bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
+                <p className="text-[11px] text-[var(--color-muted)]">قیمت فعلی</p>
+                <p className="font-bold text-[var(--color-wine)]">{priceHistory.current.toLocaleString("fa-IR")} تومان</p>
+              </div>
+            </div>
+          </div>
+          <p className="text-[10px] text-[var(--color-muted)] mt-3">
+            نمودار بر اساس ثبت روزانه‌ی قیمت هنگام بازدید صفحه ساخته می‌شود.
+          </p>
+        </section>
+      )}
+
       <ReviewsSection productId={product.id} />
       <QASection productId={product.id} />
 
@@ -243,6 +375,16 @@ export default async function MazonProductPage({
         <section className="mt-10 pt-8 border-t cut-line">
           <h2 className="font-bold text-lg mb-6">این محصول رو خریدن، این‌ها رو هم خریدن</h2>
           <HorizontalProductCarousel products={relatedProducts} wishlistedIds={wishlistedIds} />
+        </section>
+      )}
+
+      {/* توصیه‌گر همکاری‌فیلترینگ (recommend.ts) -- بر اساس تعامل کاربرانِ دیگه با
+          این محصول (خرید/ویشلیست/نظر/اخطار قیمت)، نه صرفاً هم‌سفارشی؛ برای همین
+          جدا از بخش «با هم خریدن» بالاست */}
+      {similarProducts.length > 0 && (
+        <section className="mt-10 pt-8 border-t cut-line">
+          <h2 className="font-bold text-lg mb-6">محصولات مشابه</h2>
+          <HorizontalProductCarousel products={similarProducts} wishlistedIds={wishlistedIds} />
         </section>
       )}
     </div>

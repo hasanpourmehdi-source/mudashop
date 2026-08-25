@@ -14,7 +14,7 @@ export async function GET() {
   if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const sizeGuides = await prisma.sizeGuide.findMany({
-    include: { category: true, brand: true },
+    include: { category: true, brand: true, rows: { orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "desc" },
   });
   return NextResponse.json(sizeGuides);

@@ -37,6 +37,10 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/flash-sales", label: "حراج فلش" },
       { href: "/admin/campaigns", label: "کمپین برندها" },
       { href: "/admin/stock-notifications", label: "درخواست موجودی" },
+      { href: "/admin/price-alerts", label: "اخطار کاهش قیمت" },
+      { href: "/admin/gift-cards", label: "کارت هدیه" },
+      { href: "/admin/shipments", label: "محموله‌های ترکیبی" },
+      { href: "/admin/poster-generator", label: "پوستر اینستاگرام" },
     ],
   },
   {
@@ -44,6 +48,9 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/admin/users", label: "کاربران" },
       { href: "/admin/wallet-withdrawals", label: "درخواست‌های واریز کیف پول" },
+      { href: "/admin/staff", label: "کارمندان (دسترسی محدود)" },
+      { href: "/admin/audit-log", label: "لاگ فعالیت ادمین" },
+      { href: "/admin/error-log", label: "لاگ خطاهای سایت" },
     ],
   },
   {
@@ -51,6 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/admin/questions", label: "پرسش و پاسخ" },
       { href: "/admin/reviews", label: "نظرات" },
+      { href: "/admin/support", label: "چت پشتیبانی" },
     ],
   },
   {
@@ -59,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/settings", label: "متن‌های سایت" },
       { href: "/admin/exchange-rates", label: "نرخ ارز" },
       { href: "/admin/bank-cards", label: "کارت‌های بانکی" },
+      { href: "/admin/outbound-notifications", label: "لاگ ایمیل/پیامک" },
     ],
   },
 ];
@@ -68,7 +77,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 grid md:grid-cols-[190px_1fr] gap-8">
-      <aside className="space-y-5 text-sm sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto pl-1 pb-4">
+      <aside className="space-y-5 text-sm md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto pl-1 pb-4">
         {NAV_SECTIONS.map((section, i) => (
           <div key={i} className="space-y-1.5">
             {section.title && (

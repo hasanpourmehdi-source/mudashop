@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { revokeOtherSessions, sessionSidFromRequest } from "@/lib/security";
 import { z } from "zod";
 
 const schema = z.object({
@@ -40,6 +41,10 @@ export async function POST(req: Request) {
 
   const hashed = await bcrypt.hash(newPassword, 10);
   await prisma.user.update({ where: { id: user.id }, data: { password: hashed } });
+
+  // امنیت: بعد از تغییر رمز، بقیه‌ی دستگاه‌ها را خارج می‌کنیم (دستگاه فعلی می‌ماند)
+  const currentSid = await sessionSidFromRequest(req);
+  await revokeOtherSessions(user.id, currentSid);
 
   return NextResponse.json({ success: true });
 }

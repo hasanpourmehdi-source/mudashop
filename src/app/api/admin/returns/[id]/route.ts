@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction } from "@/lib/wallet";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { z } from "zod";
 
 const updateSchema = z.object({
@@ -102,6 +103,13 @@ export async function PATCH(
       });
     });
 
+    await notifyCustomerOutbound({
+      userId: returnRequest.order.userId,
+      eventType: "RETURN_DECIDED",
+      title: `وجه مرجوعی سفارش #${returnRequest.order.id.slice(-8)} بازگشت`,
+      body: `وجه مرجوعی سفارش #${returnRequest.order.id.slice(-8)} به کیف پولتان بازگشت داده شد.`,
+    });
+
     const updated = await prisma.returnRequest.findUnique({ where: { id } });
     return NextResponse.json(updated);
   }
@@ -125,5 +133,16 @@ export async function PATCH(
       },
     }),
   ]);
+
+  const statusMessage =
+    STATUS_NOTIFICATION_MESSAGES[parsed.data.status] ??
+    `وضعیت درخواست مرجوعی سفارش #${returnRequest.order.id.slice(-8)} تغییر کرد`;
+  await notifyCustomerOutbound({
+    userId: returnRequest.order.userId,
+    eventType: "RETURN_DECIDED",
+    title: statusMessage,
+    body: statusMessage,
+  });
+
   return NextResponse.json(updated);
 }

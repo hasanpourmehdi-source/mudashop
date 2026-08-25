@@ -28,7 +28,7 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string; itemId: string }> }
 ) {
-  const { ok } = await requireAdmin();
+  const { ok } = await requireAdmin("PURCHASING");
   if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const { id, itemId } = await params;

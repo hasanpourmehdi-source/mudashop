@@ -7,7 +7,13 @@ import { useSession, signOut } from "next-auth/react";
 import { useCart } from "@/hooks/useCart";
 import { SearchBox } from "@/components/SearchBox";
 import { CategoryMegaMenu } from "@/components/CategoryMegaMenu";
+import { MobileMenuSuspense } from "@/components/MobileMenu";
 import { NotificationBell } from "@/components/NotificationBell";
+import { MessageLink } from "@/components/MessageLink";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { InstallAppButton } from "@/components/InstallAppButton";
+import { useLang } from "@/components/LanguageProvider";
+import { t } from "@/lib/i18n";
 import type { CategoryNode, MegaMenuRoot } from "@/lib/categories";
 
 export function Header({
@@ -21,6 +27,7 @@ export function Header({
 }) {
   const { data: session, status } = useSession();
   const { items } = useCart();
+  const { lang } = useLang();
   const cartCount = items.reduce((sum, i) => sum + i.quantity, 0);
   const pathname = usePathname();
 
@@ -109,7 +116,7 @@ export function Header({
                       : "hover:text-[var(--color-ochre)]"
                   }`}
                 >
-                  ✦ موجود در مزون
+                  {t(lang, "mazon")}
                 </Link>
                 {externalSites.map((site) => {
                   const isActive =
@@ -139,7 +146,7 @@ export function Header({
                           : "hover:text-[var(--color-ochre)]"
                       }`}
                     >
-                      کیف پول
+                      {t(lang, "wallet")}
                     </Link>
                     <Link
                       href="/orders"
@@ -149,8 +156,9 @@ export function Header({
                           : "hover:text-[var(--color-ochre)]"
                       }`}
                     >
-                      سفارش‌های من
+                      {t(lang, "myOrders")}
                     </Link>
+                    <MessageLink admin={session.user.role === "ADMIN"} />
                     {session.user.role === "ADMIN" && (
                       <Link
                         href="/admin"
@@ -160,17 +168,19 @@ export function Header({
                             : "hover:text-[var(--color-ochre)]"
                         }`}
                       >
-                        پنل ادمین
+                        {t(lang, "adminPanel")}
                       </Link>
                     )}
                     <button
                       onClick={() => signOut({ callbackUrl: "/" })}
                       className="hover:text-[var(--color-ochre)] transition-colors"
                     >
-                      خروج
+                      {t(lang, "logout")}
                     </button>
                   </>
                 )}
+                <LanguageToggle />
+                <InstallAppButton className="hover:text-[var(--color-ochre)] transition-colors text-xs" />
               </div>
             </div>
           </div>
@@ -193,7 +203,7 @@ export function Header({
                 className="flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
               >
                 <span className="text-lg leading-none">👤</span>
-                {session.user?.name?.split(" ")[0] ?? "پروفایل"}
+                {session.user?.name?.split(" ")[0] ?? t(lang, "profile")}
               </Link>
             ) : (
               <Link
@@ -201,7 +211,7 @@ export function Header({
                 className="flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
               >
                 <span className="text-lg leading-none">👤</span>
-                ورود
+                {t(lang, "login")}
               </Link>
             )}
 
@@ -210,7 +220,7 @@ export function Header({
               className="flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
             >
               <span className="text-lg leading-none">♡</span>
-              علاقه‌مندی‌ها
+              {t(lang, "wishlist")}
             </Link>
 
             <Link
@@ -218,7 +228,7 @@ export function Header({
               className="relative flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
             >
               <span className="text-lg leading-none">🛒</span>
-              سبد خرید
+              {t(lang, "cart")}
               {cartCount > 0 && (
                 <span className="absolute -top-1 -left-3 bg-[var(--color-wine)] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
                   {cartCount}
@@ -227,6 +237,9 @@ export function Header({
             </Link>
           </div>
         </div>
+
+        {/* جستجو + دسته‌بندی موبایل -- فقط در اندازه‌های md و کوچک‌تر */}
+        {!isAdminPage && <MobileMenuSuspense categories={categories} genderGroups={genderGroups} />}
 
         {/* منوی دسته‌بندی‌های افقی -- عمداً داخل همون div چسبناک بالاست (نه
             بیرونش)، تا جمع‌شدنش با اسکرول به پایین هیچ فضای خالی نذاره -- فقط

@@ -201,7 +201,7 @@ export function AdminOrderActions({
   // تماس پیکه، نه کد رهگیری؛ بقیه‌ی روش‌ها (پست/تیپاکس) کد رهگیری واقعی دارن
   const trackingCodeLabel = shippingMethod === "پیک موتوری" ? "شماره تماس پیک" : "کد رهگیری";
 
-  async function updateStatus(newStatus: string, extra?: Record<string, string | string[]>) {
+  async function updateStatus(newStatus: string, extra?: Record<string, string | string[]>): Promise<boolean> {
     setError("");
     setChangingStatus(true);
     const res = await fetch(`/api/admin/orders/${orderId}`, {
@@ -213,9 +213,10 @@ export function AdminOrderActions({
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setError(data.error ?? "خطا در تغییر وضعیت");
-      return;
+      return false;
     }
     router.refresh();
+    return true;
   }
 
   async function handleCancelSubmit() {
@@ -232,7 +233,15 @@ export function AdminOrderActions({
       setError(`لطفاً حداقل یک ${trackingCodeLabel} وارد کنید`);
       return;
     }
-    await updateStatus("SHIPPED", { trackingCodes: codes });
+    const ok = await updateStatus("SHIPPED", { trackingCodes: codes });
+    // چون updateStatus فقط router.refresh() می‌زنه (نه remount کامل)، اگه اینجا
+    // بسته نشه، فرمِ ثبتِ اولیه برای همیشه باز می‌مونه و بعد از موفقیت، هم‌زمان
+    // با بخشِ «کد رهگیریِ ثبت‌شده» (که status=SHIPPED باعثِ نمایشش می‌شه) دیده
+    // می‌شه -- یعنی همون دکمه‌ها/ورودی‌های تکراری و زیادی
+    if (ok) {
+      setShipFormOpen(false);
+      setTrackingCodeInputs([""]);
+    }
   }
 
   // ویرایش کدهای رهگیری بعد از ثبت ارسال -- status همون status فعلی سفارش
@@ -243,8 +252,8 @@ export function AdminOrderActions({
       setError(`لطفاً حداقل یک ${trackingCodeLabel} وارد کنید`);
       return;
     }
-    await updateStatus(status, { trackingCodes: codes });
-    setEditTrackingOpen(false);
+    const ok = await updateStatus(status, { trackingCodes: codes });
+    if (ok) setEditTrackingOpen(false);
   }
 
   async function handleFinalize() {
@@ -843,13 +852,20 @@ export function AdminOrderActions({
                   <span className="flex-1 truncate">{item.title} × {item.quantity}</span>
                   <input
                     type="number"
-                    value={itemWeights[item.id] ?? ""}
+                    step="0.01"
+                    min="0"
+                    // ذخیره‌ی داخلی (itemWeights) همچنان گرمه -- چون فرمولِ هزینه‌ی
+                    // باربری و بدنه‌ی درخواستِ ارسالی هم گرم می‌خوان؛ فقط نمایش و
+                    // ورودی به کیلوگرم (با اعشار) تبدیل می‌شه
+                    value={itemWeights[item.id] ? String(Number(itemWeights[item.id]) / 1000) : ""}
                     onChange={(e) => {
-                      const next = { ...itemWeights, [item.id]: e.target.value };
+                      const kg = e.target.value;
+                      const grams = kg.trim() ? String(Math.round(Number(kg) * 1000)) : "";
+                      const next = { ...itemWeights, [item.id]: grams };
                       setItemWeights(next);
                       syncCargoTotal(next, itemCargoCosts, cargoRateInput);
                     }}
-                    placeholder="وزن (گرم)"
+                    placeholder="وزن (کیلوگرم)"
                     className="w-24 border cut-line rounded-lg px-2 py-1 bg-white"
                     dir="ltr"
                   />

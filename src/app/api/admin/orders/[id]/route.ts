@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/requireAdmin";
 import { restoreOrderResources } from "@/lib/orderResources";
 import { ORDER_STATUS_NOTIFICATION_MESSAGES } from "@/lib/orderStatusMessages";
 import { serializeTrackingCodes } from "@/lib/trackingCodes";
+import { serializePackageStatuses, mergePackageStatuses } from "@/lib/packageStatuses";
 import { z } from "zod";
 
 const statusSchema = z.object({
@@ -36,6 +37,17 @@ export async function PATCH(
     return NextResponse.json({ error: "سفارش یافت نشد" }, { status: 404 });
   }
 
+  // CANCELLED/RETURNED نهایی‌ان -- موجودی/کوپن/کیف‌پولشون قبلاً برگشته، پس هیچ
+  // گذاری از این دو نباید ممکن باشه (نه حتی به همون وضعیت فعلی). این گارد
+  // مستقل از UI پنل ادمینه (که اصلاً دکمه‌ای برای این نداره) -- محض احتیاط در
+  // برابر فراخوانی مستقیم API
+  if (existing.status === "CANCELLED" || existing.status === "RETURNED") {
+    return NextResponse.json(
+      { error: "این سفارش نهایی شده (لغو/مرجوع) و دیگه قابل تغییر وضعیت نیست" },
+      { status: 400 }
+    );
+  }
+
   // چون دیگه دراپ‌داون آزاد نداریم، هر گذار باید واقعاً منطقی باشه -- سرور هم
   // باید همون شرط‌هایی که دکمه‌های AdminOrderActions رعایت می‌کنن رو دوباره
   // چک کنه (نه فقط UI)، وگرنه یه درخواست دستی می‌تونست وضعیت رو نامعتبر جا به جا کنه
@@ -55,7 +67,13 @@ export async function PATCH(
     trackingCodesInput.length > 0
   ) {
     const trackingCode = serializeTrackingCodes(trackingCodesInput);
-    const order = await prisma.order.update({ where: { id }, data: { trackingCode } });
+    const packageStatuses = serializePackageStatuses(
+      mergePackageStatuses(existing.packageStatuses, trackingCodesInput)
+    );
+    const order = await prisma.order.update({
+      where: { id },
+      data: { trackingCode, packageStatuses },
+    });
     await prisma.orderStatusHistory.create({
       data: {
         orderId: id,
@@ -77,6 +95,20 @@ export async function PATCH(
     if (existing.status !== "PROCESSING" || existing.paymentStatus !== "PAID") {
       return NextResponse.json(
         { error: "این سفارش هنوز آماده‌ی ثبت ارسال نیست" },
+        { status: 400 }
+      );
+    }
+    // اگه سفارش کالای خارجی داره ولی هنوز اصلاً هزینه ارسال/باربری تعیین
+    // نشده (یعنی set-shipping-cost هیچ‌وقت صدا زده نشده، پس ShippingPayment‌ای
+    // هم وجود نداره)، نباید بشه ارسالش کرد -- وگرنه سفارش می‌تونه بدون این‌که
+    // حتی یه قلمش خریداری/بررسی شده باشه SHIPPED بشه (چک زیر، که فقط برای
+    // «اگه ShippingPayment وجود داره» کار می‌کنه، این حالت رو قبلاً از دست
+    // می‌داد چون وقتی ShippingPayment اصلاً وجود نداره، شرطش false می‌شه و
+    // رد نمی‌کرد)
+    const hasExternalItems = existing.items.some((i) => i.source === "TRENDYOL");
+    if (hasExternalItems && !existing.shippingPayment) {
+      return NextResponse.json(
+        { error: "ابتدا باید هزینه ارسال/باربری این سفارش تعیین و تسویه شود" },
         { status: 400 }
       );
     }
@@ -118,6 +150,10 @@ export async function PATCH(
     );
   }
   const trackingCode = parsed.data.status === "SHIPPED" ? serializeTrackingCodes(trackingCodesInput) : "";
+  const packageStatuses =
+    parsed.data.status === "SHIPPED"
+      ? serializePackageStatuses(mergePackageStatuses(existing.packageStatuses, trackingCodesInput))
+      : null;
 
   // لغو توسط ادمین باید دقیقاً مثل لغو توسط مشتری/رد فیش پرداخت، موجودی
   // variant/حراج‌فلش، مصرف کوپن، و مبلغ کیف‌پول رزروشده رو برگردونه -- قبلاً
@@ -132,7 +168,7 @@ export async function PATCH(
           where: { id },
           data: {
             status: parsed.data.status,
-            ...(parsed.data.status === "SHIPPED" ? { trackingCode } : {}),
+            ...(parsed.data.status === "SHIPPED" ? { trackingCode, packageStatuses } : {}),
             // اولین باری که سفارش تحویل داده می‌شه، زمانش رو ثبت می‌کنیم -- مبنای مهلت ۷ روزه مرجوعی
             ...(parsed.data.status === "DELIVERED" && !existing?.deliveredAt
               ? { deliveredAt: new Date() }

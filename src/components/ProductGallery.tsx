@@ -62,7 +62,7 @@ export function ProductGallery({
         onMouseMove={handleMouseMove}
       >
         {current && (
-          <Image src={current} alt={title} fill className="object-cover" unoptimized priority />
+          <Image src={current} alt={title} fill className="object-contain" unoptimized priority />
         )}
 
         {/* مربع لنز -- فقط توی دسکتاپ، همون‌جا روی خود عکس */}

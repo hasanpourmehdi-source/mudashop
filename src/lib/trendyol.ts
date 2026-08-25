@@ -610,7 +610,7 @@ async function parseSearchPayload(payloadData: Record<string, unknown>, baseOrig
   // ترجمه‌ی lazy عنوان‌ها -- batch شده (موازی) به‌جای یکی‌یکی، چون هر عنوان
   // ممکنه اولین بارش باشه که دیده می‌شه و نیاز به tokenize + ذخیره‌ی کش داره
   try {
-    const titleMap = await translateTrendyolTitles(products.map((p) => p.name));
+    const titleMap = await translateTrendyolTitles(products.map((p) => ({ title: p.name, brand: p.brand })));
     for (const p of products) {
       p.nameFa = titleMap.get(p.name) ?? p.name;
     }
@@ -823,6 +823,25 @@ async function fetchNextPageFromApi(apiUrl: string): Promise<TrendyolLiveFetchRe
     })
   );
   if (res.statusCode < 200 || res.statusCode >= 300) {
+    // fallback مرورگر هم برای صفحه‌های بعدی -- مثل صفحه‌ی اول. لازمه وقتی
+    // صفحه‌ی اول با مرورگر گرفته شده (مثلاً میلا که got-scraping توش شکست
+    // می‌خوره و session کوکی توی jar نمی‌مونه): بدون این، صفحه‌ی بعدی با
+    // jarِ بدون session کوکی 403/400 می‌گیره و «بارگذاری بیشتر» همیشه خطا می‌ده
+    const browserResult = await fetchTrendyolPageViaBrowser(apiUrl).catch((err) => {
+      console.warn("[trendyol] fallback مرورگر برای صفحه‌ی بعد هم شکست خورد:", err);
+      return null;
+    });
+    if (browserResult) {
+      try {
+        const parsed = JSON.parse(browserResult.body) as Record<string, unknown>;
+        const payloadData = (parsed.data ?? parsed) as Record<string, unknown>;
+        if (Array.isArray(payloadData.products)) {
+          return await parseSearchPayload(payloadData, storefrontOrigin);
+        }
+      } catch {
+        // body مرورگر JSON نبود -- می‌تونه HTML صفحه‌ی چالش باشه؛ به خطای اصلی برگرد
+      }
+    }
     throw buildTrendyolFetchError("دریافت صفحه‌ی بعدی ترندیول", res, retried);
   }
   const json = res.body as Record<string, unknown>;

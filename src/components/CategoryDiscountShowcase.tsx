@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Category } from "@prisma/client";
 import type { UnifiedProduct } from "@/types/product";
 import { categoryIcon } from "@/lib/categoryIcon";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 
 // «کشف تخفیف‌ها بر اساس دسته‌بندی» -- مثل ردیف دسته‌بندی ترندیول با بج قرمز درصد،
 // ولی فقط دسته‌هایی که واقعاً محصول مزون تخفیف‌دار دارن نشون داده می‌شن
@@ -30,7 +31,7 @@ export function CategoryDiscountShowcase({
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
       <h2 className="text-xl font-bold mb-6">کشف تخفیف‌ها بر اساس دسته‌بندی</h2>
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+      <HorizontalScroller>
         {cards.map(({ category, image, color }) => (
           <Link
             key={category.id}
@@ -57,7 +58,7 @@ export function CategoryDiscountShowcase({
             </span>
           </Link>
         ))}
-      </div>
+      </HorizontalScroller>
     </section>
   );
 }

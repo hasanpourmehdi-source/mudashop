@@ -8,9 +8,15 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
   "image/gif": "gif",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
 };
 
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // ۵ مگابایت
+const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // ۵ مگابایت
+const MAX_VIDEO_SIZE_BYTES = 30 * 1024 * 1024; // ۳۰ مگابایت
 
 // آپلود عکس نظر توسط کاربر عادی (لاگین‌کرده) -- برخلاف /api/admin/upload که فقط
 // مخصوص ادمینه، اینجا هر کاربری که وارد حساب شده می‌تونه برای نظرش عکس آپلود کنه.
@@ -36,8 +42,13 @@ export async function POST(req: Request) {
     );
   }
 
-  if (file.size > MAX_SIZE_BYTES) {
-    return NextResponse.json({ error: "حجم فایل نباید بیشتر از ۵ مگابایت باشد" }, { status: 400 });
+  const isVideo = VIDEO_TYPES.has(file.type);
+  const maxSize = isVideo ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
+  if (file.size > maxSize) {
+    return NextResponse.json(
+      { error: `حجم فایل نباید بیشتر از ${isVideo ? "۳۰" : "۵"} مگابایت باشد` },
+      { status: 400 }
+    );
   }
 
   const uploadsDir = path.join(process.cwd(), "public", "uploads", "reviews");
@@ -47,5 +58,5 @@ export async function POST(req: Request) {
   const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(path.join(uploadsDir, filename), buffer);
 
-  return NextResponse.json({ url: `/uploads/reviews/${filename}` }, { status: 201 });
+  return NextResponse.json({ url: `/uploads/reviews/${filename}`, type: isVideo ? "video" : "image" }, { status: 201 });
 }

@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { fetchWishlistedProductIds } from "@/lib/wishlist";
 import { fetchActiveCampaigns } from "@/lib/campaigns";
+import { fetchDiscoveredCampaignsForHomepage } from "@/lib/trendyolCampaigns";
+import { TrendyolCampaignsShowcase } from "@/components/TrendyolCampaignsShowcase";
 import { fetchPersonalCategories } from "@/lib/categories";
 import { PersonalCategoriesShowcase } from "@/components/PersonalCategoriesShowcase";
 import { DiscoverableProductsSection } from "@/components/DiscoverableProductsSection";
@@ -13,23 +15,39 @@ import { FlashSaleCountdownBoxes } from "@/components/FlashSaleCountdownBoxes";
 import { DiscountTierBanners } from "@/components/DiscountTierBanners";
 import { CategoryDiscountShowcase } from "@/components/CategoryDiscountShowcase";
 import { PhotoReviewsShowcase } from "@/components/PhotoReviewsShowcase";
+import { RecentlyViewedSection } from "@/components/RecentlyViewedSection";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
+import { fetchRecommendedForYou } from "@/lib/recommend";
 
 export default async function Home() {
   const session = await auth();
-  const [products, categories, stockGroups, wishlistedIds, campaigns, popularity, photoReviews, personalCategories] =
-    await Promise.all([
-      fetchMazonProducts(),
-      prisma.category.findMany({ orderBy: { name: "asc" }, take: 8 }),
-      prisma.productVariant.groupBy({
-        by: ["productId"],
-        _sum: { stock: true },
-      }),
-      fetchWishlistedProductIds(session?.user?.id),
-      fetchActiveCampaigns(),
-      fetchPopularityMap(),
-      fetchPopularPhotoReviews(),
-      fetchPersonalCategories(session?.user?.id),
-    ]);
+  const isAdmin = session?.user?.role === "ADMIN";
+  const [
+    products,
+    categories,
+    stockGroups,
+    wishlistedIds,
+    campaigns,
+    trendyolCampaigns,
+    popularity,
+    photoReviews,
+    personalCategories,
+    recommended,
+  ] = await Promise.all([
+    fetchMazonProducts(),
+    prisma.category.findMany({ orderBy: { name: "asc" }, take: 8 }),
+    prisma.productVariant.groupBy({
+      by: ["productId"],
+      _sum: { stock: true },
+    }),
+    fetchWishlistedProductIds(session?.user?.id),
+    fetchActiveCampaigns(),
+    fetchDiscoveredCampaignsForHomepage(),
+    fetchPopularityMap(),
+    fetchPopularPhotoReviews(),
+    fetchPersonalCategories(session?.user?.id),
+    fetchRecommendedForYou(session?.user?.id, 10),
+  ]);
 
   // پرفروش‌ترین‌ها -- بر اساس تعداد واقعی خرید هر محصول (نه تصادفی)
   const popularProducts = [...products]
@@ -63,11 +81,16 @@ export default async function Home() {
             {[
               { href: "/products?flashSaleOnly=true", icon: "⚡", label: "حراج فلش", bg: "#fff1e0" },
               { href: "/products?fastShipping=true", icon: "🚚", label: "ارسال فوری", bg: "#e6f7ef" },
-              { href: "/products?sources=MAZON", icon: "✦", label: "محصولات مزون", bg: "#fdeaf1" },
-              { href: "/products?sources=TRENDYOL", icon: "🛍️", label: "ترندیول", bg: "#eaf1fd" },
+              // «سایت‌ها» (sources) اصلاً پارامترِ شناخته‌شده‌ی صفحه‌ی /products
+              // نبود -- چون آن صفحه فقط کاتالوگِ مزون است؛ محصولاتِ ترندیول/میلا
+              // اصلاً توی جدولِ محصولاتِ ما نیستن، پس لینکِ درست همون صفحه‌ی
+              // زنده‌ی خودشونه (/marketplaces/...)، نه فیلترِ بی‌اثر روی /products
+              { href: "/products", icon: "✦", label: "محصولات مزون", bg: "#fdeaf1" },
+              { href: "/marketplaces/trendyol", icon: "🛍️", label: "ترندیول", bg: "#eaf1fd" },
+              { href: "/marketplaces/trendyol-milla", icon: "👗", label: "میلا", bg: "#f5eaff" },
+              { href: "/campaigns", icon: "🏷️", label: "کمپین‌ها", bg: "#fff4e0" },
               { href: "/products?sort=popular", icon: "🔥", label: "پرفروش‌ترین‌ها", bg: "#fdeaea" },
               { href: "/products?sort=newest", icon: "🆕", label: "جدیدترین‌ها", bg: "#f1eafd" },
-              { href: "/wallet", icon: "💰", label: "کیف پول", bg: "#fdf6ea" },
             ].map((item) => (
               <Link
                 key={item.label}
@@ -87,6 +110,9 @@ export default async function Home() {
         </div>
       </section>
 
+      {/* اخیراً دیدهاید -- سمت کلاینت از localStorage، پس فقط بعد از mount ظاهر می‌شه */}
+      <RecentlyViewedSection />
+
       {/* پرفروش‌ترین‌ها */}
       {popularProducts.length > 0 && (
         <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
@@ -99,13 +125,37 @@ export default async function Home() {
               مشاهده همه ‹
             </Link>
           </div>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+          <HorizontalScroller>
             {popularProducts.map((p) => (
               <div key={p.id} className="w-44 sm:w-52 shrink-0">
                 <ProductCard product={p} isWishlisted={wishlistedIds.has(p.id)} />
               </div>
             ))}
+          </HorizontalScroller>
+        </section>
+      )}
+
+      {/* پیشنهاد برای تو -- توصیه‌گر: بر اساس تعاملات خودت (خرید/ویشلیست/نظر/اخطار قیمت)
+          و رفتارِ کاربران مشابه؛ برای کاربرِ جدید محبوب‌ترین‌ها پیشنهاد می‌شود */}
+      {recommended.length > 0 && (
+        <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold">
+              {session?.user ? "✨ پیشنهاد برای تو" : "✨ پرطرفدار این روزها"}
+            </h2>
+            <p className="text-xs text-[var(--color-muted)]">
+              {session?.user
+                ? "بر اساس خریدها، علاقه‌مندی‌ها و نظراتت"
+                : "بر اساس رفتارِ کاربران، چون هنوز ورود نکرده‌ای"}
+            </p>
           </div>
+          <HorizontalScroller>
+            {recommended.map((p) => (
+              <div key={p.id} className="w-44 sm:w-52 shrink-0">
+                <ProductCard product={p} isWishlisted={wishlistedIds.has(p.id)} />
+              </div>
+            ))}
+          </HorizontalScroller>
         </section>
       )}
 
@@ -121,13 +171,13 @@ export default async function Home() {
               مشاهده همه ‹
             </Link>
           </div>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+          <HorizontalScroller>
             {mostViewedProducts.map((p) => (
               <div key={p.id} className="w-44 sm:w-52 shrink-0">
                 <ProductCard product={p} isWishlisted={wishlistedIds.has(p.id)} />
               </div>
             ))}
-          </div>
+          </HorizontalScroller>
         </section>
       )}
 
@@ -148,13 +198,13 @@ export default async function Home() {
           <p className="text-xs text-[var(--color-muted)] mb-6">
             انتخاب‌شده بر اساس امتیاز بالا، کمترین قیمت ۱۰ روز اخیر، تخفیف و میزان پسندیدن
           </p>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+          <HorizontalScroller>
             {advantageousProducts.map((p) => (
               <div key={p.id} className="w-44 sm:w-52 shrink-0">
                 <ProductCard product={p} isWishlisted={wishlistedIds.has(p.id)} />
               </div>
             ))}
-          </div>
+          </HorizontalScroller>
         </section>
       )}
 
@@ -191,13 +241,13 @@ export default async function Home() {
                 مشاهده همه ‹
               </Link>
             </div>
-            <div className="flex gap-4 overflow-x-auto scrollbar-hide px-4 sm:px-5 pb-5">
+            <HorizontalScroller className="px-4 sm:px-5 -mx-0 pb-5">
               {flashProducts.map((p) => (
                 <div key={p.id} className="w-44 sm:w-52 shrink-0">
                   <ProductCard product={p} isWishlisted={wishlistedIds.has(p.id)} />
                 </div>
               ))}
-            </div>
+            </HorizontalScroller>
           </div>
         </section>
       )}
@@ -206,7 +256,7 @@ export default async function Home() {
       {campaigns.length > 0 && (
         <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
           <h2 className="text-xl font-bold mb-6">کمپین‌های ویژه</h2>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1">
+          <HorizontalScroller>
             {campaigns.map((c) => (
               <Link
                 key={c.id}
@@ -219,9 +269,14 @@ export default async function Home() {
                 </div>
               </Link>
             ))}
-          </div>
+          </HorizontalScroller>
         </section>
       )}
+
+      {/* کمپین‌های واقعیِ ترندیول -- کشف‌شده به‌مرور از محصولاتی که روی خودِ
+          سایت دیده شده‌اند (نه یک کرالِ کامل)، برای این‌که کاربر بدون باز کردنِ
+          اول یک محصولِ خاص، مستقیم وارد لیستِ کاملِ محصولاتِ یک کمپین شود */}
+      <TrendyolCampaignsShowcase campaigns={trendyolCampaigns} isAdmin={isAdmin} />
 
       {/* نظرات عکس‌دار محبوب */}
       <PhotoReviewsShowcase reviews={photoReviews} />

@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ensureDeviceCookie } from "@/lib/clientDevice";
 
-export default function RegisterPage() {
+function RegisterForm() {
+  const searchParams = useSearchParams();
+  const referralCode = searchParams.get("ref") ?? undefined;
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -17,7 +21,7 @@ export default function RegisterPage() {
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, referralCode }),
     });
     const data = await res.json();
 
@@ -28,6 +32,7 @@ export default function RegisterPage() {
     }
 
     // بعد از ثبت‌نام موفق، خودکار وارد می‌کنیم
+    ensureDeviceCookie();
     await signIn("credentials", {
       email: form.email,
       password: form.password,
@@ -40,7 +45,13 @@ export default function RegisterPage() {
     <div className="max-w-sm mx-auto px-4 py-16">
       <h1 className="text-xl font-bold mb-6 text-center">ثبت‌نام در مُداشاپ</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {referralCode && (
+        <p className="text-sm text-center mb-4 text-[var(--color-wine)] bg-[var(--color-linen-dim)] rounded-lg py-2 px-3">
+          با کد معرفی {referralCode} ثبت‌نام می‌کنید
+        </p>
+      )}
+
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">نام</label>
           <input
@@ -91,5 +102,13 @@ export default function RegisterPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   );
 }

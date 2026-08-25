@@ -14,6 +14,8 @@ export async function GET() {
       role: true,
       status: true,
       createdAt: true,
+      lockedUntil: true,
+      emailVerified: true,
       _count: { select: { orders: true } },
     },
     orderBy: { createdAt: "desc" },

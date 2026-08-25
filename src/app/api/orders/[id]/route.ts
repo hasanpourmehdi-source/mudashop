@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { restoreOrderResources } from "@/lib/orderResources";
+import { canCustomerCancelOrder } from "@/lib/orderCancellation";
 
 export async function GET(
   _req: Request,
@@ -71,26 +72,26 @@ export async function PATCH(
     return NextResponse.json({ error: "این سفارش قبلاً لغو شده است" }, { status: 400 });
   }
 
-  // سفارش خارجی: بعد از تأیید پرداخت اقلام (paymentStatus=PAID)، ادمین واقعاً
-  // از ترندیول خریداری کرده -- دیگه قابل لغو نیست، صرف‌نظر از status فعلی
-  // (ممکنه هنوز PENDING/PROCESSING باشه). سفارش مزون طبق قانون قبلی: فقط قبل
-  // از ارسال قابل لغوئه
+  // سفارش حاوی کالای خارجی: حتی وقتی پول تسویه شده و خریدِ واقعی هنوز شروع
+  // نشده (در صف خرید)، لغو فقط به شکل «درخواست» که ادمین تأیید کنه ممکنه --
+  // لغو مستقیم اصلاً وجود نداره (رجوع کن به cancel-request/route.ts). این
+  // PATCH فقط لغو مستقیم سفارش خالص مزون (قبل از ارسال) رو اجرا می‌کنه؛
+  // تصمیم‌گیری در orderCancellation.ts جداست تا تست‌پذیر باشه.
   const hasExternalItems = order.items.some((i) => i.source === "TRENDYOL");
-  if (hasExternalItems) {
-    if (order.paymentStatus === "PAID") {
+  const policy = canCustomerCancelOrder({
+    hasExternalItems,
+    paymentStatus: order.paymentStatus,
+    status: order.status,
+    itemPurchaseStatuses: hasExternalItems ? order.items.map((i) => i.purchaseStatus) : undefined,
+  });
+  if (policy.mode !== "direct") {
+    if (policy.mode === "request") {
       return NextResponse.json(
-        {
-          error:
-            "چون این سفارش کالای خارجی دارد و پرداختش تسویه شده، ممکنه همین الان در حال خریداری از فروشنده باشیم -- کل سفارش (حتی اگه شامل کالای مزون هم باشه) دیگه قابل لغو نیست. بعد از دریافت می‌تونید درخواست مرجوعی ثبت کنید.",
-        },
+        { error: "این سفارش کالای خارجی دارد؛ لغو آن فقط با تأیید ادمین انجام می‌شود (از دکمه «درخواست لغو سفارش» استفاده کنید)" },
         { status: 400 }
       );
     }
-  } else if (order.status === "SHIPPED" || order.status === "DELIVERED") {
-    return NextResponse.json(
-      { error: "سفارش ارسال‌شده قابل لغو نیست" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: policy.message }, { status: 400 });
   }
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -104,6 +105,14 @@ export async function PATCH(
 
     await tx.orderStatusHistory.create({
       data: { orderId: id, status: "CANCELLED", note: `لغو توسط مشتری -- ${reason}` },
+    });
+
+    await tx.notification.create({
+      data: {
+        userId: order.userId,
+        message: `سفارش #${id.slice(-8)} لغو شد و مبلغ به کیف پول شما برگشت.`,
+        link: `/orders/${id}`,
+      },
     });
 
     return result;

@@ -22,6 +22,25 @@ model User {
   status        UserStatus @default(ACTIVE)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  // با هر «خروج از همه‌ی دستگاه‌ها» عوض می‌شود تا همه‌ی JWTهای قبلی بی‌اعتبار شوند
+  securityStamp String    @default("initial")
+
+  // کاربرِ سایه‌ای که فقط از «خریدِ مهمان» ساخته شده (بدون رمز عبور) -- اگه
+  // بعداً همون ایمیل واقعاً ثبت‌نام کرد، این فلگ true می‌مونه ولی رمز ست می‌شه
+  // (نه یه ردیف جدا -- تا تاریخچه‌ی سفارش‌های مهمان قبلی‌ش حفظ بشه)
+  isGuest       Boolean   @default(false)
+  // کد معرفی -- lazily ساخته می‌شه (نه موقع ساخت کاربر) چون کاربرهای OAuth از
+  // مسیر دیگه‌ای (NextAuth adapter) ساخته می‌شن که این‌جا قابل قلاب‌کردن نیست
+  referralCode  String?   @unique
+  referredById  String?
+  // امتیاز وفاداری -- بعد از تحویل کامل هر سفارش اضافه می‌شه (کنار کسراژ ریالی)
+  loyaltyPoints Int       @default(0)
+  // فقط برای role=STAFF معنا دارد -- JSON array از AdminScope (مثلاً ["SUPPORT"])
+  adminScopes   String    @default("[]")
+  // محافظت در برابر brute-force: تعداد تلاش‌های ناموفق پیاپی از آخرین موفقیت.
+  // با ورود درست صفر می‌شود؛ با رسیدن به آستانه، lockedUntil ست می‌شود
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
 
   accounts      Account[]
   addresses     Address[]
@@ -31,17 +50,83 @@ model User {
   wallet        Wallet?
   withdrawalRequests WalletWithdrawalRequest[]
   resetTokens   PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
   questions       ProductQuestion[]
   questionReplies QuestionReply[]
   stockNotifications StockNotification[]
   notifications   Notification[]
+  supportMessages SupportMessage[]
+  notificationSetting NotificationSetting?
+  outboundNotifications OutboundNotification[]
+  pushSubscriptions PushSubscription[]
+  reviewHelpfulVotes ReviewHelpfulVote[]
+  priceAlerts PriceAlert[]
+  boughtGiftCards GiftCard[] @relation("GiftCardBuyer")
+  redeemedGiftCards GiftCard[] @relation("GiftCardRedeemer")
+  sessions UserSession[]
+  cartSnapshot CartSnapshot?
+  referredBy   User?   @relation("Referrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals    User[]  @relation("Referrals")
+  referralRewardsGiven    ReferralReward[] @relation("ReferralRewardsGiven")
+  referralRewardsReceived ReferralReward[] @relation("ReferralRewardsReceived")
 
   @@map("users")
+}
+
+// عکسِ لحظه‌ای از سبدخریدِ فعلیِ کاربر (فقط لاگین‌کرده‌ها -- برای یادآوریِ سبدِ
+// رهاشده باید بدونیم چی توی سبده و آخرین‌بار کِی عوض شده؛ سبد خودش فقط توی
+// localStorage کلاینته). هر تغییر سبد (debounce شده) اینجا sync می‌شه؛ با ثبت
+// سفارش یا خالی‌شدنِ سبد حذف می‌شه.
+model CartSnapshot {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  itemsJson  String // JSON آرایه‌ی CartItem[]
+  updatedAt  DateTime  @updatedAt
+  remindedAt DateTime? // یک‌بارمصرف -- تا وقتی همین سبد دوباره عوض نشه، دوباره یادآوری نمی‌فرستیم
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("cart_snapshots")
+}
+
+// پاداشِ کد معرفی -- وقتی اولین سفارشِ «پرداخت‌شده»‌ی کاربرِ معرفی‌شده ثبت
+// می‌شه، یک‌بار به معرف پاداش داده می‌شه (orderId یکتاست پس هر سفارش حداکثر
+// یک پاداش می‌سازه، و هر کاربر چون فقط یک referredById دارد، حداکثر یک‌بار
+// معرف‌شده)
+model ReferralReward {
+  id           String   @id @default(cuid())
+  referrerId   String
+  referredId   String
+  orderId      String   @unique
+  rewardAmount Int
+  createdAt    DateTime @default(now())
+
+  referrer User  @relation("ReferralRewardsGiven", fields: [referrerId], references: [id], onDelete: Cascade)
+  referred User  @relation("ReferralRewardsReceived", fields: [referredId], references: [id], onDelete: Cascade)
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("referral_rewards")
 }
 
 enum Role {
   CUSTOMER
   ADMIN
+  // دسترسیِ محدود به پنل ادمین -- برخلاف ADMIN که همیشه دسترسیِ کامل داره،
+  // STAFF فقط به بخش‌هایی می‌رسه که توی adminScopes برایش تعیین شده (مثلاً
+  // فقط پشتیبانی، یا فقط پیگیریِ خریدِ خارجی) -- برای وقتی تیم بزرگ‌تر از
+  // یک نفر می‌شه و نمی‌خوایم هرکسی دسترسیِ کامل به کیف‌پول/تنظیمات داشته باشه
+  STAFF
+}
+
+// حیطه‌های دسترسیِ قابل‌تخصیص به یک حساب STAFF (نه ADMIN، که همیشه کامله)
+enum AdminScope {
+  SUPPORT // پیام‌های پشتیبانی مشتری
+  PURCHASING // پیگیریِ خریدِ کالاهای خارجی (ترندیول/میلا) از سفارش‌ها
+  PAYMENTS // تأیید فیش پرداخت + درخواست‌های برداشت کیف‌پول
+  PRODUCTS // مدیریت محصولات/دسته‌بندی/برند
+  ORDERS // مدیریتِ عمومیِ سفارش‌ها
+  SETTINGS // تنظیمات سایت
 }
 
 enum UserStatus {
@@ -62,6 +147,22 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("password_reset_tokens")
+}
+
+// دقیقاً همون الگوی PasswordResetToken، برای تأیید ایمیل بعد از ثبت‌نام --
+// هدف: مطمئن شویم ایمیلِ ثبت‌شده واقعاً متعلق به خودِ کاربر است (نه غلط‌تایپی/
+// جعلی)، وگرنه اعلان‌های حساس (تأیید سفارش، بازیابی رمز) به آدرس اشتباه می‌رود
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification_tokens")
 }
 
 // NextAuth v5 - مدل Account برای OAuth (گوگل)
@@ -174,9 +275,28 @@ model SizeGuide {
 
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   brand    Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  rows     SizeChartRow[]
 
   @@unique([categoryId, brandId])
   @@map("size_guides")
+}
+
+// ردیفِ عددیِ یک سایز (علاوه‌بر عکسِ جدولِ SizeGuide) -- برای پیشنهادِ خودکارِ
+// سایز از روی قد/وزنِ مشتری. بازه‌ها اختیاری‌اند (بعضی برندها فقط قد یا فقط
+// وزن می‌دن)؛ null یعنی «بدون محدودیت در این طرف»
+model SizeChartRow {
+  id          String   @id @default(cuid())
+  sizeGuideId String
+  sizeLabel   String // مثلاً "M" یا "38"
+  minHeightCm Int?
+  maxHeightCm Int?
+  minWeightKg Int?
+  maxWeightKg Int?
+  createdAt   DateTime @default(now())
+
+  sizeGuide SizeGuide @relation(fields: [sizeGuideId], references: [id], onDelete: Cascade)
+
+  @@map("size_chart_rows")
 }
 
 // ================= محصول (فقط محصولات مزون - DB-backed) =================
@@ -211,6 +331,7 @@ model Product {
   stockNotifications StockNotification[]
   views          ProductView[]
   priceSnapshots PriceSnapshot[]
+  priceAlerts PriceAlert[]
 
   @@map("products")
 }
@@ -225,6 +346,20 @@ model ProductView {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_views")
+}
+
+// نمونه‌گیریِ سبک از زبانِ مرورگرِ بازدیدکننده‌ها -- قبل از سرمایه‌گذاری روی
+// ترجمه‌ی واقعیِ محتوا (نه فقط قابِ سایت)، باید ببینیم واقعاً چقدر بازدیدکننده‌ی
+// غیرفارسی‌زبان داریم. کاملاً ناشناس (بدون userId)، و سمت کلاینت فقط یک‌بار در
+// هر مرورگر (با localStorage) ثبت می‌شه تا ترافیکِ یکتا رو نشون بده، نه شمارشِ
+// بازدید صفحه رو
+model VisitorLocale {
+  id          String   @id @default(cuid())
+  browserLang String // navigator.language خام (مثلاً "fa-IR"، "tr-TR"، "en-US")
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("visitor_locales")
 }
 
 // عکس لحظه‌ای قیمت -- حداکثر یک بار در روز برای هر محصول ثبت می‌شه (وقتی صفحه‌ش بازدید بشه)
@@ -416,6 +551,10 @@ model Order {
   // موقع ثبت ارسال توسط ادمین پر می‌شه -- بسته به shippingMethod یا کد رهگیری
   // پست/تیپاکسه یا شماره تماس پیک؛ به مشتری هم توی نوتیفیکیشن اطلاع داده می‌شه
   trackingCode String?
+  // وضعیت تحویلِ تک‌تک بسته‌ها (چون سفارش ممکنه چند بسته داشته باشه و جزئی
+  // تحویل داده بشه). یه رشته‌ی JSON از آرایه‌ی {code, status, arrivedAt} -- همون
+  // الگوی trackingCode. وقتی همه‌ی بسته‌ها ARRIVED بشن، کل سفارش DELIVERED می‌شه
+  packageStatuses String?
   freeShippingApplied Boolean @default(false)
   // چندبار پست/پیک نتونسته این سفارش رو تحویل بده و بسته برگشت خورده -- فقط
   // برای گزارش/هشدار داشبورد؛ هر بار برگشت یعنی باید دوباره هزینه‌ی ارسال
@@ -441,15 +580,22 @@ model Order {
   addressSnapshot String
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  // مهلت پرداخت: وقتی مشتری باید پرداخت کند (مرحله‌ی ۱ card-to-card یا مرحله‌ی ۲
+  // هزینه ارسال/باربری) تنظیم می‌شود -- اگر این زمان بگذرد و هنوز فیش پرداخت
+  // (receipt) ثبت نشده باشد یا وضعیت پرداخت هنوز AWAITING_* باشد، سفارش به‌صورت
+  // خودکار لغو می‌شود و منابع (موجودی/کوپن/کیف‌پول) برمی‌گردند
+  paymentDeadlineAt DateTime?
 
   user    User                @relation(fields: [userId], references: [id])
   address Address?            @relation(fields: [addressId], references: [id])
   items   OrderItem[]
   statusHistory OrderStatusHistory[]
   returnRequest ReturnRequest?
+  cancellationRequest CancellationRequest?
   shippingPayment ShippingPayment?
   messages      OrderMessage[]
   paymentEvents OrderPaymentEvent[]
+  referralReward ReferralReward?
 
   @@map("orders")
 }
@@ -471,6 +617,25 @@ model OrderMessage {
 enum MessageSender {
   CUSTOMER
   ADMIN
+}
+
+// چت زنده پشتیبانی -- یک مکالمه‌ی سراسری برای هر مشتری (مستقل از سفارش، برخلاف
+// OrderMessage که به یک سفارش خاص وصله). adminRead/customerRead برای بجِ
+// «پیام نخوانده» دوطرفه‌ست: پیام‌های مشتری که ادمین ندیده، و پیام‌های ادمین
+// که مشتری ندیده
+model SupportMessage {
+  id        String        @id @default(cuid())
+  userId    String
+  sender    MessageSender @default(CUSTOMER)
+  message   String
+  adminRead Boolean       @default(false)
+  customerRead Boolean    @default(false)
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("support_messages")
 }
 
 // هر بار ادمین برای یه دور پرداخت (اقلام یا ارسال/باربری) یه کارت خاص تخصیص
@@ -590,6 +755,11 @@ model OrderItem {
   image       String?
   price       Int // قیمت واحد در لحظه خرید
   quantity    Int
+  // سایز/رنگ/ویژگیِ انتخاب‌شده در لحظه‌ی افزودن به سبد (مثلاً "سایز: L / رنگ: قرمز")
+  // -- برای ترندیول هیچ variantId ای نداریم، پس این تنها جایی است که این
+  // اطلاعات بعد از ثبت سفارش باقی می‌ماند؛ برای مزون هم snapshot ساده‌تر از
+  // join زدن با ProductVariant.values در همه‌ی صفحات نمایش سفارش است
+  variantLabel String?
 
   // فقط برای اقلام ترندیول معنی داره -- «در صف خرید» به‌جای یه وضعیت واحد
   // برای کل سفارش، هر قلم جدا پیگیری می‌شه: خریداری شد (با تگ فیزیکی برای
@@ -600,21 +770,60 @@ model OrderItem {
   purchaseTag         String?                 @unique
   purchaseNote        String? // دلیل کنسلی/گم‌شدن/سایزاشتباه/رنگ‌اشتباه/دلخواه
   purchasePriceActual Int? // قیمت واقعی خریداری‌شده، اگه با price فرق داشت -- تسویه‌ش موقع پرداخت باربری/ارسال
+  // اگه سایز/رنگ روی لینک اصلی موجود نبود و ادمین از یه تامین‌کننده/لینک دیگه
+  // (با همون کالا) خرید، آدرس واقعی که ازش خریداری شده اینجا ثبت می‌شه -- برای
+  // ارجاع بعدی (مثلاً موقع بررسی مغایرت رسیده)، مستقل از لینک اصلی محصول
+  purchaseUrl String?
+  // وقتی لینک اصلی مشکل داره (ناموجود/تمام‌شده/خراب) و ادمین -- قبل از رسیدن
+  // به فاز خرید واقعی -- خودش یه لینک دیگه برای دقیقاً همون کالا (تامین‌کننده‌ی
+  // دیگه) پیدا کرده، اینجا ثبت می‌شه؛ کاملاً داخلی/فقط-ادمین، هیچ‌وقت به مشتری
+  // نشون داده یا اطلاع داده نمی‌شه
+  secondarySourceUrl String?
   purchaseResolvedAt  DateTime?
   itemWeightGrams     Int? // وزن این قلم -- برای محاسبه‌ی خودکار هزینه‌ی باربری
   itemCargoCost       Int? // هزینه‌ی باربری این قلم به‌صورت جدا (اگه ادمین دستی وارد کرده باشه)
+  // آیا این قلم توسط ادمین بررسی و تائید شده است
+  verifyStatus VerifyItemStatus @default(PENDING)
+  // لینک نهایی/جایگزین که ادمین با اون تأیید کرد (اگر کالا از تامین‌کننده دیگر خریداری شده)
+  verifiedUrl String?
+  // زمان رسمی طیق ادمین تایید این قلم
+  verifiedAt DateTime?
+
   // فقط وقتی purchaseStatus="AWAITING_CUSTOMER_DECISION" پر می‌شه -- یادآوریِ
   // این‌که مغایرت اصلی WRONG_SIZE بوده یا WRONG_COLOR، تا اگه مشتری رفاند رو
   // ترجیح داد، وضعیتِ نهاییِ درست (نه یه برچسبِ عمومی) ثبت بشه
   mismatchOutcome     String?
+  // اقلام خریداری‌شده‌ی چند سفارش مختلف (حتی مشتری‌های مختلف) که با هم توی یک
+  // محموله از ترکیه/دبی/آمریکا ارسال می‌شن -- برای تقسیم هزینه‌ی باربری بر
+  // اساس وزن به‌جای این‌که هر سفارش جدا حساب شود
+  shipmentId String?
 
   order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product?        @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
   flashSale FlashSale?      @relation(fields: [flashSaleId], references: [id])
   returnItems ReturnRequestItem[]
+  shipment  Shipment?       @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
   @@map("order_items")
+}
+
+// یک محمولهٔ ترکیبی: چند قلمِ «خریداری‌شده» (احتمالاً از سفارش‌های مختلف) که
+// با هم وزن‌کشی و ارسال می‌شن -- هزینه‌ی باربریِ کل بین اقلام بر اساس سهمِ
+// وزنیِ هرکدام تقسیم می‌شه (به‌جای این‌که هر سفارش هزینه‌ی ارسالِ کامل و جدا
+// بپردازد)، دقیقاً همون ایده‌ی «خریدِ گروهی/تجمیعِ مرسوله»
+model Shipment {
+  id               String    @id @default(cuid())
+  label            String? // یادداشتِ داخلیِ ادمین، مثلاً "محموله‌ی ۲۵ شهریور - ترکیه"
+  totalWeightGrams Int?
+  totalCargoCost   Int? // هزینه‌ی باربریِ کل محموله -- بین اقلام بر اساس وزن تقسیم می‌شه
+  trackingCode     String?
+  shippedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  items OrderItem[]
+
+  @@map("shipments")
 }
 
 enum OrderItemPurchaseStatus {
@@ -622,11 +831,17 @@ enum OrderItemPurchaseStatus {
   PURCHASED                   // خریداری و تگ‌گذاری شد، منتظر رسیدن فیزیکی به انبار/نمایندگی
   RECEIVED                    // فاز دوم: سالم به انبار/نمایندگی رسید (یا مشتری با مغایرت موافقت کرد)
   CANCELLED                   // فاز اول: ادمین نتونست بخرد (ناموجود و...) -- رفاند فوری
-  LOST                        // فاز دوم -- رفاند فوری
+  LOST                        // Faz دوم -- رفاند فوری
   WRONG_SIZE                  // فاز دوم -- مشتری رفاند رو ترجیح داد -- رفاند فوری
-  WRONG_COLOR                 // فاز دوم -- مشتری رفاند رو ترجیح داد -- رفاند فوری
-  ISSUE_OTHER                 // فاز دوم، دلیل دلخواه -- رفاند فوری
-  AWAITING_CUSTOMER_DECISION  // فاز دوم: مغایرت (سایز/رنگ) پیدا شد -- منتظر تصمیم مشتریه (نگه‌داشتن یا رفاند)
+  WRONG_COLOR                 // Faz دوم -- مشتری رفاند رو ترجیح داد -- رفاند فوری
+  ISSUE_OTHER                 // Faz دوم، دلیل دلخواه -- رفاند فوری
+  AWAITING_CUSTOMER_DECISION  // Faz دوم: مغایرت (سایز/رنگ) پیدا شد -- منتظر تصمیم_customer (نگه‌داشتن یا رفاند)
+}
+
+enum VerifyItemStatus {
+  PENDING       // بررسی نشده
+  CONFIRMED     // موجود بود / admin تأیید کرد
+  REPLACED      // از تامین‌کننده دیگر وارد شد -- لینک جایگزین
 }
 
 enum ProductSource {
@@ -650,10 +865,14 @@ model Review {
   images    String   @default("[]") // JSON array به صورت string (مثل images محصول) -- عکس‌های ضمیمه‌ی نظر
   verifiedPurchase Boolean @default(false)
   isApproved Boolean @default(false) // تا وقتی ادمین تایید نکنه، زیر محصول نمایش داده نمی‌شه
+  // پاسخ تیم مُداشاپ به نظر (مثل پاسخ فروشنده روی آمازون)
+  adminReply String?
+  repliedAt DateTime?
   createdAt DateTime @default(now())
 
   user    User     @relation(fields: [userId], references: [id])
   product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  helpfulVotes ReviewHelpfulVote[]
 
   // هر دو @@unique زیر با وجود nullable بودن productId/externalId درست کار
   // می‌کنن، دقیقاً مثل WishlistItem (چندتا NULL توی ایندکس یکتای SQLite/Postgres
@@ -661,6 +880,20 @@ model Review {
   @@unique([userId, productId])
   @@unique([userId, externalId])
   @@map("reviews")
+}
+
+// رأی «مفید بود» برای هر نظر -- هر کاربر حداکثر یک رأی؛ دوباره کلیک = پس‌گرفتن
+model ReviewHelpfulVote {
+  id        String   @id @default(cuid())
+  reviewId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@map("review_helpful_votes")
 }
 
 // ================= پرسش و پاسخ محصول =================
@@ -732,6 +965,9 @@ enum WalletTxType {
   PURCHASE // پرداخت با کیف پول در سفارش
   REFUND // بازگشت وجه (مثلا بعد از لغو سفارش)
   WITHDRAWAL // درخواست واریز موجودی کیف پول به حساب مشتری
+  LOYALTY // کسراژ/امتیاز وفاداری -- بعد از تحویل کامل سفارش به کیف پول اضافه می‌شه
+  GIFT_CARD // فعال‌سازی کارت هدیه -- موجودی کارت به کیف پول اضافه می‌شه
+  REFERRAL // پاداش کد معرفی -- بعد از اولین سفارش پرداخت‌شده‌ی کاربر معرفی‌شده
 }
 
 // درخواست مشتری برای واریز موجودی کیف پولش به حسابش -- موجودی همون لحظه‌ی
@@ -759,6 +995,31 @@ enum WalletWithdrawalStatus {
   PENDING
   PAID
   REJECTED
+}
+
+// ================= کارت هدیه =================
+// کارت هدیه: کاربر با موجودی کیف پولش کارت می‌خره (کد + مبلغ + پیام + ایمیل
+// گیرنده) و گیرنده با واردکردن کد، موجودی کارت را به کیف پول خودش شارژ می‌کنه.
+// کد یکبارمصرف است؛ ادمین می‌تونه کارت بسازه (قرعه‌کشی/جایزه) یا غیرفعالش کنه.
+model GiftCard {
+  id               String    @id @default(cuid())
+  code             String    @unique // کد فعال‌سازی، مثل "HDA-7K2M-9QX1"
+  initialAmount    Int // مبلغ اولیه به تومان
+  balance          Int // موجودی باقی‌مانده (بعد از فعال‌سازی صفر)
+  message          String? // پیام خریدار روی کارت
+  recipientEmail   String? // ایمیل گیرنده (اختیاری)
+  buyerUserId      String? // null = ساخته‌ی ادمین
+  redeemedByUserId String? // کی فعالش کرده
+  redeemedAt       DateTime?
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime? // null = بدون انقضا
+
+  buyerUser     User? @relation("GiftCardBuyer", fields: [buyerUserId], references: [id], onDelete: SetNull)
+  redeemedByUser User? @relation("GiftCardRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([buyerUserId])
+  @@map("gift_cards")
 }
 
 // ================= کوپن تخفیف =================
@@ -855,6 +1116,33 @@ enum ReturnStatus {
   REFUNDED // وجه به کیف پول برگشت
 }
 
+// ================= درخواست لغو سفارش =================
+// سفارش‌های دارای کالای خارجی (ترندیول) مستقیماً لغو نمی‌شن -- چون ادمین ممکنه
+// الان وسط خریدِ واقعی از فروشنده باشه، حتی اگه هیچ قلمی PURCHASED نشده. مشتری
+// فقط یه *درخواست* لغو ثبت می‌کنه و ادمین با تکیف خودش تأیید یا ردش می‌کنه.
+// تأیید یعنی کل سفارش CANCELLED + بازگشت کامل منابع (موجودی/کوپن/کیف‌پول).
+// رد یعنی هیچ اتفاقی نمی‌افته -- سفارش دست‌نخورده می‌مونه.
+enum CancellationRequestStatus {
+  PENDING // در انتظار بررسی ادمین
+  APPROVED // ادمین تأیید کرد -- سفارش لغو شد و منابع برگشتن
+  REJECTED // ادمین رد کرد -- سفارش دست‌نخورده موند
+}
+
+model CancellationRequest {
+  id        String                      @id @default(cuid())
+  orderId   String                      @unique // هر سفارش فقط یه درخواست لغو فعال می‌تونه داشته باشه
+  userId    String
+  reason    String
+  status    CancellationRequestStatus   @default(PENDING)
+  adminNote String? // پیام ادمین هنگام رد/تأیید (مثلاً «فعلاً وسط خرید هستیم»)
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("cancellation_requests")
+}
+
 // متن‌های عمومی سایت که ادمین بتونه بدون نیاز به کد، تغییرشون بده -- مثل شرایط مرجوعی
 // ذخیره‌ی کلید-مقدار ساده؛ هر متن جدید فقط یه ردیف جدیده، نیازی به migration نداره
 model SiteSetting {
@@ -901,6 +1189,25 @@ model StockNotification {
   @@map("stock_notifications")
 }
 
+// «کاهش قیمت خبرم کن» -- وقتی قیمت مؤثرِ محصول (با احتساب تخفیف/حراج فلش) به
+// targetPrice یا کمتر برسه، یک‌بار اطلاع می‌دهیم (notifiedAt پر می‌شه) و با
+// ثبت دوباره (re-arm) فعال می‌شود. حداکثر یک اخطار فعال برای هر محصول/کاربر.
+model PriceAlert {
+  id          String    @id @default(cuid())
+  userId      String
+  productId   String
+  targetPrice Int // اگر قیمت <= این مقدار شد خبر بده
+  notifiedAt  DateTime? // null = هنوز فعال؛ پر = قبلاً اطلاع داده شده (یک‌بارمصرف)
+  createdAt   DateTime  @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId])
+  @@map("price_alerts")
+}
+
 // اعلان‌های داخل سایت -- بدون نیاز به ایمیل/پیامک، فقط زنگوله‌ی بالای هدر
 model Notification {
   id        String   @id @default(cuid())
@@ -913,6 +1220,109 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+// ترجیحات اعلانِ خارج از سایت (ایمیل/پیامک) -- به‌ازای هر کاربر یک ردیف
+// (خودکار با مقادیر پیش‌فرض ساخته می‌شه). برای هر کانال، لیستی از رویدادهایی
+// که نباید بفرستیم به‌صورت JSON رشته ذخیره می‌شه؛ اگر خالی باشد یعنی همه‌چیز
+// روی کانال فعال است.
+model NotificationSetting {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  emailOn             Boolean  @default(true)
+  smsOn               Boolean  @default(false)
+  // برخلاف ایمیل/پیامک که فقط یه سوییچه، پوش نیاز به subscription واقعیِ
+  // مرورگر داره (مدل PushSubscription) -- این فلگ فقط ترجیحِ کاربره، نه
+  // اینکه واقعاً subscription فعالی وجود دارد یا نه (اون رو موقع ارسال چک می‌کنیم)
+  pushOn              Boolean  @default(false)
+  emailDisabledEvents String   @default("[]") // JSON array از کلیدهای NotificationEvent
+  smsDisabledEvents   String   @default("[]")
+  pushDisabledEvents  String   @default("[]")
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_settings")
+}
+
+// اشتراکِ Web Push مرورگرِ یک کاربر -- هر مرورگر/دستگاه یک ردیف جدا (کاربر
+// می‌تونه هم از موبایل هم از دسکتاپ ثبت‌نام کرده باشه)؛ endpoint خودش یکتا
+// و شناسه‌ی طبیعیِ همون اشتراکِ مرورگره. p256dh/auth کلیدهای رمزنگاریِ
+// استانداردِ Web Push (RFC 8291) هستن که مرورگر موقع subscribe برمی‌گردونه.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+// لاگ اعلان‌های ارسال‌شده به خارج از سایت (ایمیل/پیامک). status:
+// "SENT" ارسال واقعی شد (پراوایدر پیکربندی شده)، "LOGGED" در محیط توسعه
+// بدون پراوایدر فقط ثبت شد، "FAILED" خطای پراوایدر.
+model OutboundNotification {
+  id        String   @id @default(cuid())
+  userId    String
+  channel   String // "EMAIL" | "SMS"
+  eventType String
+  to        String
+  subject   String?
+  body      String
+  status    String // "SENT" | "LOGGED" | "FAILED"
+  error     String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("outbound_notifications")
+}
+
+// لاگِ خودکارِ خطاهای سرور (نسخه‌ی خودمیزبانِ ساده‌ی چیزی مثل Sentry) -- از
+// طریق instrumentation.ts (خطاهای سمتِ سرور: روت‌ها/کامپوننت‌ها) و
+// global-error.tsx (خطاهای رندرِ سمتِ کلاینت) پر می‌شه. بدون این، اگه یه چیزی
+// توی production خراب بشه (مثلاً توی مسیرِ پرداخت)، هیچ‌کس خبردار نمی‌شه مگر
+// خودِ مشتری شکایت کنه.
+model ErrorLog {
+  id         String    @id @default(cuid())
+  message    String
+  stack      String?
+  // JSON آزاد: مسیر/روت، userId (اگه لاگین بود)، و هر چیزِ کمکیِ دیگه
+  context    String?
+  source     String // "SERVER" | "CLIENT"
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+  @@map("error_logs")
+}
+
+// ثبتِ اقدام‌های حساسِ ادمین/کارمند -- برخلاف OrderStatusHistory (که فقط چی و
+// کِی رو ثبت می‌کنه)، اینجا مشخصه *کی* این کار رو کرده. عمداً adminId رابطه‌ی
+// FK نیست (فقط رشته‌ی خام) و adminName/adminEmail هم snapshot لحظه‌ی ثبت‌ان --
+// همون الگوی OrderItem.title -- تا اگه بعداً حساب کارمند حذف شد، تاریخچه‌ی
+// اقداماتش هم پاک/بی‌معنی نشه
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  adminName  String
+  adminEmail String
+  action     String // کلید کوتاه، مثلاً "PAYMENT_APPROVED"، "STAFF_CREATED"
+  targetType String? // مثلاً "Order"، "User"، "WalletWithdrawalRequest"
+  targetId   String?
+  detail     String? // توضیح آزاد یا JSON کوتاه
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([adminId])
+  @@map("admin_audit_logs")
 }
 
 // ================= سایت‌های خارجی (ترندیول، ترندیول‌میلا، و بعداً هر سایت دیگه) =================
@@ -1034,6 +1444,29 @@ model TrendyolTitleCache {
   @@map("trendyol_title_cache")
 }
 
+// کمپین‌های واقعیِ ترندیول («۲ عدد و بیشتر ۴۰ لیر تخفیف» و مشابه) که هر بار
+// جزئیاتِ یه محصول واکشی می‌شه کشف/به‌روز می‌شن (نه یه کرالِ کامل از کل
+// ترندیول -- فقط همون کمپین‌هایی که حداقل یه محصولش روی خودِ سایتِ ما دیده
+// شده). صفحه‌ی اصلی از همینجا «کمپین‌های ترندیول» رو نشون می‌ده تا کاربر بدون
+// این‌که اول باید یه محصول خاص رو باز کند، مستقیم به لیستِ محصولاتِ آن کمپین برسد.
+model TrendyolDiscoveredCampaign {
+  id          String           @id @default(cuid())
+  campaignId  Int // همون promotions[].id ترندیول -- برای ساختنِ لینکِ /campaign/{id}
+  site        ExternalSiteKind @default(TRENDYOL)
+  text        String // متنِ ترجمه‌شده‌ی نمایشی
+  sampleImage String? // عکسِ همون محصولی که این کمپین رو لو داد -- برای کارتِ صفحه‌ی اصلی
+  // از promotions[].promotionEndDate -- اگه گذشته باشه، دیگه از صفحه‌ی اصلی
+  // حذف می‌شه (کمپین‌های بدونِ این فیلد، null می‌مونن و صرفاً با lastSeenAt
+  // قدیمی‌شدن به‌مرور از فهرست می‌افتن)
+  endsAt      DateTime?
+  firstSeenAt DateTime         @default(now())
+  lastSeenAt  DateTime         @default(now())
+
+  @@unique([campaignId, site])
+  @@index([lastSeenAt])
+  @@map("trendyol_discovered_campaigns")
+}
+
 model TrendyolCategoryCache {
   id              String   @id @default(cuid())
   site            ExternalSiteKind @default(TRENDYOL)
@@ -1123,4 +1556,27 @@ model ExternalSiteAttributeParam {
 
   @@unique([siteId, attributeId, value])
   @@map("external_site_attribute_params")
+}
+
+// ================= نشست‌های فعال دستگاه (مدیریت حساب چنددستگاهی) =================
+// هر ورود از یک دستگاه، یک ردیف (کلید: userId + deviceId). وقتی همان دستگاه دوباره
+// وارد می‌شود ردیف به‌روز می‌شود (sid جدید) و به‌عنوان «همان دستگاه» شناخته می‌شود؛
+// دستگاهی که هیچ ردیف قبلی ندارد «دستگاه جدید» است و به‌کاربر اعلان می‌دهیم.
+model UserSession {
+  id         String   @id @default(cuid())
+  userId     String
+  sid        String   @unique // داخل JWT ذخیره می‌شود؛ برای لغو یک‌نشست و «خروج از همه»
+  deviceId   String // fingerprint دستگاه (کوکی device_id) -- برای تشخیص دستگاه جدید
+  userAgent  String?
+  ip         String?
+  isCurrent  Boolean  @default(false) // آخرین دستگاهی که الان با آن وارد شده
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  revokedAt  DateTime? // اگر پُر باشد یعنی این دستگاه دیگر مجاز به استفاده نیست
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("user_sessions")
 }

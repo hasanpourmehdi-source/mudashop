@@ -54,6 +54,24 @@ export const PURCHASE_OUTCOME_LABELS: Record<string, string> = {
   ISSUE_OTHER: "مشکل دیگر",
 };
 
+// برای ترندیول، یه سفارش ممکنه به‌صورت چند بسته‌ی جداگانه ارسال بشه (کد رهگیری
+// جدا یا اقلام در زمان‌های متفاوط خریداری/تحویل شوند). در این حالت دو حالت
+// «پیشروی جزئی» و «تحویل جزئی» معنادار می‌شه:
+//  - partialPurchase = بعضی خریداری شدن / رسیده‌اند ولی هنوز بعضی PENDING/CANCELLED
+//  - partialDelivery = حداقل یه قلم دریافت یا تحویل داده شده ولی هنوز نه‌همه
+// این توابع فقط روی خلاصه‌ی purchaseStatusها محاسبه می‌شن؛ تعداد بسته‌ها/کدهای
+// رهگیری دقیقاً در لایه‌ی UI (parseTrackingCodes) محاسبه می‌شه
+export function isPartialPurchase(summary: PurchaseSummary): boolean {
+  return summary.total > 0 && summary.purchased > 0 && !summary.allResolved;
+}
+
+export function isPartialDelivery(summary: PurchaseSummary, shipped: boolean): boolean {
+  // اگر کل سفارش تحویل داده نشده باشد ولی بعضی اقلام حداقل خریداری/دریافت
+  // شده باشند → «تحویل جزئی» ممکن است در آینده/در جریان باشد
+  return shipped && isPartialPurchase(summary);
+}
+
+
 // بعد از هر تغییرِ وضعیتِ فاز ۲ (resolve یا mismatch-decision)، اگه با همین
 // تغییر همه‌ی اقلامِ خارجیِ سفارش به یه نتیجه‌ی نهایی رسیده باشن، یه پیام
 // جمع‌بندی برای مشتری ثبت می‌کنیم -- چون این دقیقاً لحظه‌ایه که همه‌چی برای

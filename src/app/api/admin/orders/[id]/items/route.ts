@@ -11,6 +11,7 @@ const mazonSchema = z.object({
   variantId: z.string().optional(),
   quantity: z.number().int().positive(),
   reason: z.string().max(500).optional(),
+  variantLabel: z.string().optional(),
 });
 
 const trendyolSchema = z.object({
@@ -21,6 +22,7 @@ const trendyolSchema = z.object({
   externalId: z.string().optional(),
   image: z.string().optional(),
   reason: z.string().max(500).optional(),
+  variantLabel: z.string().optional(),
 });
 
 const schema = z.union([mazonSchema, trendyolSchema]);
@@ -64,6 +66,7 @@ export async function POST(
     image: string | null;
     price: number;
     quantity: number;
+    variantLabel: string | null;
   };
 
   if (parsed.data.source === "MAZON") {
@@ -95,6 +98,7 @@ export async function POST(
       image: images[0] ?? null,
       price,
       quantity: parsed.data.quantity,
+      variantLabel: parsed.data.variantLabel ?? null,
     };
   } else {
     itemData = {
@@ -104,6 +108,7 @@ export async function POST(
       image: parsed.data.image ?? null,
       price: parsed.data.price,
       quantity: parsed.data.quantity,
+      variantLabel: parsed.data.variantLabel ?? null,
     };
   }
 

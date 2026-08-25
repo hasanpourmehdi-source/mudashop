@@ -31,7 +31,12 @@ export async function POST(req: Request) {
   const hashed = await bcrypt.hash(password, 10);
 
   await prisma.$transaction([
-    prisma.user.update({ where: { id: resetToken.userId }, data: { password: hashed } }),
+    // اثباتِ مالکیتِ ایمیل از طریقِ لینکِ بازیابی، هر قفلِ brute-force فعلی
+    // رو هم برمی‌داره -- کاربرِ واقعی نباید ۱۵ دقیقه دیگه هم صبر کنه
+    prisma.user.update({
+      where: { id: resetToken.userId },
+      data: { password: hashed, failedLoginAttempts: 0, lockedUntil: null },
+    }),
     prisma.passwordResetToken.update({ where: { id: resetToken.id }, data: { usedAt: new Date() } }),
   ]);
 

@@ -36,11 +36,13 @@ export async function POST(req: Request) {
 
   const resetLink = `${process.env.NEXTAUTH_URL ?? ""}/auth/reset-password?token=${token}`;
 
-  // نکته مهم: اینجا سرویس ایمیل واقعی نداریم (پروژه در حالت توسعه‌ست)
-  // پس به‌جای ارسال ایمیل، لینک رو مستقیم توی جواب API برمی‌گردونیم تا تست بشه.
-  // توی محیط پروداکشن واقعی، این خط باید با ارسال ایمیل واقعی جایگزین بشه
-  // و devResetLink اصلاً توی جواب برنگرده.
-  console.log(`[dev] لینک بازیابی رمز برای ${email}: ${resetLink}`);
+  // توی محیط توسعه سرویس ایمیل واقعی نداریم؛ لینک رو توی جواب API برمی‌گردونیم
+  // تا قابل تست باشه. در پروداکشن این خط باید با ارسال ایمیل واقعی جایگزین بشه و
+  // لینک هرگز توی جواب برنگرده -- برگشت لینک به هر کسی = تصاحب حساب.
+  const isDev = process.env.NODE_ENV !== "production";
+  if (isDev) {
+    console.log(`[dev] لینک بازیابی رمز برای ${email}: ${resetLink}`);
+  }
 
-  return NextResponse.json({ success: true, devResetLink: resetLink });
+  return NextResponse.json({ success: true, devResetLink: isDev ? resetLink : null });
 }

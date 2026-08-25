@@ -5,8 +5,10 @@ import { fetchTrendyolProductById } from "@/lib/trendyol";
 import { fetchTrendyolProductDetail } from "@/lib/trendyolProductDetail";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
-import { GIFT_WRAP_COST, SHIPPING_METHODS, isTehranCity } from "@/lib/shipping";
+import { GIFT_WRAP_COST, NO_COST_SHIPPING_METHODS, SHIPPING_METHODS, calculateShipping, isTehranCity } from "@/lib/shipping";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { UserFacingError } from "@/lib/errors";
 import { z } from "zod";
 
 // محصولات دموی قدیمی (Fake Store API) فقط ۲۰ تا محصول دارن (id های ۱ تا ۲۰)؛
@@ -24,6 +26,7 @@ const orderItemSchema = z.object({
   variantId: z.string().optional(),
   flashSaleId: z.string().optional(),
   quantity: z.number().int().positive("تعداد باید حداقل ۱ باشد"),
+  variantLabel: z.string().optional(), // مثلاً "سایز: L / رنگ: قرمز"
 });
 
 const newAddressSchema = z.object({
@@ -44,6 +47,10 @@ const orderSchema = z.object({
   giftWrap: z.boolean().default(false),
   couponCode: z.string().optional(),
   useWallet: z.boolean().default(false),
+  // فقط برای خریدِ مهمان (بدون لاگین) لازمن
+  guestName: z.string().min(2).optional(),
+  guestEmail: z.string().email().optional(),
+  guestPhone: z.string().min(8).optional(),
 });
 
 export async function GET() {
@@ -62,10 +69,6 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "احراز هویت لازم است" }, { status: 401 });
-  }
-  const userId = session.user.id;
 
   const body = await req.json();
   const parsed = orderSchema.safeParse(body);
@@ -76,7 +79,46 @@ export async function POST(req: Request) {
     );
   }
 
-  const { items, addressId, newAddress, shippingMethod, giftWrap, couponCode, useWallet } = parsed.data;
+  const { items, addressId, newAddress, shippingMethod, giftWrap, couponCode, useWallet, guestName, guestEmail, guestPhone } =
+    parsed.data;
+
+  // خریدِ مهمان: بدون لاگین هم می‌شه سفارش ثبت کرد، ولی فقط با newAddress (نه
+  // آدرسِ ذخیره‌شده -- مهمان دفترچه‌ی آدرس ندارد) و نام/ایمیل/تلفن. یه کاربرِ
+  // سایه‌ای (isGuest=true, بدون رمز) ساخته یا پیدا می‌شود تا همه‌ی زیرساخت‌های
+  // موجود (اعلان، رفاند، معرفی و ...) بدون تغییر کار کنند
+  let userId: string;
+  let customerName: string;
+  let customerEmail: string;
+  if (session?.user?.id) {
+    userId = session.user.id;
+    customerName = session.user.name ?? session.user.email ?? "";
+    customerEmail = session.user.email ?? "";
+  } else {
+    if (!newAddress || !guestName || !guestEmail || !guestPhone) {
+      return NextResponse.json(
+        { error: "برای خریدِ بدون ثبت‌نام، نام و ایمیل و شماره تماس لازم است" },
+        { status: 400 }
+      );
+    }
+    const existingUser = await prisma.user.findUnique({ where: { email: guestEmail } });
+    if (existingUser && !existingUser.isGuest) {
+      return NextResponse.json(
+        { error: "این ایمیل قبلاً ثبت‌نام کرده است -- لطفاً وارد حساب خود شوید" },
+        { status: 409 }
+      );
+    }
+    const guestUser =
+      existingUser ??
+      (await prisma.user.create({
+        data: { name: guestName, email: guestEmail, phone: guestPhone, isGuest: true },
+      }).catch(() =>
+        // شماره تماس با کاربرِ دیگری برخورد کرد (یکتاست) -- بدونِ شماره دوباره بساز
+        prisma.user.create({ data: { name: guestName, email: guestEmail, isGuest: true } })
+      ));
+    userId = guestUser.id;
+    customerName = guestName;
+    customerEmail = guestEmail;
+  }
 
   if (!addressId && !newAddress) {
     return NextResponse.json({ error: "آدرس ارسال لازم است" }, { status: 400 });
@@ -117,6 +159,7 @@ export async function POST(req: Request) {
     image: string | null;
     price: number;
     quantity: number;
+    variantLabel: string | null;
   };
   const resolvedItems: ResolvedItem[] = [];
 
@@ -198,6 +241,7 @@ export async function POST(req: Request) {
         image: images[0] ?? null,
         price: unitPrice,
         quantity: item.quantity,
+        variantLabel: item.variantLabel ?? null,
       });
     } else if (isLegacyDemoTrendyolId(item.productId)) {
       // محصول دموی قدیمی (کاتالوگ نمایشی صفحه‌ی اصلی، از Fake Store API)
@@ -218,6 +262,7 @@ export async function POST(req: Request) {
         image: trendyolProduct.image,
         price: trendyolProduct.price,
         quantity: item.quantity,
+        variantLabel: item.variantLabel ?? null,
       });
     } else {
       // محصول واقعی از /marketplaces/trendyol (کارت لایو یا «نگاه سریع») --
@@ -264,6 +309,7 @@ export async function POST(req: Request) {
         image: detail.images[0] ?? null,
         price: detail.price,
         quantity: item.quantity,
+        variantLabel: item.variantLabel ?? null,
       });
     }
   }
@@ -331,12 +377,21 @@ export async function POST(req: Request) {
     resolvedCoupon = { id: coupon.id, code: coupon.code, maxUses: coupon.maxUses };
   }
 
-  // هزینه ارسال دیگه اینجا حساب نمی‌شه -- ادمین موقع بررسی سفارش (بعد از محاسبه‌ی
-  // باربری) دستی وارد می‌کنه. پس این «total» موقتیه (بدون هزینه ارسال)، فقط برای
-  // نمایش تا قبل از نهایی‌سازی؛ کیف‌پول هم تا اون لحظه اعمال نمی‌شه چون مبلغ
-  // نهایی کامل نیست -- فقط نیت مشتری (useWalletRequested) ذخیره می‌شه
+  // هزینه ارسال برای سفارش‌های فقط-مزون همین‌جا قابل محاسبه‌ست: روش‌های
+  // NO_COST («پیک موتوری»/«تیپاکس» که هزینه مستقیم به تحویل‌دهنده پرداخت
+  // می‌شه) یا کوپن ارسال رایگان => صفر؛ روش پستی => SHIPPING_COST مگر سبد
+  // بالاتر از آستانه‌ی ارسال رایگان باشد. سفارش‌های حاوی کالای خارجی (باربری)
+  // همچنان بعداً توسط ادمین تعیین می‌شه (این‌حا null).
+  let resolvedShippingCost: number | null = null;
+  if (!hasExternalItems) {
+    const isNoCostMethod = NO_COST_SHIPPING_METHODS.includes(
+      validatedShippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number]
+    );
+    resolvedShippingCost = freeShipping || isNoCostMethod ? 0 : calculateShipping(subtotal);
+  }
+
   const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
-  const total = subtotal - discountTotal + giftWrapCost;
+  const total = subtotal - discountTotal + giftWrapCost + (resolvedShippingCost ?? 0);
 
   try {
     const order = await prisma.$transaction(async (tx) => {
@@ -348,7 +403,7 @@ export async function POST(req: Request) {
             data: { stock: { decrement: item.quantity } },
           });
           if (result.count === 0) {
-            throw new Error(`موجودی «${item.title}» به‌طور همزمان تمام شد`);
+            throw new UserFacingError(`موجودی «${item.title}» به‌طور همزمان تمام شد`);
           }
         }
         if (item.flashSaleId) {
@@ -357,7 +412,7 @@ export async function POST(req: Request) {
             data: { stock: { decrement: item.quantity } },
           });
           if (result.count === 0) {
-            throw new Error(`موجودی حراج «${item.title}» به‌طور همزمان تمام شد`);
+            throw new UserFacingError(`موجودی حراج «${item.title}» به‌طور همزمان تمام شد`);
           }
         }
       }
@@ -374,7 +429,7 @@ export async function POST(req: Request) {
           data: { usedCount: { increment: 1 } },
         });
         if (couponResult.count === 0) {
-          throw new Error("ظرفیت این کد تخفیف هم‌زمان تمام شد");
+          throw new UserFacingError("ظرفیت این کد تخفیف هم‌زمان تمام شد");
         }
       }
 
@@ -383,7 +438,7 @@ export async function POST(req: Request) {
           userId,
           addressId: resolvedAddressId,
           subtotal,
-          shippingCost: null,
+          shippingCost: resolvedShippingCost,
           shippingMethod: validatedShippingMethod,
           freeShippingApplied: freeShipping,
           useWalletRequested: useWallet,
@@ -408,6 +463,7 @@ export async function POST(req: Request) {
               image: i.image,
               price: i.price,
               quantity: i.quantity,
+              variantLabel: i.variantLabel,
             })),
           },
         },
@@ -427,17 +483,31 @@ export async function POST(req: Request) {
       const shortId = order.id.slice(-8);
       await notifyAdminsOnce(
         `سفارش جدید #${shortId}`,
-        `سفارش جدید #${shortId} توسط ${session.user.name ?? session.user.email} ثبت شد -- مبلغ اولیه ${order.total.toLocaleString(
+        `سفارش جدید #${shortId} توسط ${customerName || customerEmail}${session?.user?.id ? "" : " (خریدِ مهمان)"} ثبت شد -- مبلغ ${order.total.toLocaleString(
           "fa-IR"
-        )} تومان (بدون هزینه ارسال). برای بررسی، تعیین هزینه ارسال و تخصیص شماره کارت به پنل سفارش‌ها مراجعه کنید.`,
+        )} تومان ${order.shippingCost === null ? "(هزینه ارسال/باربری بعد از وزن‌کشی اعلام می‌شود)" : "(شامل هزینه ارسال)"}. برای بررسی، نهایی‌سازی و تخصیص شماره کارت به پنل سفارش‌ها مراجعه کنید.`,
         `/admin/orders/${order.id}`
       );
+      await notifyCustomerOutbound({
+        userId: order.userId,
+        eventType: "ORDER_CREATED",
+        title: `سفارش #${shortId} ثبت شد`,
+        body: `سفارش #${shortId} شما با موفقیت ثبت شد و پس از تأیید پرداخت، آماده‌سازی می‌شود.`,
+      });
+    }
+
+    // سفارش با موفقیت ثبت شد -- دیگه «رهاشده» نیست، عکسِ لحظه‌ایِ سبد رو پاک کن
+    if (session?.user?.id) {
+      await prisma.cartSnapshot.deleteMany({ where: { userId: session.user.id } });
     }
 
     return NextResponse.json(order, { status: 201 });
   } catch (err) {
     console.error(err);
-    const message = err instanceof Error ? err.message : "خطا در ثبت سفارش";
+    const message =
+      err instanceof UserFacingError && err.message
+        ? err.message
+        : "خطای غیرمنتظره در ثبت سفارش";
     return NextResponse.json({ error: message }, { status: 409 });
   }
 }

@@ -161,7 +161,7 @@ export async function fetchSimilarTrendyolProducts(
 
   // ترجمه‌ی lazy عنوان‌ها -- دقیقاً مثل الگوی parseSearchPayload توی trendyol.ts
   try {
-    const titleMap = await translateTrendyolTitles(products.map((p) => p.name));
+    const titleMap = await translateTrendyolTitles(products.map((p) => ({ title: p.name, brand: p.brand })));
     for (const p of products) {
       p.nameFa = titleMap.get(p.name) ?? p.name;
     }

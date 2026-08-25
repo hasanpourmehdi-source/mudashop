@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useCart } from "@/hooks/useCart";
-import { GIFT_WRAP_COST, NO_COST_SHIPPING_METHODS, availableShippingMethods } from "@/lib/shipping";
+import { GIFT_WRAP_COST, NO_COST_SHIPPING_METHODS, availableShippingMethods, calculateShipping } from "@/lib/shipping";
 import { getAppliedCouponCode, setAppliedCouponCode } from "@/lib/appliedCoupon";
+import { trackBeginCheckout, trackPurchase } from "@/lib/analytics";
 
 type Address = {
   id: string;
@@ -38,7 +41,11 @@ const emptyAddressForm = {
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const { status: sessionStatus } = useSession();
   const { items, total, clear } = useCart();
+  // خریدِ مهمان: بدون لاگین هم می‌شه سفارش ثبت کرد (فقط با نام/ایمیل/تلفن)
+  const isGuest = sessionStatus === "unauthenticated";
+  const [guestEmail, setGuestEmail] = useState("");
 
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>("");
@@ -65,6 +72,29 @@ export default function CheckoutPage() {
   const [editAddressForm, setEditAddressForm] = useState(emptyAddressForm);
   const [editAddressError, setEditAddressError] = useState("");
   const [editAddressSaving, setEditAddressSaving] = useState(false);
+
+  // آیا ایمیل حساب (فقط برای کاربر لاگین‌کرده، نه مهمان) تأیید شده -- اگه نه،
+  // همین اول هشدار می‌دیم تا کاربر کل فرم رو پر نکنه و بعد توی مرحله‌ی آخر
+  // با خطای «سفارش ثبت نشد» غافلگیر نشه
+  const [emailVerified, setEmailVerified] = useState(true);
+
+  // تأییدِ قوانین -- فقط سمتِ کلاینت چک می‌شه (مثل بیشتر سایت‌ها)، تضمینِ
+  // حقوقیِ واقعی نیست، فقط یعنی مشتری قبل از ثبت سفارش لینکش رو دیده
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+
+  useEffect(() => {
+    if (isGuest) return;
+    fetch("/api/auth/verification-status")
+      .then((res) => (res.ok ? res.json() : { verified: true }))
+      .then((data) => setEmailVerified(!!data.verified));
+  }, [isGuest]);
+
+  // فقط یک‌بار برای همین بازِ ورود به چک‌اوت (نه هر رندر) -- برای پیکسل تبلیغاتی
+  useEffect(() => {
+    if (items.length === 0) return;
+    trackBeginCheckout(items.map((i) => ({ id: i.id, title: i.title, price: i.price, quantity: i.quantity })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetch("/api/addresses")
@@ -112,15 +142,21 @@ export default function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCity]);
 
-  // هزینه ارسال دیگه اینجا قابل‌محاسبه نیست -- ادمین بعد از ثبت سفارش (با
-  // محاسبه‌ی باربری) دستی تعیینش می‌کنه و به مشتری اعلام می‌شه. این پیش‌نمایش
-  // فقط بخش‌های معلوم (جمع اقلام، تخفیف، بسته‌بندی هدیه) رو نشون می‌ده؛ کیف‌پول
-  // هم واقعاً همون لحظه اعمال نمی‌شه، فقط برای پیش‌نمایشه (نیت واقعی در سرور
-  // در لحظه‌ی تعیین هزینه ارسال اعمال می‌شه)
+  // هزینه ارسال برای سبد فقط-مزون هم این‌جا (با همان منطق سرور) قابل محاسبه‌ست:
+  // روش‌های NO_COST یا کوپن ارسال رایگان => صفر؛ روش پستی => SHIPPING_COST مگر
+  // سبد بالاتر از آستانه‌ی ارسال رایگان. فقط سبدهای دارای کالای خارجی (ترندیول)
+  // بعد از وزن‌کشی توسط ادمین اعلام می‌شن (اونجا قابل پیش‌بینی نیست).
   const subtotal = total();
   const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
   const discountAmount = coupon?.discountAmount ?? 0;
-  const totalBeforeWallet = subtotal - discountAmount + giftWrapCost;
+  const shippingCost =
+    !hasExternalItems &&
+    shippingMethod &&
+    !coupon?.freeShipping &&
+    !NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number])
+      ? calculateShipping(subtotal)
+      : 0;
+  const totalBeforeWallet = subtotal - discountAmount + giftWrapCost + shippingCost;
   const walletApplied = useWallet ? Math.min(walletBalance, totalBeforeWallet) : 0;
   const grandTotal = totalBeforeWallet - walletApplied;
 
@@ -207,7 +243,21 @@ export default function CheckoutPage() {
 
   async function handlePlaceOrder() {
     setError("");
-    if (!selectedAddressId) {
+    if (!agreedToTerms) {
+      setError("برای ثبت سفارش، باید قوانین و مقررات را بپذیرید");
+      return;
+    }
+    if (isGuest) {
+      const { title, fullName, phone, province, city, postalCode, detail } = addressForm;
+      if (!title || !fullName || !phone || !province || !city || !postalCode || !detail) {
+        setError("لطفاً اطلاعات آدرس را کامل کنید");
+        return;
+      }
+      if (!guestEmail.trim()) {
+        setError("برای خرید بدون ثبت‌نام، وارد کردن ایمیل لازم است");
+        return;
+      }
+    } else if (!selectedAddressId) {
       setError("لطفاً یک آدرس انتخاب کنید");
       return;
     }
@@ -221,17 +271,25 @@ export default function CheckoutPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        addressId: selectedAddressId,
+        ...(isGuest
+          ? {
+              newAddress: addressForm,
+              guestEmail: guestEmail.trim(),
+              guestName: addressForm.fullName,
+              guestPhone: addressForm.phone,
+            }
+          : { addressId: selectedAddressId }),
         shippingMethod: hasExternalItems ? undefined : shippingMethod,
         giftWrap,
         couponCode: coupon?.code,
-        useWallet,
+        useWallet: isGuest ? false : useWallet,
         items: items.map((i) => ({
           source: i.source,
           productId: i.productId,
           variantId: i.variantId,
           flashSaleId: i.flashSaleId,
           quantity: i.quantity,
+          variantLabel: i.variantLabel,
         })),
       }),
     });
@@ -244,8 +302,23 @@ export default function CheckoutPage() {
       return;
     }
 
+    trackPurchase(
+      data.id,
+      (data.items as { id: string; title: string; price: number; quantity: number }[]).map((i) => ({
+        id: i.id,
+        title: i.title,
+        price: i.price,
+        quantity: i.quantity,
+      })),
+      data.total
+    );
+
     clear();
     setAppliedCouponCode("");
+    if (isGuest) {
+      router.push(`/track-order?orderId=${data.id}&email=${encodeURIComponent(guestEmail.trim())}`);
+      return;
+    }
     router.push(`/orders/${data.id}`);
   }
 
@@ -263,6 +336,17 @@ export default function CheckoutPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 grid md:grid-cols-[1fr_320px] gap-8">
       <div className="space-y-8">
+        {!isGuest && !emailVerified && (
+          <div className="border-2 cut-line rounded-lg p-4 bg-amber-50 text-sm">
+            <p className="font-medium">
+              ⚠️ ایمیل حسابت هنوز تأیید نشده -- برای ثبت سفارش، اول باید تأییدش کنی.
+            </p>
+            <Link href="/profile" className="text-xs text-[var(--color-wine)] hover:underline">
+              رفتن به پروفایل برای تأیید ایمیل ←
+            </Link>
+          </div>
+        )}
+
         {/* آدرس‌ها */}
         <section>
           <h2 className="font-bold mb-4">آدرس ارسال</h2>
@@ -275,43 +359,43 @@ export default function CheckoutPage() {
                   <div key={a.id} className="border-2 cut-line rounded-lg p-3 bg-white space-y-2">
                     <div className="grid sm:grid-cols-2 gap-2">
                       <input
-                        placeholder="عنوان"
+                        placeholder="عنوان *"
                         value={editAddressForm.title}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, title: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <input
-                        placeholder="نام گیرنده"
+                        placeholder="نام گیرنده *"
                         value={editAddressForm.fullName}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, fullName: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <input
-                        placeholder="شماره تماس"
+                        placeholder="شماره تماس *"
                         value={editAddressForm.phone}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, phone: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <input
-                        placeholder="استان"
+                        placeholder="استان *"
                         value={editAddressForm.province}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, province: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <input
-                        placeholder="شهر"
+                        placeholder="شهر *"
                         value={editAddressForm.city}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, city: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <input
-                        placeholder="کد پستی"
+                        placeholder="کد پستی *"
                         value={editAddressForm.postalCode}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, postalCode: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm"
                       />
                       <textarea
-                        placeholder="آدرس کامل"
+                        placeholder="آدرس کامل *"
                         value={editAddressForm.detail}
                         onChange={(e) => setEditAddressForm({ ...editAddressForm, detail: e.target.value })}
                         className="border cut-line rounded-lg px-3 py-1.5 text-sm sm:col-span-2"
@@ -379,7 +463,7 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          {!showNewAddressForm ? (
+          {!isGuest && !showNewAddressForm ? (
             <button
               onClick={() => setShowNewAddressForm(true)}
               className="text-sm text-[var(--color-wine)] font-medium"
@@ -388,78 +472,105 @@ export default function CheckoutPage() {
             </button>
           ) : (
             <form
-              onSubmit={handleSaveAddress}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!isGuest) handleSaveAddress(e);
+              }}
+              noValidate
               className="grid sm:grid-cols-2 gap-3 border cut-line rounded-lg p-4 bg-white"
             >
+              {isGuest && (
+                <input
+                  type="email"
+                  placeholder="ایمیل (برای پیگیری سفارش)"
+                  required
+                  value={guestEmail}
+                  onChange={(e) => setGuestEmail(e.target.value)}
+                  dir="ltr"
+                  className="border cut-line rounded-lg px-3 py-2 sm:col-span-2"
+                />
+              )}
               <input
-                placeholder="عنوان (مثلا منزل)"
+                placeholder="عنوان (مثلا منزل) *"
                 required
                 value={addressForm.title}
                 onChange={(e) => setAddressForm({ ...addressForm, title: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <input
-                placeholder="نام گیرنده"
+                placeholder="نام گیرنده *"
                 required
                 value={addressForm.fullName}
                 onChange={(e) => setAddressForm({ ...addressForm, fullName: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <input
-                placeholder="شماره تماس"
+                placeholder="شماره تماس *"
                 required
                 value={addressForm.phone}
                 onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <input
-                placeholder="استان"
+                placeholder="استان *"
                 required
                 value={addressForm.province}
                 onChange={(e) => setAddressForm({ ...addressForm, province: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <input
-                placeholder="شهر"
+                placeholder="شهر *"
                 required
                 value={addressForm.city}
                 onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <input
-                placeholder="کد پستی"
+                placeholder="کد پستی *"
                 required
                 value={addressForm.postalCode}
                 onChange={(e) => setAddressForm({ ...addressForm, postalCode: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2"
               />
               <textarea
-                placeholder="آدرس کامل"
+                placeholder="آدرس کامل *"
                 required
                 value={addressForm.detail}
                 onChange={(e) => setAddressForm({ ...addressForm, detail: e.target.value })}
                 className="border cut-line rounded-lg px-3 py-2 sm:col-span-2"
               />
-              <div className="sm:col-span-2 flex gap-2">
-                <button
-                  type="submit"
-                  className="bg-[var(--color-wine)] text-white px-4 py-2 rounded-full text-sm font-medium"
-                >
-                  ذخیره آدرس
-                </button>
-                {addresses.length > 0 && (
+              {!isGuest && (
+                <div className="sm:col-span-2 flex gap-2">
                   <button
-                    type="button"
-                    onClick={() => setShowNewAddressForm(false)}
-                    className="text-sm text-[var(--color-muted)]"
+                    type="submit"
+                    className="bg-[var(--color-wine)] text-white px-4 py-2 rounded-full text-sm font-medium"
                   >
-                    انصراف
+                    ذخیره آدرس
                   </button>
-                )}
-              </div>
+                  {addresses.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowNewAddressForm(false)}
+                      className="text-sm text-[var(--color-muted)]"
+                    >
+                      انصراف
+                    </button>
+                  )}
+                </div>
+              )}
             </form>
           )}
         </section>
+
+        {isGuest && (
+          <p className="text-xs text-[var(--color-muted)] -mt-4">
+            حساب کاربری داری؟{" "}
+            <a href="/auth/login?callbackUrl=/checkout" className="text-[var(--color-wine)] font-medium">
+              وارد شو
+            </a>{" "}
+            تا سریع‌تر خرید کنی و تاریخچه‌ی سفارش‌هات رو ببینی.
+          </p>
+        )}
 
         {/* نحوه ارسال -- فقط برای سبد فقط-مزون؛ گزینه‌های در دسترس به شهرِ آدرس انتخابی بستگی داره */}
         {!hasExternalItems && (
@@ -581,14 +692,26 @@ export default function CheckoutPage() {
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-[var(--color-muted)]">هزینه ارسال</span>
+          <span className="text-[var(--color-muted)]">
+            هزینه ارسال
+            {!hasExternalItems && shippingCost === 0 && !coupon?.freeShipping && (
+              <span className="block text-[10px] text-[var(--color-muted)]">
+                {NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number])
+                  ? "پرداخت مستقیم به تحویل‌دهنده"
+                  : "ارسال رایگان بالاتر از سقف خرید"}
+              </span>
+            )}
+          </span>
           <span className="text-xs text-[var(--color-muted)]">
-            {coupon?.freeShipping
-              ? "رایگان (کد تخفیف)"
-              : !hasExternalItems &&
-                NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number])
-              ? "رایگان (پرداخت مستقیم به تحویل‌دهنده)"
-              : "پس از بررسی ادمین اعلام می‌شود"}
+            {hasExternalItems
+              ? "پس از بررسی ادمین اعلام می‌شود"
+              : shippingCost === 0
+                ? coupon?.freeShipping
+                  ? "رایگان (کد تخفیف)"
+                  : "رایگان"
+                : shippingMethod
+                  ? `${shippingCost.toLocaleString("fa-IR")} تومان`
+                  : "پس از انتخاب نحوه ارسال"}
           </span>
         </div>
         {giftWrap && (
@@ -607,11 +730,30 @@ export default function CheckoutPage() {
           <span>
             مبلغ قابل پرداخت
             <span className="block text-[10px] font-normal text-[var(--color-muted)]">
-              {hasExternalItems ? "هزینه ارسال+باربری" : "هزینه ارسال"} پس از بررسی ادمین اعلام می‌شود
+              {hasExternalItems ? "هزینه ارسال+باربری پس از بررسی ادمین اعلام می‌شود" : "شامل هزینه ارسال"}
             </span>
           </span>
           <span className="text-[var(--color-wine)]">{grandTotal.toLocaleString("fa-IR")} تومان</span>
         </div>
+
+        <label className="flex items-start gap-2 text-xs cursor-pointer">
+          <input
+            type="checkbox"
+            checked={agreedToTerms}
+            onChange={(e) => setAgreedToTerms(e.target.checked)}
+            className="accent-[var(--color-wine)] mt-0.5"
+          />
+          <span>
+            <Link href="/terms" target="_blank" className="text-[var(--color-wine)] hover:underline">
+              قوانین و مقررات
+            </Link>{" "}
+            و{" "}
+            <Link href="/privacy" target="_blank" className="text-[var(--color-wine)] hover:underline">
+              حریم خصوصی
+            </Link>{" "}
+            را می‌پذیرم
+          </span>
+        </label>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

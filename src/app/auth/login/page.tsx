@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { ensureDeviceCookie } from "@/lib/clientDevice";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -16,6 +17,8 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
+    ensureDeviceCookie();
+
     const res = await signIn("credentials", {
       email,
       password,
@@ -25,7 +28,19 @@ export default function LoginPage() {
     setLoading(false);
 
     if (res?.error) {
-      setError("ایمیل یا رمز عبور اشتباه است");
+      // next-auth پیام دقیقِ throw شده توی authorize (مثلاً «قفل موقت») رو به
+      // کلاینت نمی‌ده -- برای همین جدا می‌پرسیم که آیا این حساب الان قفله یا نه
+      const statusRes = await fetch("/api/auth/login-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const status = await statusRes.json().catch(() => ({ locked: false }));
+      setError(
+        status.locked
+          ? `به‌خاطر تلاش‌های ناموفق زیاد، این حساب موقتاً قفل شده -- حدود ${status.minutesLeft} دقیقه دیگر دوباره امتحان کن.`
+          : "ایمیل یا رمز عبور اشتباه است"
+      );
       return;
     }
 
@@ -37,7 +52,7 @@ export default function LoginPage() {
     <div className="max-w-sm mx-auto px-4 py-16">
       <h1 className="text-xl font-bold mb-6 text-center">ورود به مُداشاپ</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">ایمیل</label>
           <input
@@ -102,7 +117,10 @@ export default function LoginPage() {
       </div>
 
       <button
-        onClick={() => signIn("google", { callbackUrl: "/" })}
+        onClick={() => {
+          ensureDeviceCookie();
+          signIn("google", { callbackUrl: "/" });
+        }}
         className="w-full border cut-line py-2.5 rounded-full font-medium bg-white"
       >
         ورود با گوگل

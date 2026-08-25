@@ -13,6 +13,8 @@ type Review = {
   verifiedPurchase: boolean;
   isApproved: boolean;
   createdAt: string;
+  adminReply: string | null;
+  repliedAt: string | null;
   user: { name: string | null; email: string };
   product: { title: string; slug: string } | null;
 };
@@ -57,6 +59,8 @@ export default function AdminReviewsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [error, setError] = useState("");
+  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
+  const [replyOpen, setReplyOpen] = useState<string | null>(null);
 
   function load() {
     fetch("/api/admin/reviews")
@@ -91,6 +95,29 @@ export default function AdminReviewsPage() {
       setError(data.error ?? `خطا در حذف (کد ${res.status})`);
       return;
     }
+    load();
+  }
+
+  async function handleReply(id: string) {
+    setError("");
+    setBusyId(id);
+    const res = await fetch(`/api/admin/reviews/${id}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reply: replyDraft[id] ?? "" }),
+    });
+    setBusyId(null);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? `خطا در ثبت پاسخ (کد ${res.status})`);
+      return;
+    }
+    setReplyOpen(null);
+    setReplyDraft((d) => {
+      const next = { ...d };
+      delete next[id];
+      return next;
+    });
     load();
   }
 
@@ -179,13 +206,55 @@ export default function AdminReviewsPage() {
                     ))}
                   </div>
                 )}
-                <button
-                  onClick={() => handleReject(r.id)}
-                  disabled={busyId === r.id}
-                  className="text-red-600 text-xs mt-2 hover:underline disabled:opacity-50"
-                >
-                  حذف
-                </button>
+                {r.adminReply && (
+                  <div className="mt-2 bg-[var(--color-linen-dim)] rounded-lg px-3 py-2 text-xs">
+                    <p className="font-bold mb-0.5">پاسخ مُداشاپ {r.repliedAt ? `(${new Date(r.repliedAt).toLocaleDateString("fa-IR")})` : ""}</p>
+                    <p className="text-[var(--color-muted)]">{r.adminReply}</p>
+                  </div>
+                )}
+                {replyOpen === r.id ? (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={replyDraft[r.id] ?? ""}
+                      onChange={(e) => setReplyDraft((d) => ({ ...d, [r.id]: e.target.value }))}
+                      placeholder="پاسخ تیم مُداشاپ به این نظر..."
+                      className="w-full border cut-line rounded-lg px-3 py-2 text-xs min-h-16"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleReply(r.id)}
+                        disabled={busyId === r.id}
+                        className="bg-[var(--color-wine)] text-white px-3 py-1.5 rounded-full text-xs font-medium disabled:opacity-50"
+                      >
+                        {busyId === r.id ? "..." : "ثبت پاسخ"}
+                      </button>
+                      <button
+                        onClick={() => setReplyOpen(null)}
+                        disabled={busyId === r.id}
+                        className="text-xs text-[var(--color-muted)] px-2 disabled:opacity-50"
+                      >
+                        انصراف
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-3 mt-2">
+                    <button
+                      onClick={() => setReplyOpen(r.id)}
+                      disabled={busyId === r.id}
+                      className="text-xs text-[var(--color-wine)] hover:underline disabled:opacity-50"
+                    >
+                      {r.adminReply ? "ویرایش پاسخ" : "پاسخ به نظر"}
+                    </button>
+                    <button
+                      onClick={() => handleReject(r.id)}
+                      disabled={busyId === r.id}
+                      className="text-red-600 text-xs hover:underline disabled:opacity-50"
+                    >
+                      حذف
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

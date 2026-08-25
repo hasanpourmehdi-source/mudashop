@@ -3,10 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
+  // خریدِ مهمان هم می‌تونه کد تخفیف اعمال کنه -- بدون لاگین یعنی هنوز هیچ
+  // سفارشی نداره، پس اعتبارسنجی FIRST_BUY هم طبیعتاً true می‌مونه
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "احراز هویت لازم است" }, { status: 401 });
-  }
 
   const { code, subtotal } = await req.json();
   if (!code || typeof subtotal !== "number") {
@@ -36,9 +35,11 @@ export async function POST(req: Request) {
   }
 
   if (coupon.type === "FIRST_BUY") {
-    const previousOrders = await prisma.order.count({
-      where: { userId: session.user.id, status: { not: "CANCELLED" } },
-    });
+    const previousOrders = session?.user?.id
+      ? await prisma.order.count({
+          where: { userId: session.user.id, status: { not: "CANCELLED" } },
+        })
+      : 0;
     if (previousOrders > 0) {
       return NextResponse.json(
         { error: "این کد فقط برای اولین خرید معتبر است" },

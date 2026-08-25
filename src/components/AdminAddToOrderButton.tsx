@@ -22,6 +22,7 @@ export function AdminAddToOrderButton({
   image,
   price,
   quantity,
+  variantLabel,
   disabled,
 }: {
   source: "MAZON" | "TRENDYOL";
@@ -32,6 +33,7 @@ export function AdminAddToOrderButton({
   image: string;
   price: number;
   quantity: number;
+  variantLabel?: string;
   disabled?: boolean;
 }) {
   const { data: session } = useSession();
@@ -68,8 +70,8 @@ export function AdminAddToOrderButton({
     setError("");
     const body =
       source === "MAZON"
-        ? { source: "MAZON", productId, variantId, quantity }
-        : { source: "TRENDYOL", externalId, title, image, price, quantity };
+        ? { source: "MAZON", productId, variantId, quantity, variantLabel }
+        : { source: "TRENDYOL", externalId, title, image, price, quantity, variantLabel };
     const res = await fetch(`/api/admin/orders/${orderId}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

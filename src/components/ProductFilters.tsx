@@ -282,7 +282,7 @@ export function ProductFilters({
 
   return (
     <aside
-      className={`space-y-4 text-sm transition-opacity sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto pl-1 pb-4 ${
+      className={`space-y-4 text-sm transition-opacity md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto pl-1 pb-4 ${
         isPending ? "opacity-60" : "opacity-100"
       }`}
     >

@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { restoreOrderResources } from "@/lib/orderResources";
+import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { applyReferralRewardIfEligible } from "@/lib/referral";
+import { logAdminAction } from "@/lib/adminAudit";
 import { z } from "zod";
 
 const schema = z.object({
@@ -17,8 +20,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { ok } = await requireAdmin();
-  if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
+  const { ok, session } = await requireAdmin("PAYMENTS");
+  if (!ok || !session) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
   const { id } = await params;
   const body = await req.json();
@@ -72,6 +75,21 @@ export async function POST(
         link: `/orders/${id}`,
       },
     });
+    await notifyCustomerOutbound({
+      userId: order.userId,
+      eventType: "PAYMENT_RECEIVED",
+      title: `پرداخت سفارش #${shortId} تأیید شد`,
+      body: `فیش پرداخت سفارش #${shortId} تأیید شد و سفارش شما در حال آماده‌سازی است.`,
+    });
+    await applyReferralRewardIfEligible(id);
+    await logAdminAction({
+      adminId: session.user.id,
+      adminName: session.user.name ?? "",
+      adminEmail: session.user.email ?? "",
+      action: "PAYMENT_APPROVED",
+      targetType: "Order",
+      targetId: id,
+    });
     return NextResponse.json(updated);
   }
 
@@ -92,6 +110,23 @@ export async function POST(
       },
     });
     return result;
+  });
+
+  await notifyCustomerOutbound({
+    userId: order.userId,
+    eventType: "ORDER_CANCELLED",
+    title: `پرداخت سفارش #${shortId} تأیید نشد`,
+    body: `فیش پرداخت سفارش #${shortId} تأیید نشد و سفارش لغو شد. مبلغ رزروشده به کیف پول/کوپن شما بازگشت.`,
+  });
+
+  await logAdminAction({
+    adminId: session.user.id,
+    adminName: session.user.name ?? "",
+    adminEmail: session.user.email ?? "",
+    action: "PAYMENT_REJECTED",
+    targetType: "Order",
+    targetId: id,
+    detail: reason,
   });
 
   return NextResponse.json(updated);

@@ -20,6 +20,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "مبلغ نامعتبر است" }, { status: 400 });
   }
 
+  // درگاه پرداخت واقعی هنوز وصل نشده (پروژه در حالت توسعه‌ست). در محیط
+  // production نباید هیچ به‌باشی وجود داشته باشد -- وگرنه هر کاربری می‌تونه
+  // کیف پولش رو نامحدود و رایگان شارژ کنه (ترکیب با درخواست واریز = خونریزی پول).
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "درگاه پرداخت هنوز فعال نیست" }, { status: 503 });
+  }
+
   // شبیه‌سازی درگاه پرداخت: در فاز ۵ اینجا به Zarinpal وصل می‌شه.
   // فعلاً بلافاصله موفق فرض می‌شه (دقیقاً مثل بقیه شبیه‌سازی‌های پرداخت پروژه).
   const wallet = await prisma.$transaction((tx) =>

@@ -2,17 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { canCustomerCancelOrder } from "@/lib/orderCancellation";
 
 export function CancelOrderButton({
   orderId,
   status,
   hasExternalItems,
   paymentStatus,
+  itemPurchaseStatuses = [],
 }: {
   orderId: string;
   status: string;
   hasExternalItems: boolean;
   paymentStatus: string;
+  itemPurchaseStatuses?: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -20,11 +23,17 @@ export function CancelOrderButton({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  if (status === "SHIPPED" || status === "DELIVERED" || status === "RETURNED") return null;
-  // سفارش خارجی بعد از تسویه‌ی پرداخت اقلام دیگه قابل لغو نیست -- چون ادمین
-  // ممکنه همین الان (نه لزوماً از قبل) در حال خریداری از فروشنده باشه؛ این
-  // برای کل سفارش صدقه، حتی اگه شامل کالای مزون هم باشه
-  if (hasExternalItems && paymentStatus === "PAID") return null;
+  // همین قانونی که سرور موقع PATCH اجرا می‌کنه، اینجا هم برای نمایش/عدم نمایش
+  // دکمه استفاده می‌شه (یه منبع واحد -- نه دوباره‌سازی جدا)؛ پس UI و API هیچ
+  // وقت از هم جدا نمی‌شن. این دکمه فقط برای لغو مستقیمِ سفارش مزونه؛ سفارش‌های
+  // خارجی از دکمه‌ی CancelRequestButton (درخواست با تأیید ادمین) استفاده می‌کنن.
+  const policy = canCustomerCancelOrder({
+    hasExternalItems,
+    paymentStatus,
+    status,
+    itemPurchaseStatuses,
+  });
+  if (policy.mode !== "direct") return null;
 
   async function handleCancel() {
     if (!reason.trim()) {

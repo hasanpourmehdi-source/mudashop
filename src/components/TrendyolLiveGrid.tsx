@@ -8,6 +8,19 @@ import { TrendyolQuickView } from "@/components/TrendyolQuickView";
 import { WishlistButton } from "@/components/WishlistButton";
 import { StarRating, VerifiedBadge, EyeIcon, getStripBadgeLabel } from "@/components/TrendyolBadges";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
+import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
+
+// میلا/ترندیول در مرز صفحه‌ها محصولات تکراری برمی‌گردونن (همان id) -- dedup
+// به‌جای append خام، تا کلید React تکراری نشه (که باعث می‌شد کارت‌ها dup
+// شوند و ارور console بده) و عدد کارت‌ها دقیق بمونه
+export function dedupeProducts(
+  current: TrendyolLiveProduct[],
+  incoming: TrendyolLiveProduct[]
+): TrendyolLiveProduct[] {
+  const seen = new Set(current.map((p) => String(p.id)));
+  const fresh = incoming.filter((p) => !seen.has(String(p.id)));
+  return [...current, ...fresh];
+}
 
 function TrendyolProductCard({
   p,
@@ -159,7 +172,10 @@ function TrendyolProductCard({
         >
           {p.nameFa}
         </h3>
-        <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} />
+        <div className="flex flex-wrap items-center gap-2 mb-1.5">
+          <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} />
+          {p.url && <AdminOriginalLinkCopy url={p.url} isAdmin={isAdmin} alwaysVisible={false} />}
+        </div>
 
         {p.socialProofOrderCount && (
           <p className="text-[11px] text-[var(--color-muted)] mb-1">
@@ -268,7 +284,7 @@ export function TrendyolLiveGrid({
       setError(`${data.error ?? "خطا در بارگذاری محصولات بیشتر"}${detail ? `\nجزئیات: ${detail}` : ""}`);
       return;
     }
-    setProducts((prev) => [...prev, ...data.products]);
+    setProducts((prev) => dedupeProducts(prev, data.products as TrendyolLiveProduct[]));
     setNextUrl(data.nextUrl);
   }
 

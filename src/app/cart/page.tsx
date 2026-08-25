@@ -5,8 +5,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCart } from "@/hooks/useCart";
 import { HorizontalProductCarousel } from "@/components/HorizontalProductCarousel";
+import { CartProforma } from "@/components/CartProforma";
 import { setAppliedCouponCode } from "@/lib/appliedCoupon";
+import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
 import type { UnifiedProduct } from "@/types/product";
+import type { CartItem } from "@/store/cart";
 
 type CouponResult = {
   valid: boolean;
@@ -34,9 +37,38 @@ function TrashIcon({ className }: { className?: string }) {
 }
 
 export default function CartPage() {
-  const { items, removeItem, updateQuantity, total } = useCart();
+  const { items, removeItem, updateQuantity, total, clear } = useCart();
 
   const [couponInput, setCouponInput] = useState("");
+  const [cachedTrendyolUrls, setCachedTrendyolUrls] = useState<Record<string, string>>({});
+
+  // کش کردن آدرس کامل ترندیول (حتماًslug SEO داره) هر محصول توی سبد
+  // هنگام تغییر لیست محصولات -- از API سرور استفاده می‌کنیم تا Prisma
+  // در بافر مرورگر اجرا نشود (خطای EADDRINUSE / browser environment)
+  useEffect(() => {
+    async function loadCachedUrls() {
+      try {
+        const res = await fetch("/api/cart/product-urls", {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const { urlMap } = await res.json();
+          setCachedTrendyolUrls(urlMap);
+        }
+      } catch (err) {
+        console.error("Failed to load cart product URLs:", err);
+      }
+    }
+    loadCachedUrls();
+  }, [items]);
+
+  // لینک صفحه‌ی محصول همین قلمِ سبد -- از کش شده شده URL استفاده می‌کنیم
+  // تا slug SEO داشته باشیم و 404 ندهیم
+  function cartItemHref(item: CartItem): string {
+    return item.source === "MAZON"
+      ? `/products/mazon/${item.productId}`
+      : internalTrendyolProductHref(item.productId, cachedTrendyolUrls[item.productId] ?? undefined);
+  }
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
   const [couponError, setCouponError] = useState("");
   const [checkingCoupon, setCheckingCoupon] = useState(false);
@@ -122,20 +154,39 @@ export default function CartPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 grid md:grid-cols-[1fr_320px] gap-8">
       <div>
-        <h1 className="text-xl font-bold mb-6">سبد خرید</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-xl font-bold">سبد خرید</h1>
+          {/* پاک‌کردنِ یکجای کل سبد -- جدا از حذفِ تک‌تک اقلام */}
+          <button
+            onClick={() => {
+              if (confirm("کل سبد خرید حذف شود؟ این کار برگشت‌پذیر نیست.")) {
+                clear();
+                setAppliedCouponCode("");
+              }
+            }}
+            className="flex items-center gap-1.5 text-sm text-red-600 border border-red-200 rounded-full px-4 py-1.5 hover:bg-red-50 transition-colors"
+          >
+            <TrashIcon className="w-4 h-4" />
+            حذف کل سبد
+          </button>
+        </div>
 
         <div className="space-y-4">
           {items.map((item) => {
             const lowStock =
               item.maxStock !== undefined && item.maxStock > 0 && item.maxStock <= LOW_STOCK_THRESHOLD;
             const savingPerItem = item.originalPrice ? item.originalPrice - item.price : 0;
+            const href = cartItemHref(item);
 
             return (
               <div
                 key={item.id}
                 className="flex gap-4 border cut-line rounded-lg p-3 bg-white items-center"
               >
-                <div className="relative w-20 h-20 shrink-0 bg-[var(--color-linen-dim)] rounded overflow-hidden">
+                <Link
+                  href={href}
+                  className="relative w-20 h-20 shrink-0 bg-[var(--color-linen-dim)] rounded overflow-hidden"
+                >
                   {item.image && (
                     <Image src={item.image} alt={item.title} fill className="object-cover" unoptimized />
                   )}
@@ -144,14 +195,21 @@ export default function CartPage() {
                       فقط {item.maxStock!.toLocaleString("fa-IR")} عدد باقی مانده
                     </span>
                   )}
-                </div>
+                </Link>
                 <div className="flex-1 min-w-0">
+                  {item.siteLabel && (
+                    <span className="inline-block text-[10px] font-bold text-[var(--color-wine)] bg-[var(--color-wine)]/10 rounded-full px-2 py-0.5 mb-1 ml-1">
+                      {item.siteLabel}
+                    </span>
+                  )}
                   {item.fastShipping && (
                     <span className="inline-block text-[10px] font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5 mb-1">
                       🚚 ارسال فوری
                     </span>
                   )}
-                  <p className="text-sm font-medium truncate">{item.title}</p>
+                  <Link href={href} className="text-sm font-medium truncate hover:text-[var(--color-wine)] hover:underline block">
+                    {item.title}
+                  </Link>
                   {item.variantLabel && (
                     <p className="text-xs text-[var(--color-muted)]">{item.variantLabel}</p>
                   )}
@@ -274,6 +332,14 @@ export default function CartPage() {
         >
           تکمیل خرید
         </Link>
+
+        <CartProforma
+          items={items}
+          subtotal={subtotal}
+          discountAmount={discountAmount}
+          couponCode={coupon?.code ?? null}
+          currentTotal={currentTotal}
+        />
       </aside>
     </div>
   );

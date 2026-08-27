@@ -9,6 +9,7 @@ import { CountdownTimer } from "@/components/CountdownTimer";
 import { WishlistButton } from "@/components/WishlistButton";
 
 const MAX_VISIBLE_COLORS = 4;
+const LOW_STOCK_THRESHOLD = 5; // زیر این تعداد، هشدارِ «فقط N عدد باقی مونده» نشون داده می‌شه
 
 export function ProductCard({
   product,
@@ -106,7 +107,13 @@ export function ProductCard({
             {product.discount}%-
           </span>
         )}
-        {product.flashSale ? (
+        {product.totalStock === 0 ? (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <span className="bg-white text-[var(--color-ink)] text-xs font-bold px-3 py-1.5 rounded-full">
+              ناموجود
+            </span>
+          </div>
+        ) : product.flashSale ? (
           <div className="absolute bottom-0 inset-x-0 bg-[var(--color-ochre)] text-white text-[10px] font-bold px-2 py-1 flex items-center justify-between">
             <span>⚡ حراج فلش</span>
             <CountdownTimer endsAt={product.flashSale.endsAt} className="font-mono" />
@@ -179,6 +186,12 @@ export function ProductCard({
           </p>
         )}
         <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">{product.title}</h3>
+
+        {typeof product.totalStock === "number" && product.totalStock > 0 && product.totalStock <= LOW_STOCK_THRESHOLD && (
+          <p className="text-[11px] text-red-600 font-bold mb-1">
+            فقط {product.totalStock.toLocaleString("fa-IR")} عدد باقی مونده!
+          </p>
+        )}
 
         {!!product.viewCount24h && product.viewCount24h > 0 && (
           <p className="text-[11px] text-[var(--color-muted)] mb-1">

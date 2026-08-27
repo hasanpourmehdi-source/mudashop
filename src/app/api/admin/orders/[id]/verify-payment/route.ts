@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { restoreOrderResources } from "@/lib/orderResources";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
-import { applyReferralRewardIfEligible } from "@/lib/referral";
+import { approveItemsPayment } from "@/lib/orderPaymentApproval";
 import { logAdminAction } from "@/lib/adminAudit";
 import { z } from "zod";
 
@@ -53,35 +53,7 @@ export async function POST(
   const shortId = id.slice(-8);
 
   if (parsed.data.action === "approve") {
-    const now = new Date();
-    const updated = await prisma.order.update({
-      where: { id },
-      data: { paymentStatus: "PAID", paidAt: now },
-    });
-    await prisma.orderStatusHistory.create({
-      data: { orderId: id, status: updated.status, note: "پرداخت اقلام سفارش توسط ادمین تأیید شد" },
-    });
-    const latestItemsEvent = await prisma.orderPaymentEvent.findFirst({
-      where: { orderId: id, round: "items", paidAt: null },
-      orderBy: { assignedAt: "desc" },
-    });
-    if (latestItemsEvent) {
-      await prisma.orderPaymentEvent.update({ where: { id: latestItemsEvent.id }, data: { paidAt: now } });
-    }
-    await prisma.notification.create({
-      data: {
-        userId: order.userId,
-        message: `فیش پرداخت سفارش #${shortId} تأیید شد و سفارش شما در حال آماده‌سازیه.`,
-        link: `/orders/${id}`,
-      },
-    });
-    await notifyCustomerOutbound({
-      userId: order.userId,
-      eventType: "PAYMENT_RECEIVED",
-      title: `پرداخت سفارش #${shortId} تأیید شد`,
-      body: `فیش پرداخت سفارش #${shortId} تأیید شد و سفارش شما در حال آماده‌سازی است.`,
-    });
-    await applyReferralRewardIfEligible(id);
+    await approveItemsPayment(id);
     await logAdminAction({
       adminId: session.user.id,
       adminName: session.user.name ?? "",
@@ -90,15 +62,24 @@ export async function POST(
       targetType: "Order",
       targetId: id,
     });
+    const updated = await prisma.order.findUniqueOrThrow({ where: { id } });
     return NextResponse.json(updated);
   }
 
+  // گاردِ همزمانی: چکِ بالا (خط ۴۱) روی خواندنِ اولیه‌ست، نه اتمیک -- اگه یه
+  // ادمینِ دیگه هم‌زمان همین سفارش رو approve کنه (که خودش atomic guard داره،
+  // orderPaymentApproval.ts)، بدونِ این updateMany این تراکنش بی‌قیدوشرط
+  // منابع رو دوباره برمی‌گردوند و سفارشِ تازه‌PAIDشده رو به FAILED/CANCELLED
+  // برمی‌گردوند -- رفاندِ تکراری + گم‌شدنِ تأییدِ ادمینِ دیگه
   const updated = await prisma.$transaction(async (tx) => {
-    await restoreOrderResources(tx, order);
-    const result = await tx.order.update({
-      where: { id },
+    const claimed = await tx.order.updateMany({
+      where: { id, paymentStatus: "AWAITING_VERIFICATION" },
       data: { status: "CANCELLED", paymentStatus: "FAILED" },
     });
+    if (claimed.count === 0) return null;
+
+    await restoreOrderResources(tx, order);
+    const result = await tx.order.findUniqueOrThrow({ where: { id } });
     await tx.orderStatusHistory.create({
       data: { orderId: id, status: "CANCELLED", note: `فیش پرداخت رد شد توسط ادمین -- ${reason}` },
     });
@@ -111,6 +92,13 @@ export async function POST(
     });
     return result;
   });
+
+  if (!updated) {
+    return NextResponse.json(
+      { error: "این سفارش قبلاً توسط ادمینِ دیگری بررسی/تأیید شده است" },
+      { status: 409 }
+    );
+  }
 
   await notifyCustomerOutbound({
     userId: order.userId,

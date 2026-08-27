@@ -13,13 +13,27 @@ const socialLinks = [
 
 export function Footer({
   externalSites = [],
+  trustBadges = [],
 }: {
   externalSites?: { id: string; name: string; slug: string }[];
+  trustBadges?: { icon: string; text: string }[];
 }) {
   const { lang } = useLang();
 
   return (
     <footer className="border-t cut-line mt-16 bg-[var(--color-linen-dim)]">
+      {trustBadges.length > 0 && (
+        <div className="border-b cut-line">
+          <div className="max-w-[1600px] mx-auto px-4 py-5 flex flex-wrap justify-center gap-x-8 gap-y-3">
+            {trustBadges.map((badge, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                <span className="text-lg">{badge.icon}</span>
+                <span className="font-medium">{badge.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="max-w-[1600px] mx-auto px-4 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-10">
         {/* لوگو و شعار */}
         <div>
@@ -53,6 +67,11 @@ export function Footer({
             <li>
               <Link href="/about" className="hover:text-[var(--color-wine)]">
                 درباره ما
+              </Link>
+            </li>
+            <li>
+              <Link href="/blog" className="hover:text-[var(--color-wine)]">
+                مجله مُداشاپ
               </Link>
             </li>
             <li>

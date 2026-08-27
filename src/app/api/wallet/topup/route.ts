@@ -29,6 +29,10 @@ export async function POST(req: Request) {
 
   // شبیه‌سازی درگاه پرداخت: در فاز ۵ اینجا به Zarinpal وصل می‌شه.
   // فعلاً بلافاصله موفق فرض می‌شه (دقیقاً مثل بقیه شبیه‌سازی‌های پرداخت پروژه).
+  // یادآوری برای همون فاز: CSPِ next.config.ts فعلاً "form-action 'self'" داره
+  // (درست، چون الان هیچ فرمی به دامنه‌ی خارجی سابمیت نمی‌شه) -- وصل‌شدنِ واقعی
+  // به زرین‌پال معمولاً یه <form>/redirect به دامنه‌ی درگاهه، پس اون‌جا باید
+  // دامنه‌ی درگاه به form-action اضافه بشه، وگرنه مرورگر خودِ ریدایرکت رو مسدود می‌کنه
   const wallet = await prisma.$transaction((tx) =>
     applyWalletTransaction(tx, {
       userId: session.user.id,

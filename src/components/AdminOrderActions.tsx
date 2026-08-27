@@ -43,6 +43,7 @@ export function AdminOrderActions({
   orderId,
   status,
   paymentStatus,
+  paymentMethod,
   freeShippingApplied,
   receiptImage,
   bankCards,
@@ -57,6 +58,7 @@ export function AdminOrderActions({
   orderId: string;
   status: string;
   paymentStatus: string;
+  paymentMethod?: string;
   freeShippingApplied: boolean;
   receiptImage: string | null;
   bankCards: BankCardOption[];
@@ -395,6 +397,12 @@ export function AdminOrderActions({
           {STATUS_LABELS[status] ?? status}
         </span>
       </div>
+
+      {paymentMethod === "CASH_ON_DELIVERY" && (
+        <p className="text-xs bg-blue-50 text-blue-700 rounded-lg px-3 py-2">
+          این سفارش «پرداخت در محل» است -- نیازی به تخصیص کارت یا منتظرِ فیش موندن نیست؛ کل مبلغ (و هزینه ارسال، اگر بود) موقع تحویل نقدی گرفته می‌شود.
+        </p>
+      )}
 
       {(canMarkShipped || canMarkDelivered || canMarkReturnedToSender || canCancel) && (
         <div className="flex flex-wrap items-center gap-2">

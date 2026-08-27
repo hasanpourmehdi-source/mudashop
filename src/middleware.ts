@@ -26,7 +26,6 @@ export default async function middleware(req: NextRequest) {
   // چک‌اوت دیگه لاگین رو اجبار نمی‌کنه -- خریدِ مهمان مجاز است (src/app/api/orders/route.ts)
   const isOrdersRoute = pathname.startsWith("/orders");
   const isWalletRoute = pathname.startsWith("/wallet");
-  const isPaymentRoute = pathname.startsWith("/payment");
   const isReferralRoute = pathname.startsWith("/referral");
 
   if (isAdminRoute && !isAdmin) {
@@ -41,8 +40,13 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // /payment عمداً اینجا نیست: خریدِ مهمان اینجا هم مجازه (دقیقاً مثل چک‌اوت) --
+  // authority خودش (یه UUIDِ تصادفی) کافیه. کنترلِ دسترسیِ واقعی (سفارشِ مهمان
+  // بدونِ سشن، سفارشِ کاربرِ ثبت‌نام‌کرده فقط با سشنِ خودش) توی خودِ API انجام
+  // می‌شه (src/app/api/payment/[authority]/route.ts) چون میدل‌ور (Edge) به
+  // دیتابیس دسترسی نداره تا مهمان‌بودنِ سفارش رو بفهمه
   if (
-    (isProfileRoute || isOrdersRoute || isWalletRoute || isPaymentRoute || isReferralRoute) &&
+    (isProfileRoute || isOrdersRoute || isWalletRoute || isReferralRoute) &&
     !isLoggedIn
   ) {
     const url = new URL("/auth/login", req.nextUrl.origin);

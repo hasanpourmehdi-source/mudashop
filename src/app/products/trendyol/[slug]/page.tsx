@@ -7,6 +7,7 @@ import { fetchSimilarTrendyolProducts } from "@/lib/trendyolSimilarProducts";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { prisma } from "@/lib/prisma";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { TRENDYOL_RAW_CATEGORY_SENTINEL, buildExternalSiteUrl, encodeTrendyolCategoryParam } from "@/lib/externalSites";
 import { parseAttrsQuery } from "@/lib/attrsQuery";
 import { AddToCartForm } from "@/components/AddToCartForm";
@@ -247,9 +248,11 @@ export default async function TrendyolProductPage({
   // اگه ادمین اسمش رو عوض کرد، اینجا هم خودکار هماهنگ بمونه
   const externalSite = await prisma.externalSite.findUnique({
     where: { slug: siteSlug },
-    select: { name: true },
+    select: { id: true, name: true, isReturnable: true },
   });
   const siteLabel = externalSite?.name ?? (siteSlug === "trendyol-milla" ? "میلا" : "ترندیول");
+  const nonReturnableProductsEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED);
+  const isNonReturnable = nonReturnableProductsEnabled && externalSite?.isReturnable === false;
 
   let categoryLabel = product.categoryName;
   let categoryHref: string | undefined;
@@ -389,6 +392,12 @@ export default async function TrendyolProductPage({
             </div>
           )}
 
+          {!product.inStock && (
+            <p className="mb-3 text-sm font-bold text-red-600 bg-red-50 rounded-lg px-3 py-2">
+              این محصول در حال حاضر ناموجود است.
+            </p>
+          )}
+
           <AddToCartForm
             productId={`trendyol-${product.contentId}`}
             slugOrId={product.contentId}
@@ -403,6 +412,12 @@ export default async function TrendyolProductPage({
             fixedVariantLabel={currentColorName ? `رنگ: ${currentColorName}` : undefined}
             siteLabel={siteLabel}
           />
+
+          {isNonReturnable && (
+            <p className="mt-4 text-xs text-red-600 font-medium border-t cut-line pt-4">
+              کالاهای «{siteLabel}» قابل مرجوع نیستند.
+            </p>
+          )}
 
           {product.attributes.length > 0 && (
             <div className="mt-8 pt-6 border-t cut-line">
@@ -445,7 +460,12 @@ export default async function TrendyolProductPage({
       <TrendyolSimilarProducts products={similarProducts} isAdmin={isAdmin} />
       <TrendyolBestSellers products={bestSellers} isAdmin={isAdmin} />
 
-      <ReviewsSection externalId={product.contentId} />
+      <ReviewsSection
+        externalId={product.contentId}
+        externalSiteId={externalSite?.id}
+        productTitle={product.nameFa}
+        productImage={product.images[0]}
+      />
       <QASection externalId={product.contentId} />
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const SIZE_ROWS = [
   { size: "S", chest: "88-92", waist: "70-74", length: "64" },
@@ -11,6 +11,15 @@ const SIZE_ROWS = [
 
 export function SizeGuideModal() {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   return (
     <>
@@ -28,11 +37,14 @@ export function SizeGuideModal() {
           onClick={() => setOpen(false)}
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="size-guide-title"
             className="bg-white rounded-2xl max-w-md w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold">راهنمای سایز</h3>
+              <h3 id="size-guide-title" className="font-bold">راهنمای سایز</h3>
               <button
                 type="button"
                 onClick={() => setOpen(false)}

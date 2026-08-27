@@ -1,6 +1,15 @@
 import { prisma } from "@/lib/prisma";
 import webpush from "web-push";
 
+// Re-export constants from separate file (avoids dragging web-push into client bundles)
+export {
+  NOTIFICATION_EVENTS,
+  type NotificationEvent,
+  NOTIFICATION_EVENT_LABELS,
+} from "@/lib/outboundEvents";
+
+import type { NotificationEvent } from "@/lib/outboundEvents";
+
 // ================= اعلان خارج از سایت (ایمیل / پیامک / پوش مرورگر) =================
 // هدف: وقتی اتفاقی برای مشتری می‌افته (ثبت سفارش، ارسال، تحویل بسته، پاسخ
 // پشتیبانی، شارژ کیف‌پول، ...) علاوه‌بر اعلان زنگوله‌ای داخل سایت، بر اساس
@@ -18,48 +27,6 @@ export const EMAIL_CHANNEL = "EMAIL" as const;
 export const SMS_CHANNEL = "SMS" as const;
 export const PUSH_CHANNEL = "PUSH" as const;
 export type OutboundChannel = typeof EMAIL_CHANNEL | typeof SMS_CHANNEL | typeof PUSH_CHANNEL;
-
-// رویدادهایی که برای مشتری اعلان خارج از سایت می‌فرستیم. کلیدها در
-// NotificationSetting.disabled*Events ذخیره می‌شوند.
-export const NOTIFICATION_EVENTS = [
-  "ORDER_CREATED",
-  "PAYMENT_RECEIVED",
-  "PAYMENT_DEADLINE",
-  "ORDER_SHIPPED",
-  "PACKAGE_DELIVERED",
-  "ORDER_DELAYED",
-  "ORDER_CANCELLED",
-  "RETURN_SUBMITTED",
-  "RETURN_DECIDED",
-  "SUPPORT_REPLY",
-  "WALLET_CREDIT",
-  "STOCK_BACK",
-  "PRICE_DROP",
-  "NEW_DEVICE_LOGIN",
-  "CART_ABANDONED",
-  "REFERRAL_REWARD",
-] as const;
-
-export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
-
-export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
-  ORDER_CREATED: "ثبت سفارش",
-  PAYMENT_RECEIVED: "تأیید پرداخت",
-  PAYMENT_DEADLINE: "یادآوری مهلت پرداخت",
-  ORDER_SHIPPED: "ارسال سفارش",
-  PACKAGE_DELIVERED: "تحویل بسته",
-  ORDER_DELAYED: "تأخیر در سفارش",
-  ORDER_CANCELLED: "لغو سفارش",
-  RETURN_SUBMITTED: "ثبت درخواست مرجوعی",
-  RETURN_DECIDED: "نتیجه درخواست مرجوعی",
-  SUPPORT_REPLY: "پاسخ پشتیبانی",
-  WALLET_CREDIT: "شارژ کیف پول",
-  STOCK_BACK: "موجودی محصول",
-  PRICE_DROP: "کاهش قیمت",
-  NEW_DEVICE_LOGIN: "ورود از دستگاه جدید",
-  CART_ABANDONED: "یادآوری سبد خرید",
-  REFERRAL_REWARD: "پاداش کد معرفی",
-};
 
 // کانال‌های فعال برای یک رویداد -- خالص و قابل تست.
 // sms فقط وقتی مشتری شماره‌ی موبایل ثبت کرده باشد معنا دارد. push فقط وقتی

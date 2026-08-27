@@ -8,6 +8,7 @@ type Order = {
   id: string;
   status: string;
   paymentStatus: string;
+  paymentMethod: string;
   total: number;
   createdAt: string;
   user: { name: string | null; email: string };
@@ -110,6 +111,11 @@ export default function AdminOrdersPage() {
             <div className="flex items-center justify-between mb-1">
               <span className="font-medium">#{order.id.slice(-8)}</span>
               <div className="flex items-center gap-2">
+                {order.paymentMethod === "CASH_ON_DELIVERY" && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                    پرداخت در محل
+                  </span>
+                )}
                 <span
                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                     PAYMENT_STATUS_STYLES[order.paymentStatus] ?? PAYMENT_STATUS_STYLES.PENDING

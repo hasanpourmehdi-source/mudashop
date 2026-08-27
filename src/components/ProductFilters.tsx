@@ -9,6 +9,7 @@ const SORT_OPTIONS = [
   { value: "recommended", label: "پیشنهادی" },
   { value: "price_asc", label: "ارزان‌ترین" },
   { value: "price_desc", label: "گران‌ترین" },
+  { value: "discount", label: "بیشترین تخفیف" },
   { value: "newest", label: "جدیدترین" },
   { value: "popular", label: "پرفروش‌ترین" },
   { value: "most_viewed", label: "پربازدیدترین" },

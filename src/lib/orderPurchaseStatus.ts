@@ -14,6 +14,7 @@ export type PurchaseSummary = {
   allResolved: boolean; // هیچ‌کدوم PENDING نمونده (فاز ۱ کامل شد)
   allCancelled: boolean; // همه‌شون CANCELLED شدن (یعنی هیچی خریداری نشد)
   allArrived: boolean; // فاز ۲ هم برای همه کامل شد -- هیچ قلمی PURCHASED/AWAITING_CUSTOMER_DECISION نمونده
+  allVoided: boolean; // همه‌شون یا نشد خریداری بشن یا با مشکل/مغایرت رفاند شدن -- هیچی به دستِ مشتری نرسید
 };
 
 // وضعیت‌های نهاییِ فاز ۲ (یا کنسلیِ فاز ۱) -- یعنی دیگه اقدام ادمین/مشتری روی
@@ -28,6 +29,11 @@ const PURCHASED_LIKE = new Set([
   "ISSUE_OTHER",
   "AWAITING_CUSTOMER_DECISION",
 ]);
+// نتیجه‌های نهاییِ «رفاندی» -- یعنی این قلم هیچ‌وقت به دستِ مشتری نرسید (نه
+// خریداری نشد، نه رسید، نه مشتری با مغایرتش موافقت کرد). WRONG_SIZE/WRONG_COLOR
+// این‌جا یعنی مشتری صراحتاً رفاند رو انتخاب کرده (چون اگه KEEP می‌کرد،
+// purchaseStatus به RECEIVED تبدیل می‌شد، نه این‌که همون‌جا بمونه)
+const VOID_STATUSES = new Set(["CANCELLED", "LOST", "WRONG_SIZE", "WRONG_COLOR", "ISSUE_OTHER"]);
 
 export function computePurchaseSummary(items: PurchaseTrackedItem[]): PurchaseSummary {
   const external = items.filter((i) => i.source === "TRENDYOL");
@@ -43,6 +49,7 @@ export function computePurchaseSummary(items: PurchaseTrackedItem[]): PurchaseSu
     allResolved: pending === 0,
     allCancelled: total > 0 && cancelled === total,
     allArrived: total > 0 && external.every((i) => TERMINAL.has(i.purchaseStatus)),
+    allVoided: total > 0 && external.every((i) => VOID_STATUSES.has(i.purchaseStatus)),
   };
 }
 
@@ -96,4 +103,44 @@ export async function notifyIfAllArrived(
   });
 
   return { allArrived: true, message };
+}
+
+// وقتی همه‌ی اقلامِ خارجیِ یه سفارشِ کاملاً-خارجی (بدون هیچ کالای مزون) به یه
+// نتیجه‌ی «رفاندی» می‌رسن -- چه فاز ۱ (نتونستیم بخریم) چه فاز ۲ (گم شد، یا
+// مغایرتی که مشتری رفاندش رو ترجیح داد) -- دیگه هیچی برای ارسال باقی نمونده،
+// پس کل سفارش باید لغو بشه. قبلاً این کشکسانی فقط برای حالتِ اولِ (همه‌شون
+// دقیقاً CANCELLED فاز-۱) چک می‌شد؛ سفارشی که تنها قلمش خریداری شد ولی بعداً
+// گم شد یا مشتری رفاندِ مغایرتش رو خواست، برای همیشه توی PROCESSING/AWAITING_PURCHASE
+// می‌موند چون هیچ‌جا Order.status=CANCELLED نمی‌شد.
+//
+// از هر سه routeی که یه قلم رو به نتیجه‌ی نهایی می‌رسونه صدا زده می‌شه:
+// cancel-purchase، resolve، mismatch-decision -- طبیعتاً idempotent چون هر
+// قلم فقط یه‌بار به وضعیتِ نهایی می‌رسه (گاردِ status توی هر route)، پس
+// شرطِ allVoided توی کل عمرِ سفارش دقیقاً یه‌بار از false به true می‌ره
+export async function cascadeCancelIfAllVoided(
+  tx: Prisma.TransactionClient,
+  order: { id: string; status: OrderStatus; couponCode: string | null },
+  items: PurchaseTrackedItem[]
+): Promise<boolean> {
+  const wholeOrderIsExternalOnly = items.every((i) => i.source === "TRENDYOL");
+  const summary = computePurchaseSummary(items);
+  if (!wholeOrderIsExternalOnly || !summary.allVoided || order.status === "CANCELLED") {
+    return false;
+  }
+
+  if (order.couponCode) {
+    await tx.coupon.updateMany({
+      where: { code: order.couponCode, usedCount: { gt: 0 } },
+      data: { usedCount: { decrement: 1 } },
+    });
+  }
+  await tx.order.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
+  await tx.orderStatusHistory.create({
+    data: {
+      orderId: order.id,
+      status: "CANCELLED",
+      note: "هیچ‌کدوم از اقلام این سفارش نهایتاً به دست مشتری نرسید (خریداری نشد، گم شد یا مغایرت داشت و رفاند شد) -- کل سفارش لغو شد",
+    },
+  });
+  return true;
 }

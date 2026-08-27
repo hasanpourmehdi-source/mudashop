@@ -82,6 +82,9 @@ export function normalizeMazonProduct(
     description: p.description,
     createdAt: p.createdAt.toISOString(),
     fastShipping: p.fastShipping,
+    isReturnable: p.isReturnable,
+    careInstructions: p.careInstructions,
+    videoUrl: p.videoUrl,
     colorImages: parseColorImages(p.colorImages),
     flashSale: flashSale
       ? {
@@ -186,17 +189,24 @@ export async function recordPriceSnapshotIfNeeded(productId: string, price: numb
 }
 
 export async function fetchMazonProducts(): Promise<UnifiedProduct[]> {
-  const [products, activeFlashSales] = await Promise.all([
+  const [products, activeFlashSales, stockGroups] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },
       include: { category: true, brand: true },
       orderBy: { createdAt: "desc" },
     }),
     fetchActiveFlashSales(),
+    // مجموع موجودیِ همه‌ی ترکیب‌های هر محصول -- برای بجِ کمبودِ موجودی روی
+    // کارتِ لیست («فقط N عدد باقی مونده»/«ناموجود»)
+    prisma.productVariant.groupBy({ by: ["productId"], _sum: { stock: true } }),
   ]);
 
   const flashByProductId = new Map(activeFlashSales.map((f) => [f.productId, f]));
-  const unified = products.map((p) => normalizeMazonProduct(p, flashByProductId.get(p.id)));
+  const stockByProductId = new Map(stockGroups.map((g) => [g.productId, g._sum.stock ?? 0]));
+  const unified = products.map((p) => ({
+    ...normalizeMazonProduct(p, flashByProductId.get(p.id)),
+    totalStock: stockByProductId.get(p.id) ?? 0,
+  }));
   return attachInsightStats(await attachSocialStats(unified));
 }
 
@@ -231,6 +241,26 @@ export async function fetchPriceHistory(
     snapshots.map((s) => ({ price: s.price, recordedAt: s.recordedAt.toISOString() })),
     currentPrice
   );
+}
+
+// کدهای تخفیفی که ادمین صراحتاً برای نمایش به‌عنوان بجِ تبلیغاتی روی صفحه‌ی
+// محصولاتِ مزون علامت زده (Coupon.showcaseOnProducts) -- فقط اونایی که هنوز
+// واقعاً قابل‌استفاده‌ان (فعال، منقضی نشده، ظرفیتش تموم نشده)
+export async function fetchShowcasedCoupons(): Promise<
+  { code: string; type: string; value: number }[]
+> {
+  const now = new Date();
+  const coupons = await prisma.coupon.findMany({
+    where: {
+      showcaseOnProducts: true,
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+    },
+    select: { code: true, type: true, value: true, maxUses: true, usedCount: true },
+  });
+  return coupons
+    .filter((c) => c.maxUses === null || c.usedCount < c.maxUses)
+    .map((c) => ({ code: c.code, type: c.type, value: c.value }));
 }
 
 export async function fetchMazonProductBySlug(slug: string): Promise<

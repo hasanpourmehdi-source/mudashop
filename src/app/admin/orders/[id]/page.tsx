@@ -13,6 +13,7 @@ import { checkTrendyolItemsStock } from "@/lib/orderStockCheck";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
 import { AdminItemPurchasePanel } from "@/components/AdminItemPurchasePanel";
+import { AdminChangeAddressPanel } from "@/components/AdminChangeAddressPanel";
 import { OrderInvoice } from "@/components/OrderInvoice";
 import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
@@ -140,9 +141,16 @@ export default async function AdminOrderDetailPage({
     <div className="max-w-3xl">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold">سفارش #{order.id.slice(-8)}</h1>
-        <span className="text-xs font-bold px-2 py-1 rounded-full bg-[var(--color-linen-dim)]">
-          {PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
-        </span>
+        <div className="flex items-center gap-2">
+          {order.paymentMethod === "CASH_ON_DELIVERY" && (
+            <span className="text-xs font-bold px-2 py-1 rounded-full bg-blue-100 text-blue-700">
+              پرداخت در محل
+            </span>
+          )}
+          <span className="text-xs font-bold px-2 py-1 rounded-full bg-[var(--color-linen-dim)]">
+            {PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
+          </span>
+        </div>
       </div>
 
       <p className="text-sm text-[var(--color-muted)] mb-6">
@@ -154,6 +162,7 @@ export default async function AdminOrderDetailPage({
         orderId={order.id}
         status={order.status}
         paymentStatus={order.paymentStatus}
+        paymentMethod={order.paymentMethod}
         freeShippingApplied={order.freeShippingApplied}
         receiptImage={order.receiptImage}
         bankCards={bankCards}
@@ -293,6 +302,16 @@ export default async function AdminOrderDetailPage({
         </p>
       </section>
 
+      <AdminChangeAddressPanel
+        orderId={order.id}
+        status={order.status}
+        currentAddress={addressSnapshot}
+        hasExternalItems={hasExternalItems}
+        currentShippingMethod={order.shippingMethod}
+        currentShippingCost={order.shippingCost}
+        bankCards={bankCards}
+      />
+
       {order.paymentStatus === "PENDING" ? (
         <AdminOrderItemsEditor
           orderId={order.id}
@@ -327,8 +346,9 @@ export default async function AdminOrderDetailPage({
             return (
               <div
                 key={item.id}
-                className="flex justify-between text-sm border cut-line rounded-lg p-3 bg-white"
+                className="border cut-line rounded-lg p-3 bg-white space-y-2"
               >
+              <div className="flex justify-between text-sm">
                 <span>
                   {itemHref ? (
                     <a href={itemHref} className="text-[var(--color-wine)] hover:underline">
@@ -384,6 +404,8 @@ export default async function AdminOrderDetailPage({
                 <span className="font-medium">
                   {(item.price * item.quantity).toLocaleString("fa-IR")} تومان
                 </span>
+              </div>
+              <OrderMessageThread orderId={order.id} viewerRole="ADMIN" itemId={item.id} title="توضیحات این کالا" compact />
               </div>
             );
           })}

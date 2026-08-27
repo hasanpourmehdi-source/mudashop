@@ -102,4 +102,79 @@ describe("cart store", () => {
     storeA.getState().addItem(makeItem({ id: "a" }));
     expect(storeB.getState().items).toHaveLength(0);
   });
+
+  describe("خرید بعدی (save for later)", () => {
+    it("saveForLater قلم را از سبد به savedForLater منتقل می‌کند (تعداد/ترکیب دست‌نخورده)", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ quantity: 3, variantLabel: "سایز: L" }));
+      store.getState().saveForLater("p-v");
+      expect(store.getState().items).toHaveLength(0);
+      expect(store.getState().savedForLater).toHaveLength(1);
+      expect(store.getState().savedForLater[0]).toMatchObject({ quantity: 3, variantLabel: "سایز: L" });
+    });
+
+    it("moveToCart قلم را برمی‌گرداند به سبد", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem());
+      store.getState().saveForLater("p-v");
+      store.getState().moveToCart("p-v");
+      expect(store.getState().items).toHaveLength(1);
+      expect(store.getState().savedForLater).toHaveLength(0);
+    });
+
+    it("moveToCart وقتی همون ترکیب از قبل توی سبد باشه، تعدادها را جمع می‌زند (نه ردیفِ تکراری)", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ quantity: 2 }));
+      store.getState().saveForLater("p-v");
+      store.getState().addItem(makeItem({ quantity: 1 }));
+      store.getState().moveToCart("p-v");
+      expect(store.getState().items).toHaveLength(1);
+      expect(store.getState().items[0].quantity).toBe(3);
+      expect(store.getState().savedForLater).toHaveLength(0);
+    });
+
+    it("removeSaved فقط از لیستِ ذخیره‌شده حذف می‌کند، به سبد برنمی‌گردد", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem());
+      store.getState().saveForLater("p-v");
+      store.getState().removeSaved("p-v");
+      expect(store.getState().savedForLater).toHaveLength(0);
+      expect(store.getState().items).toHaveLength(0);
+    });
+
+    it("clear کردنِ سبد، savedForLater را دست‌نخورده می‌گذارد", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ id: "a" }));
+      store.getState().addItem(makeItem({ id: "b" }));
+      store.getState().saveForLater("a");
+      store.getState().clear();
+      expect(store.getState().items).toHaveLength(0);
+      expect(store.getState().savedForLater).toHaveLength(1);
+    });
+  });
+
+  describe("همگام‌سازیِ بین‌دستگاهی (mergeItems/mergeSavedForLater)", () => {
+    it("mergeItems اقلامِ تازه (که محلی نیستن) را اضافه می‌کند", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ id: "a" }));
+      store.getState().mergeItems([makeItem({ id: "a" }), makeItem({ id: "b" })]);
+      expect(store.getState().items.map((i) => i.id).sort()).toEqual(["a", "b"]);
+    });
+
+    it("mergeItems برای قلمِ تکراری تعداد را جمع نمی‌زند (محلی برنده است)", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ quantity: 2 }));
+      store.getState().mergeItems([makeItem({ quantity: 9 })]);
+      expect(store.getState().items).toHaveLength(1);
+      expect(store.getState().items[0].quantity).toBe(2);
+    });
+
+    it("mergeSavedForLater اقلامِ تازه را اضافه می‌کند و تکراری‌ها را نادیده می‌گیرد", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ id: "a" }));
+      store.getState().saveForLater("a");
+      store.getState().mergeSavedForLater([makeItem({ id: "a" }), makeItem({ id: "b" })]);
+      expect(store.getState().savedForLater.map((i) => i.id).sort()).toEqual(["a", "b"]);
+    });
+  });
 });

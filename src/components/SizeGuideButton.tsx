@@ -47,12 +47,16 @@ export function SizeGuideButton({ imageUrl, sizeGuideId }: { imageUrl: string; s
           onClick={() => setOpen(false)}
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="راهنمای سایز"
             className="relative bg-white rounded-lg max-w-lg w-full max-h-[85vh] overflow-y-auto p-3"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               type="button"
               onClick={() => setOpen(false)}
+              aria-label="بستن"
               className="absolute top-2 left-2 bg-white rounded-full w-7 h-7 flex items-center justify-center shadow text-sm"
             >
               ✕

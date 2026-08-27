@@ -5,6 +5,7 @@ import { Providers } from "@/components/Providers";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { CartUserSync } from "@/components/CartUserSync";
+import { ReviewNudgePopup } from "@/components/ReviewNudgePopup";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { LocaleAnalyticsRecorder } from "@/components/LocaleAnalyticsRecorder";
 import { CookieConsentGate } from "@/components/CookieConsentGate";
@@ -15,6 +16,7 @@ import { CompareBar } from "@/components/CompareBar";
 import { fetchCategoryTree, fetchGenderMegaGroups } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
 import { SITE_URL } from "@/lib/seo";
+import { getSiteSettings, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { OrganizationJsonLd } from "@/components/OrganizationJsonLd";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { PwaInstallProvider } from "@/components/PwaInstallProvider";
@@ -94,6 +96,23 @@ export default async function RootLayout({
     select: { id: true, name: true, slug: true },
   });
 
+  // نوارِ بج‌های اعتماد -- ۴ بج ثابت (آیکنِ هرکدوم ثابته)، هرکدوم جدا از تنظیمات
+  // روشن/خاموش می‌شه و متنش دلخواهِ ادمینه
+  const trustBadgeSettings = await getSiteSettings([
+    SITE_SETTING_KEYS.TRUST_BADGE_1_ENABLED,
+    SITE_SETTING_KEYS.TRUST_BADGE_1_TEXT,
+    SITE_SETTING_KEYS.TRUST_BADGE_2_ENABLED,
+    SITE_SETTING_KEYS.TRUST_BADGE_2_TEXT,
+    SITE_SETTING_KEYS.TRUST_BADGE_3_ENABLED,
+    SITE_SETTING_KEYS.TRUST_BADGE_3_TEXT,
+    SITE_SETTING_KEYS.TRUST_BADGE_4_ENABLED,
+    SITE_SETTING_KEYS.TRUST_BADGE_4_TEXT,
+  ]);
+  const TRUST_BADGE_ICONS = ["🛡️", "🚚", "↩️", "💰"];
+  const trustBadges = [1, 2, 3, 4]
+    .filter((n) => trustBadgeSettings[`trustBadge${n}Enabled`] === "true")
+    .map((n) => ({ icon: TRUST_BADGE_ICONS[n - 1], text: trustBadgeSettings[`trustBadge${n}Text`] }));
+
   const cookieStore = await cookies();
   const cookieLang = cookieStore.get(LANG_COOKIE)?.value;
   const initialLang = isLang(cookieLang) ? cookieLang : DEFAULT_LANG;
@@ -108,11 +127,12 @@ export default async function RootLayout({
               <LocaleAnalyticsRecorder />
               <CookieConsentGate />
               <CartUserSync />
+              <ReviewNudgePopup />
               <FormValidationLocalizer />
               <OrganizationJsonLd />
               <Header categories={categories} genderGroups={genderGroups} externalSites={externalSites} />
               <main className="flex-1">{children}</main>
-              <Footer externalSites={externalSites} />
+              <Footer externalSites={externalSites} trustBadges={trustBadges} />
               <SupportChatWidget />
               <ShoppingAssistantWidget />
               <CompareBar />

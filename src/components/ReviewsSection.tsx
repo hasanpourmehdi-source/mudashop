@@ -14,6 +14,7 @@ type Review = {
   comment: string;
   images: string; // JSON آرایه به صورت string
   verifiedPurchase: boolean;
+  variantLabel: string | null;
   isApproved: boolean;
   createdAt: string;
   helpfulCount: number;
@@ -88,6 +89,9 @@ function ReviewCard({ r, onToggleHelpful }: { r: Review; onToggleHelpful: (id: s
           </span>
         )}
       </div>
+      {r.variantLabel && (
+        <p className="text-[11px] text-[var(--color-muted)] mb-2">خریداری‌شده: {r.variantLabel}</p>
+      )}
 
       <p className={`text-sm text-[var(--color-muted)] flex-1 ${!expanded && isLong ? "line-clamp-4" : ""}`}>
         {r.comment}
@@ -147,9 +151,18 @@ function ReviewCard({ r, onToggleHelpful }: { r: Review; onToggleHelpful: (id: s
 export function ReviewsSection({
   productId,
   externalId,
+  externalSiteId,
+  productTitle,
+  productImage,
 }: {
   productId?: string;
   externalId?: string;
+  // ترندیول/میلا زیرِ یه source مشترک‌ان -- بدونش externalId ممکنه بینِ دو
+  // سایت تصادفاً برخورد کنه
+  externalSiteId?: string;
+  // برای دیوارِ ویدیوی صفحه‌ی اصلی -- اسنپ‌شاتِ نمایشیِ عنوان/عکس، نه منبعِ واقعی
+  productTitle?: string;
+  productImage?: string;
 }) {
   const { status } = useSession();
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -169,7 +182,8 @@ export function ReviewsSection({
 
   function load() {
     const query = productId ? `productId=${productId}` : `externalId=${externalId}`;
-    fetch(`/api/reviews?${query}`)
+    const siteQuery = externalSiteId ? `&externalSiteId=${externalSiteId}` : "";
+    fetch(`/api/reviews?${query}${siteQuery}`)
       .then((res) => res.json())
       .then((data) => {
         setReviews(data.reviews);
@@ -178,7 +192,7 @@ export function ReviewsSection({
       });
   }
 
-  useEffect(load, [productId, externalId]);
+  useEffect(load, [productId, externalId, externalSiteId]);
 
   // توزیع امتیاز فقط از نظرات تاییدشده -- نظراتِ در انتظارِ خود کاربر مستثنی‌اند
   const breakdown = useMemo(() => {
@@ -253,7 +267,7 @@ export function ReviewsSection({
     const res = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productId, externalId, rating, comment, images }),
+      body: JSON.stringify({ productId, externalId, externalSiteId, productTitle, productImage, rating, comment, images }),
     });
     const data = await res.json();
     setSubmitting(false);

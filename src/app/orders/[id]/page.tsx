@@ -13,11 +13,13 @@ import { OrderPaymentHistory } from "@/components/OrderPaymentHistory";
 import { OrderInvoice } from "@/components/OrderInvoice";
 import { ItemMismatchDecision } from "@/components/ItemMismatchDecision";
 import { BuyAgainButton } from "@/components/BuyAgainButton";
+import { OrderItemReviewButton } from "@/components/OrderItemReviewButton";
 import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
 import { parseTrackingCodes } from "@/lib/trackingCodes";
 import { TrackingCodeView } from "@/components/TrackingCodeView";
 import { PURCHASE_OUTCOME_LABELS } from "@/lib/orderPurchaseStatus";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
 const RETURN_WINDOW_DAYS = 7;
 
@@ -33,7 +35,12 @@ export default async function OrderDetailPage({
   const order = await prisma.order.findUnique({
     where: { id },
     include: {
-      items: { include: { product: { select: { slug: true } } } },
+      items: {
+        include: {
+          product: { select: { slug: true, isReturnable: true } },
+          externalSite: { select: { isReturnable: true } },
+        },
+      },
       statusHistory: { orderBy: { createdAt: "asc" } },
       returnRequest: { include: { items: true } },
       cancellationRequest: true,
@@ -65,10 +72,37 @@ export default async function OrderDetailPage({
     }
   }
 
+  const nonReturnableProductsEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED);
+  // فقط وقتی فلگِ سراسری روشنه معنی داره -- وگرنه (رفتار قبلی) همه‌چیز قابل‌مرجوعه.
+  // دو سطحِ جدا: اقلامِ مزون فلگِ خودِ محصول رو چک می‌کنن، اقلامِ ترندیول فلگِ
+  // سطحِ سایتِ خارجی‌شون رو (چون یه محصولِ خارجیِ جداگانه توی DB نداریم -- ممکنه
+  // ترندیول مرجوعی داشته باشه ولی میلا نداشته باشه، یا برعکس). اگه سایتِ اون
+  // قلم نامشخص باشه (مثلاً دموی قدیمی)، محافظه‌کارانه قابل‌مرجوع فرض می‌شه
+  const isItemReturnable = (item: (typeof order.items)[number]) => {
+    if (!nonReturnableProductsEnabled) return true;
+    if (item.source === "MAZON") return item.product?.isReturnable !== false;
+    if (item.source === "TRENDYOL") return item.externalSite?.isReturnable !== false;
+    return true;
+  };
+
   const withinReturnWindow =
     order.status === "DELIVERED" &&
     !!order.deliveredAt &&
     (Date.now() - order.deliveredAt.getTime()) / (1000 * 60 * 60 * 24) <= RETURN_WINDOW_DAYS;
+
+  // دکمه‌ی «نظر بده» زیر هر قلم فقط وقتی سفارش تحویل داده شده معنی داره -- هر
+  // قلمِ سفارش (نه هر محصول) جدا نظرپذیره، چون شاید همین محصول رو قبلاً هم
+  // خریده و برای اون خرید نظر داده، ولی این خریدِ جدید هنوز نظر نخورده
+  const reviewedOrderItemIds = new Set<string>();
+  if (order.status === "DELIVERED") {
+    const myReviews = await prisma.review.findMany({
+      where: { userId: session.user.id, orderItemId: { not: null } },
+      select: { orderItemId: true },
+    });
+    for (const r of myReviews) {
+      if (r.orderItemId) reviewedOrderItemIds.add(r.orderItemId);
+    }
+  }
 
   const canReorder = order.items.some(
     (i) => (i.source === "MAZON" && !!i.productId) || (i.source === "TRENDYOL" && !!i.externalId)
@@ -87,7 +121,14 @@ export default async function OrderDetailPage({
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold">سفارش #{order.id.slice(-8)}</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold">سفارش #{order.id.slice(-8)}</h1>
+          {order.paymentMethod === "CASH_ON_DELIVERY" && (
+            <span className="text-xs font-bold px-2 py-1 rounded-full bg-blue-100 text-blue-700">
+              پرداخت در محل
+            </span>
+          )}
+        </div>
         {order.status !== "CANCELLED" && (
           <>
             <CancelOrderButton
@@ -186,6 +227,7 @@ export default async function OrderDetailPage({
           title: item.title,
           quantity: item.quantity,
           price: item.price,
+          isReturnable: isItemReturnable(item),
         }))}
         isDelivered={order.status === "DELIVERED"}
         withinReturnWindow={withinReturnWindow}
@@ -244,31 +286,45 @@ export default async function OrderDetailPage({
             return (
               <div
                 key={item.id}
-                className="flex justify-between text-sm border cut-line rounded-lg p-3 bg-white"
+                className="border cut-line rounded-lg p-3 bg-white space-y-2"
               >
-                <span>
-                  {itemUrl ? (
-                    <a
-                      href={itemUrl}
-                      target={isExternal ? "_blank" : undefined}
-                      rel={isExternal ? "noopener noreferrer" : undefined}
-                      className="text-[var(--color-wine)] hover:underline"
-                    >
-                      {item.title}
-                    </a>
-                  ) : (
-                    item.title
-                  )}
-                  {item.variantLabel && (
-                    <span className="text-xs text-[var(--color-muted)]"> ({item.variantLabel})</span>
-                  )}
-                  {" × "}
-                  {item.quantity}
-                </span>
-              <span className="font-medium">
-                {(item.price * item.quantity).toLocaleString("fa-IR")} تومان
-              </span>
-            </div>
+                <div className="flex justify-between text-sm">
+                  <span>
+                    {itemUrl ? (
+                      <a
+                        href={itemUrl}
+                        target={isExternal ? "_blank" : undefined}
+                        rel={isExternal ? "noopener noreferrer" : undefined}
+                        className="text-[var(--color-wine)] hover:underline"
+                      >
+                        {item.title}
+                      </a>
+                    ) : (
+                      item.title
+                    )}
+                    {item.variantLabel && (
+                      <span className="text-xs text-[var(--color-muted)]"> ({item.variantLabel})</span>
+                    )}
+                    {" × "}
+                    {item.quantity}
+                  </span>
+                  <span className="font-medium">
+                    {(item.price * item.quantity).toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
+                <OrderMessageThread orderId={order.id} viewerRole="CUSTOMER" itemId={item.id} title="توضیحات این کالا" compact />
+                {order.status === "DELIVERED" && (item.productId || item.externalId) && (
+                  <OrderItemReviewButton
+                    productId={item.productId ?? undefined}
+                    externalId={item.externalId ?? undefined}
+                    orderItemId={item.id}
+                    title={item.title}
+                    variantLabel={item.variantLabel}
+                    image={item.image}
+                    alreadyReviewed={reviewedOrderItemIds.has(item.id)}
+                  />
+                )}
+              </div>
             );
           })}
         </section>

@@ -3,8 +3,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
 import { SHIPPING_METHODS, availableShippingMethods } from "@/lib/shipping";
+import { approveItemsPayment } from "@/lib/orderPaymentApproval";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import { fileMatchesDeclaredType } from "@/lib/fileSignature";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -21,19 +24,24 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ authority: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "احراز هویت لازم است" }, { status: 401 });
-  }
-
   const { authority } = await params;
   const order = await prisma.order.findUnique({
     where: { paymentAuthority: authority },
-    include: { user: { select: { name: true, email: true } } },
+    include: { user: { select: { name: true, email: true, isGuest: true } } },
   });
 
-  if (!order || order.userId !== session.user.id) {
+  if (!order) {
     return NextResponse.json({ error: "تراکنش یافت نشد" }, { status: 404 });
+  }
+
+  // سفارشِ مهمان: هیچ سشنی برای چک‌کردن وجود نداره -- خودِ authority (یه
+  // UUIDِ تصادفی) کافیه، دقیقاً مثل GET همین مسیر. سفارشِ کاربرِ ثبت‌نام‌کرده
+  // همچنان باید مالِ همون سشن باشه
+  if (!order.user.isGuest) {
+    const session = await auth();
+    if (!session?.user?.id || order.userId !== session.user.id) {
+      return NextResponse.json({ error: "تراکنش یافت نشد" }, { status: 404 });
+    }
   }
 
   if (order.paymentStatus === "PENDING") {
@@ -89,8 +97,12 @@ export async function POST(
   const uploadsDir = path.join(process.cwd(), "public", "uploads", "receipts");
   await mkdir(uploadsDir, { recursive: true });
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (!fileMatchesDeclaredType(buffer, file.type)) {
+    return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
+  }
+
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   await writeFile(path.join(uploadsDir, filename), buffer);
 
   const receiptUrl = `/uploads/receipts/${filename}`;
@@ -109,14 +121,21 @@ export async function POST(
     data: { orderId: order.id, status: order.status, note: "فیش پرداخت توسط مشتری ارسال شد" },
   });
 
-  const shortId = order.id.slice(-8);
-  await notifyAdminsOnce(
-    `فیش پرداخت سفارش #${shortId}`,
-    `فیش پرداخت سفارش #${shortId} توسط ${order.user.name ?? order.user.email} ارسال شد -- مبلغ ${order.total.toLocaleString(
-      "fa-IR"
-    )} تومان. برای بررسی به پنل سفارش‌ها مراجعه کنید.`,
-    "/admin/orders"
-  );
+  // اگه از تنظیمات «تأییدِ فیش‌های واریزی» خاموش باشه، به‌جای موندن روی
+  // AWAITING_VERIFICATION، همون لحظه خودِ سیستم تأییدش می‌کنه (بدونِ منتظرِ
+  // کلیکِ ادمین) -- دقیقاً همون کاری که verify-payment با action=approve می‌کنه
+  if (await getSiteSettingBool(SITE_SETTING_KEYS.SKIP_PAYMENT_VERIFICATION)) {
+    await approveItemsPayment(order.id);
+  } else {
+    const shortId = order.id.slice(-8);
+    await notifyAdminsOnce(
+      `فیش پرداخت سفارش #${shortId}`,
+      `فیش پرداخت سفارش #${shortId} توسط ${order.user.name ?? order.user.email} ارسال شد -- مبلغ ${order.total.toLocaleString(
+        "fa-IR"
+      )} تومان. برای بررسی به پنل سفارش‌ها مراجعه کنید.`,
+      "/admin/orders"
+    );
+  }
 
   return NextResponse.json({ success: true, orderId: order.id });
 }

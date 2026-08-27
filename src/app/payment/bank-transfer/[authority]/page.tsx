@@ -13,6 +13,7 @@ export default function BankTransferPage() {
 
   const [amount, setAmount] = useState<number | null>(null);
   const [orderId, setOrderId] = useState<string>("");
+  const [isGuest, setIsGuest] = useState(false);
   const [status, setStatus] = useState<PaymentStatus | null>(null);
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
   const [bankCardNumber, setBankCardNumber] = useState("");
@@ -41,6 +42,7 @@ export default function BankTransferPage() {
         }
         setAmount(data.amount);
         setOrderId(data.orderId);
+        setIsGuest(Boolean(data.isGuest));
         setStatus(data.paymentStatus);
         setReceiptImage(data.receiptImage);
         setBankCardNumber(data.bankCardNumber ?? "");
@@ -83,11 +85,17 @@ export default function BankTransferPage() {
     setStatus("AWAITING_VERIFICATION");
   }
 
+  // سفارشِ مهمان صفحه‌ی /orders/[id] رو نداره (لاگین می‌خواد و مهمان حسابی
+  // نداره که باهاش وارد بشه) -- باید به همون صفحه‌ی read-onlyِ /track-order برگرده
+  function orderViewHref() {
+    return isGuest ? `/track-order?orderId=${orderId}` : `/orders/${orderId}`;
+  }
+
   // این دکمه دیگه سفارش رو لغو نمی‌کنه (اون یه اقدام مجزا و نیازمند دلیله، از
   // طریق دکمه‌ی «لغو سفارش» توی خودِ صفحه‌ی سفارش) -- فقط برمی‌گرده به صفحه‌ی
   // سفارش، بدون هیچ تغییری. مشتری اگه واقعاً بخواد لغو کنه، از همون‌جا انجامش می‌ده
   function handleCancel() {
-    router.push(`/orders/${orderId}`);
+    router.push(orderViewHref());
   }
 
   if (error && amount === null) {
@@ -106,7 +114,7 @@ export default function BankTransferPage() {
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <p className="text-sm text-[var(--color-muted)] mb-4">این تراکنش قبلاً پردازش شده است.</p>
         <button
-          onClick={() => router.push(`/orders/${orderId}`)}
+          onClick={() => router.push(orderViewHref())}
           className="bg-[var(--color-wine)] text-white px-5 py-2 rounded-full text-sm font-medium"
         >
           مشاهده سفارش
@@ -125,7 +133,7 @@ export default function BankTransferPage() {
             سفارش شما ثبت شده و به‌محض بررسی، شماره کارت برای پرداخت در اختیارتون قرار می‌گیره.
           </p>
           <button
-            onClick={() => router.push(`/orders/${orderId}`)}
+            onClick={() => router.push(orderViewHref())}
             className="bg-[var(--color-wine)] text-white px-5 py-2 rounded-full text-sm font-medium"
           >
             مشاهده سفارش
@@ -150,7 +158,7 @@ export default function BankTransferPage() {
             </div>
           )}
           <button
-            onClick={() => router.push(`/orders/${orderId}`)}
+            onClick={() => router.push(orderViewHref())}
             className="bg-[var(--color-wine)] text-white px-5 py-2 rounded-full text-sm font-medium"
           >
             مشاهده سفارش

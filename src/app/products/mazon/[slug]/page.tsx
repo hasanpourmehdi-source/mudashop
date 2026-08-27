@@ -13,6 +13,7 @@ import {
   fetchViewCount24h,
   fetchIsLowestPrice10d,
   fetchPriceHistory,
+  fetchShowcasedCoupons,
 } from "@/lib/products";import { advanceExpiredReservationQueues } from "@/lib/stockNotify";
 import { checkPriceAlerts } from "@/lib/priceAlert";
 import { auth } from "@/lib/auth";
@@ -31,7 +32,7 @@ import { RecentlyViewedRecorder } from "@/components/RecentlyViewedRecorder";
 import { CompareToggleButton } from "@/components/CompareToggleButton";
 import { PriceAlertWidget } from "@/components/PriceAlertWidget";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
-import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getSiteSetting, getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { fetchRelatedProducts } from "@/lib/recommend";
 import { ProductJsonLd } from "@/components/ProductJsonLd";
 import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
@@ -88,10 +89,12 @@ export default async function MazonProductPage({
     wishlistedIds,
     fixedAttributes,
     returnPolicyText,
+    nonReturnableProductsEnabled,
     sizeGuideImage,
     viewCount24h,
     isLowestPrice10d,
     priceHistory,
+    showcasedCoupons,
   ] = await Promise.all([
     fetchFrequentlyBoughtTogether(product.id),
     fetchRelatedProducts(product.id),
@@ -102,11 +105,15 @@ export default async function MazonProductPage({
     fetchWishlistedProductIds(session?.user?.id),
     fetchFixedAttributesForCategory(product.categoryId),
     getSiteSetting(SITE_SETTING_KEYS.RETURN_POLICY_TEXT),
+    getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED),
     fetchSizeGuideImage(product.categoryId, product.brandId),
     fetchViewCount24h(product.id),
     fetchIsLowestPrice10d(product.id, product.price),
     fetchPriceHistory(product.id, product.price),
+    fetchShowcasedCoupons(),
   ]);
+
+  const isNonReturnable = nonReturnableProductsEnabled && product.isReturnable === false;
 
   // ثبت این بازدید و عکس قیمت امروز -- بدون بلاک کردن رندر صفحه
   recordProductView(product.id);
@@ -183,7 +190,7 @@ export default async function MazonProductPage({
       {/* گالری خودش max-w-[440px] دارد -- با grid-cols-2 (۱fr ۱fr) یه فضای
           خالی بی‌معنی بین عکس و توضیحات می‌افتاد؛ عرض ستون دقیقاً همون‌قدره */}
       <div className="grid md:grid-cols-[440px_1fr] gap-8">
-      <ProductGallery images={product.images} title={product.title} colorImages={product.colorImages} />
+      <ProductGallery images={product.images} title={product.title} colorImages={product.colorImages} videoUrl={product.videoUrl} />
 
       <div>
         <div className="flex items-center gap-2 mb-3">
@@ -244,6 +251,25 @@ export default async function MazonProductPage({
           </p>
         )}
 
+        {showcasedCoupons.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {showcasedCoupons.map((c) => (
+              <span
+                key={c.code}
+                className="text-xs font-bold text-[var(--color-wine)] bg-[var(--color-wine)]/10 border border-[var(--color-wine)]/30 rounded-full px-3 py-1"
+              >
+                با کد{" "}
+                <span dir="ltr">{c.code}</span>{" "}
+                {c.type === "FREE_SHIP"
+                  ? "ارسال رایگان بگیر"
+                  : c.type === "FIXED"
+                    ? `${c.value.toLocaleString("fa-IR")} تومان تخفیف بگیر`
+                    : `${c.value.toLocaleString("fa-IR")}٪ تخفیف بگیر`}
+              </span>
+            ))}
+          </div>
+        )}
+
         <AddToCartForm
           productId={product.id}
           slugOrId={product.slugOrId}
@@ -289,9 +315,15 @@ export default async function MazonProductPage({
 
         <PriceAlertWidget productId={product.id} currentPrice={product.price} />
 
-        <p className="mt-4 text-xs text-[var(--color-muted)] leading-relaxed border-t cut-line pt-4">
-          <strong className="text-[var(--color-ink)]">شرایط مرجوع کردن کالا: </strong>
-          {returnPolicyText}
+        <p className="mt-4 text-xs leading-relaxed border-t cut-line pt-4">
+          {isNonReturnable ? (
+            <span className="text-red-600 font-medium">این محصول قابل مرجوع نیست.</span>
+          ) : (
+            <>
+              <strong className="text-[var(--color-ink)]">شرایط مرجوع کردن کالا: </strong>
+              <span className="text-[var(--color-muted)]">{returnPolicyText}</span>
+            </>
+          )}
         </p>
 
         <div className="mt-8 pt-6 border-t cut-line">
@@ -300,6 +332,15 @@ export default async function MazonProductPage({
             {product.description}
           </p>
         </div>
+
+        {product.careInstructions && (
+          <div className="mt-8 pt-6 border-t cut-line">
+            <h2 className="font-bold mb-2">نحوه مصرف / نگهداری</h2>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed whitespace-pre-line">
+              {product.careInstructions}
+            </p>
+          </div>
+        )}
 
         {(fixedAttributes.length > 0 || product.specifications.length > 0) && (
           <div className="mt-8 pt-6 border-t cut-line">
@@ -368,7 +409,7 @@ export default async function MazonProductPage({
         </section>
       )}
 
-      <ReviewsSection productId={product.id} />
+      <ReviewsSection productId={product.id} productTitle={product.title} productImage={product.image} />
       <QASection productId={product.id} />
 
       {relatedProducts.length > 0 && (

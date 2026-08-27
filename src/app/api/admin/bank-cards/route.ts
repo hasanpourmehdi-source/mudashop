@@ -31,6 +31,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const card = await prisma.bankCard.create({ data: parsed.data });
+  // اولین کارِ ثبت‌شده‌ی سیستم خودکار پیش‌فرض می‌شه -- وگرنه تخصیصِ خودکار
+  // موقع finalize هیچ پیش‌فرضی پیدا نمی‌کنه
+  const isFirstCard = (await prisma.bankCard.count()) === 0;
+  const card = await prisma.bankCard.create({
+    data: { ...parsed.data, ...(isFirstCard ? { isDefault: true } : {}) },
+  });
   return NextResponse.json(card, { status: 201 });
 }

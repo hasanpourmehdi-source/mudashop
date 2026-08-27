@@ -6,6 +6,7 @@ import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { logAdminAction } from "@/lib/adminAudit";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import { fileMatchesDeclaredType } from "@/lib/fileSignature";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -52,10 +53,14 @@ export async function POST(
       return NextResponse.json({ error: "حجم فایل نباید بیشتر از ۵ مگابایت باشد" }, { status: 400 });
     }
 
+    const buffer = Buffer.from(await file.arrayBuffer());
+    if (!fileMatchesDeclaredType(buffer, file.type)) {
+      return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
+    }
+
     const uploadsDir = path.join(process.cwd(), "public", "uploads", "receipts");
     await mkdir(uploadsDir, { recursive: true });
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(path.join(uploadsDir, filename), buffer);
     const receiptUrl = `/uploads/receipts/${filename}`;
 

@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { rateLimitOrNull, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
+  // این مسیر دقیقاً همون چیزیه که برای حدس‌زدنِ کدهای تخفیف (brute-force)
+  // می‌شه سوءاستفاده کرد -- محدودیتِ نرخ لازم داره
+  const limited = rateLimitOrNull(req, "COUPON_VALIDATE");
+  if (limited) {
+    return NextResponse.json(
+      { error: RATE_LIMIT_MESSAGE(limited.retryAfterSeconds) },
+      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
+    );
+  }
+
   // خریدِ مهمان هم می‌تونه کد تخفیف اعمال کنه -- بدون لاگین یعنی هنوز هیچ
   // سفارشی نداره، پس اعتبارسنجی FIRST_BUY هم طبیعتاً true می‌مونه
   const session = await auth();

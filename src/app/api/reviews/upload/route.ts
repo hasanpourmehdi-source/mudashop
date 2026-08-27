@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import { fileMatchesDeclaredType } from "@/lib/fileSignature";
+import { rateLimitOrNull, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -22,6 +24,14 @@ const MAX_VIDEO_SIZE_BYTES = 30 * 1024 * 1024; // ۳۰ مگابایت
 // مخصوص ادمینه، اینجا هر کاربری که وارد حساب شده می‌تونه برای نظرش عکس آپلود کنه.
 // هر بار یه فایل می‌گیره؛ چندتا عکس یعنی چندبار صدا زدن این اندپوینت از کلاینت.
 export async function POST(req: Request) {
+  const limited = rateLimitOrNull(req, "REVIEW_UPLOAD");
+  if (limited) {
+    return NextResponse.json(
+      { error: RATE_LIMIT_MESSAGE(limited.retryAfterSeconds) },
+      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
+    );
+  }
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "برای آپلود عکس ابتدا وارد حساب کاربری شوید" }, { status: 401 });
@@ -51,11 +61,15 @@ export async function POST(req: Request) {
     );
   }
 
+  const buffer = Buffer.from(await file.arrayBuffer());
+  if (!fileMatchesDeclaredType(buffer, file.type)) {
+    return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
+  }
+
   const uploadsDir = path.join(process.cwd(), "public", "uploads", "reviews");
   await mkdir(uploadsDir, { recursive: true });
 
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(path.join(uploadsDir, filename), buffer);
 
   return NextResponse.json({ url: `/uploads/reviews/${filename}`, type: isVideo ? "video" : "image" }, { status: 201 });

@@ -78,12 +78,17 @@ model User {
 // localStorage کلاینته). هر تغییر سبد (debounce شده) اینجا sync می‌شه؛ با ثبت
 // سفارش یا خالی‌شدنِ سبد حذف می‌شه.
 model CartSnapshot {
-  id         String    @id @default(cuid())
-  userId     String    @unique
-  itemsJson  String // JSON آرایه‌ی CartItem[]
-  updatedAt  DateTime  @updatedAt
-  remindedAt DateTime? // یک‌بارمصرف -- تا وقتی همین سبد دوباره عوض نشه، دوباره یادآوری نمی‌فرستیم
-  createdAt  DateTime  @default(now())
+  id                String @id @default(cuid())
+  userId            String @unique
+  itemsJson         String // JSON آرایه‌ی CartItem[] کامل -- هم برای یادآوریِ سبدِ رهاشده هم بازیابیِ سبد روی دستگاه دیگر
+  savedForLaterJson String @default("[]") // JSON آرایه‌ی CartItem[] -- برای بازیابیِ «خرید بعدی» روی دستگاه دیگر
+  updatedAt DateTime @updatedAt
+  // پیشرفتِ دنباله‌ی یادآوری: 0=هیچی نرفته، 1=یادآوریِ نرم رفته، 2=یادآوریِ
+  // فوریت رفته، 3=به ادمین اطلاع داده شده (تصمیمِ کد تخفیف با خودشه -- دیگه
+  // پیامِ خودکاری برای مشتری نمی‌ره). با هر تغییرِ سبد صفر می‌شه (تعامل تازه = دور تازه)
+  reminderStage  Int       @default(0)
+  lastReminderAt DateTime? // آخرین باری که یه مرحله جلو رفت -- برای فاصله‌گذاریِ درست بین مرحله‌ها
+  createdAt      DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -91,13 +96,14 @@ model CartSnapshot {
 }
 
 // پاداشِ کد معرفی -- وقتی اولین سفارشِ «پرداخت‌شده»‌ی کاربرِ معرفی‌شده ثبت
-// می‌شه، یک‌بار به معرف پاداش داده می‌شه (orderId یکتاست پس هر سفارش حداکثر
-// یک پاداش می‌سازه، و هر کاربر چون فقط یک referredById دارد، حداکثر یک‌بار
-// معرف‌شده)
+// می‌شه، یک‌بار به معرف پاداش داده می‌شه. orderId یکتاست (بک‌استاپ برای فراخوانیِ
+// هم‌زمانِ چندبارهٔ همین سفارش)، و referredId هم یکتاست (بک‌استاپ برای دو
+// سفارشِ هم‌زمانِ همون کاربرِ معرفی‌شده که هر دو priorPaidCount==0 رو ببینن --
+// بدون این قید، معرف می‌تونست دوبار پاداش بگیره)
 model ReferralReward {
   id           String   @id @default(cuid())
   referrerId   String
-  referredId   String
+  referredId   String   @unique
   orderId      String   @unique
   rewardAmount Int
   createdAt    DateTime @default(now())
@@ -313,6 +319,17 @@ model Product {
   images      String // JSON array به صورت string ("[\"url1\",\"url2\"]")
   colorImages String   @default("{}") // JSON: {"مقدار رنگ": ["url1","url2"]} -- برای عوض شدن گالری با انتخاب رنگ
   fastShipping Boolean @default(false) // بج «ارسال فوری» توی صفحه محصول -- دستی از پنل ادمین کنترل می‌شه
+  // بعضی محصولات (لباس زیر، آرایشی بازشده و...) اصلاً نباید مرجوع بشن -- این
+  // فلگ فقط وقتی معنی داره که SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED
+  // (کلید سراسری) روشن باشه؛ وگرنه همه‌چیز طبق رفتار قبلی قابل‌مرجوعه
+  isReturnable Boolean @default(true)
+  // متنِ جدا از توضیحاتِ کلی -- «نحوه مصرف/نگهداری» (مثلاً دستورِ شست‌وشو برای
+  // لباس، یا نحوه‌ی استفاده برای محصولاتی که این‌طور نیازی دارن). فقط مزون،
+  // چون محتوای محصولاتِ خارجی دستِ ما نیست
+  careInstructions String?
+  // ویدیوی رسمیِ محصول -- کنارِ عکس‌ها توی گالریِ صفحه‌ی محصول نشون داده می‌شه
+  // (جدا از ویدیوهایی که مشتری‌ها با نظرشون آپلود می‌کنن)
+  videoUrl String?
   categoryId  String
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -520,6 +537,12 @@ model Order {
   addressId     String?
   status        OrderStatus   @default(PENDING)
   paymentStatus PaymentStatus @default(PENDING)
+  // انتخاب مشتری موقع چک‌اوت -- فقط وقتی CASH_ON_DELIVERY_ENABLED (تنظیمات
+  // سراسری) روشن باشه قابل‌انتخابه. برای سفارش‌های پرداخت‌درمحل، هیچ دوری از
+  // کارت‌به‌کارت (نه دور اقلام، نه دور ارسال/باربری) لازم نیست -- پول موقع
+  // تحویل نقدی گرفته می‌شه، پس finalizeItemsPayment/set-shipping-cost مستقیم
+  // PAID می‌کنن بدون تخصیص کارت
+  paymentMethod PaymentMethod @default(CARD_TRANSFER)
   paymentAuthority String?    @unique
   paidAt        DateTime?
   // پرداخت کارت‌به‌کارت آفلاین -- ادمین از بین کارت‌های ثبت‌شده یکی رو برای این
@@ -605,11 +628,16 @@ model Order {
 model OrderMessage {
   id        String        @id @default(cuid())
   orderId   String
+  // خالی یعنی گفت‌وگوی کلیِ سفارش؛ پر یعنی این پیام مخصوصِ یه قلمِ خاصه (مثلاً
+  // مشتری درباره‌ی سایز/رنگِ همون کالا سوال داره) -- دو رشته‌ی جدا از هم، نه
+  // قاطی، تا گفت‌وگوی کلی شلوغ نشه
+  orderItemId String?
   sender    MessageSender
   message   String
   createdAt DateTime      @default(now())
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item  OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 
   @@map("order_messages")
 }
@@ -668,6 +696,11 @@ enum PaymentStatus {
   FAILED
 }
 
+enum PaymentMethod {
+  CARD_TRANSFER // کارت‌به‌کارت + آپلود فیش (رفتار پیش‌فرض/فعلی)
+  CASH_ON_DELIVERY // پرداخت نقدی موقع تحویل -- هیچ کارتی تخصیص داده نمی‌شه
+}
+
 // وقتی ادمین یا مشتری اقلام سفارش رو ویرایش می‌کنه، این فیلد مشخص می‌کنه نوبت
 // کیه که واکنش نشون بده -- برای اینکه سفارش بدون تأیید طرف مقابل مستقیم به
 // پرداخت نره
@@ -686,6 +719,10 @@ model BankCard {
   holderName  String
   label       String? // اختیاری، مثلاً "بانک ملی" -- فقط برای تشخیص راحت‌تر توی لیست ادمین
   isActive    Boolean  @default(true)
+  // وقتی «تأییدِ اولیه‌ی ادمین» از تنظیمات خاموشه، سیستم خودش (بدون این‌که
+  // ادمین دستی انتخاب کنه) باید یه کارت برای تخصیص به مشتری انتخاب کنه --
+  // همینه. حداکثر یکی می‌تونه true باشه (توی route اجرا می‌شه، نه constraint دیتابیسی)
+  isDefault   Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   @@map("bank_cards")
@@ -749,6 +786,10 @@ model OrderItem {
   productId   String?
   variantId   String?
   externalId  String? // id محصول از Fake Store API
+  // فقط برای اقلامِ ترندیولِ واقعی (نه دموی قدیمی) پر می‌شه -- کدوم سایتِ
+  // خارجی (ترندیول/میلا) از روی دامنه‌ی لینکِ واقعیِ محصول در لحظه‌ی ثبتِ
+  // سفارش تشخیص داده شده. برای غیرقابل‌بازگشت‌بودنِ سطح‌سایت لازمه
+  externalSiteId String?
   flashSaleId String?
   source      ProductSource
   title       String // snapshot از عنوان محصول در لحظه خرید
@@ -802,8 +843,11 @@ model OrderItem {
   product   Product?        @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
   flashSale FlashSale?      @relation(fields: [flashSaleId], references: [id])
+  externalSite ExternalSite? @relation(fields: [externalSiteId], references: [id], onDelete: SetNull)
   returnItems ReturnRequestItem[]
   shipment  Shipment?       @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  messages  OrderMessage[]
+  review    Review?
 
   @@map("order_items")
 }
@@ -851,6 +895,24 @@ enum ProductSource {
 
 // ================= نظرات (مزون و ترندیول) =================
 
+// بک‌استاپِ اتمیکِ مسیرِ عمومیِ نظر (بدونِ orderItemId مشخص): چکِ «قبلاً نظرِ
+// unlinked برای این محصول ثبت نکرده» + create توی POST /api/reviews عمداً
+// داخلِ یه $transaction‌ان، ولی خودِ transaction این ترکیب رو اتمیک نمی‌کنه --
+// دو درخواستِ هم‌زمان می‌تونن هر دو همون چکِ findFirst رو قبل از هر دو create
+// ببینن (دقیقاً همون کلاسِ رِیسی که FIRST_BUY/ReferralReward داشتن).
+// productKey عمداً یه رشته‌ی غیر-nullِ ترکیبیه ("mazon:<id>" یا "trendyol:<id>")
+// نه دو فیلدِ جدا -- قیدِ یکتاییِ چندستونی روی ستون‌های nullable طبقِ استاندارد
+// SQL کار نمی‌کنه (NULL با NULL برابر شمرده نمی‌شه، پس دو ردیف با
+// externalId=NULL یکسان همچنان «متفاوت» حساب می‌شن و قید رد نمی‌کنتشون)
+model UnlinkedReviewClaim {
+  id         String @id @default(cuid())
+  userId     String
+  productKey String
+
+  @@unique([userId, productKey])
+  @@map("unlinked_review_claims")
+}
+
 model Review {
   id        String   @id @default(cuid())
   userId    String
@@ -860,10 +922,34 @@ model Review {
   source        ProductSource @default(MAZON)
   productId     String?
   externalId    String?
+  // ترندیول و میلا هر دو زیرِ همون source=TRENDYOL جمع می‌شن ولی سایتِ واقعاً
+  // متفاوتی‌ان با contentId های مستقل -- بدونِ این فیلد، یه externalId مشترک
+  // بین دو سایت باعث می‌شه نظراتِ محصولِ سایتِ دیگه هم زیرِ این محصول نمایش
+  // داده بشه. برای خریدِ تأییدشده از رویِ OrderItem.externalSiteId پر می‌شه
+  // (نه از کلاینت)؛ برای مسیرِ عمومی از کلاینت می‌آد. نظراتِ قدیمی‌ترِ قبل از
+  // این فیلد null می‌مونن (هنوز مبهم‌ان، ولی نظراتِ تازه درست جدا می‌شن)
+  externalSiteId String?
+  // اگه این نظر از دکمه‌ی «نظر بده» زیرِ یه قلمِ سفارشِ مشخص اومده (نه فرمِ
+  // عمومیِ صفحه‌ی محصول)، اینجا پر می‌شه -- همین باعث می‌شه یه مشتری بتونه
+  // همون محصول رو دوباره بخره و برای اون خریدِ جدید هم جدا نظر بده (شاید بارِ
+  // دوم تجربه‌ش فرق کرده)، به‌جای این‌که فقط یه نظرِ کلی برای همیشه داشته باشه
+  orderItemId String? @unique
   rating    Int // 1 تا 5
   comment   String
   images    String   @default("[]") // JSON array به صورت string (مثل images محصول) -- عکس‌های ضمیمه‌ی نظر
   verifiedPurchase Boolean @default(false)
+  // ترکیبِ واقعاً خریداری‌شده (مثلاً "سایز: L / رنگ: قرمز")، از روی همون
+  // OrderItem.variantLabel که verifiedPurchase رو هم توش پیدا کردیم -- فقط
+  // برای خریدِ تأییدشده پر می‌شه؛ به بازدیدکننده‌های بعدی کمک می‌کنه بفهمن این
+  // نظر درباره‌ی کدوم سایز/رنگه (مهم برای پوشاک)
+  variantLabel String?
+  // عکسِ لحظه‌ای از عنوان/عکسِ محصول در لحظه‌ی ثبتِ نظر -- برای مزون از روی
+  // Product قابل join‌شدنه، ولی برای ترندیول محصولِ محلی نداریم (فقط externalId)،
+  // پس کلاینت (که همون لحظه صفحه‌ی محصول رو می‌بینه) می‌فرستدش. تنها مصرفش
+  // «دیوارِ ویدیو»ی صفحه‌ی اصلیه -- تا لازم نباشه به‌ازای هر ویدیو یه فچِ زنده‌ی
+  // ترندیول بزنیم؛ صرفاً نمایشیه، منبعِ واقعیِ قیمت/موجودی هیچ‌وقت این نیست
+  productTitle String?
+  productImage String?
   isApproved Boolean @default(false) // تا وقتی ادمین تایید نکنه، زیر محصول نمایش داده نمی‌شه
   // پاسخ تیم مُداشاپ به نظر (مثل پاسخ فروشنده روی آمازون)
   adminReply String?
@@ -872,13 +958,9 @@ model Review {
 
   user    User     @relation(fields: [userId], references: [id])
   product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
   helpfulVotes ReviewHelpfulVote[]
 
-  // هر دو @@unique زیر با وجود nullable بودن productId/externalId درست کار
-  // می‌کنن، دقیقاً مثل WishlistItem (چندتا NULL توی ایندکس یکتای SQLite/Postgres
-  // با هم تداخل ندارن)
-  @@unique([userId, productId])
-  @@unique([userId, externalId])
   @@map("reviews")
 }
 
@@ -1034,9 +1116,29 @@ model Coupon {
   usedCount      Int        @default(0)
   isActive       Boolean    @default(true)
   expiresAt      DateTime?
+  // نمایشِ این کد به‌صورت یه بجِ تبلیغاتی روی صفحه‌ی محصولاتِ مزون (مثل «با کد
+  // تخفیف X 20% تخفیف بگیر») -- پیش‌فرض خاموش، چون همه‌ی کدهای فعال لزوماً
+  // برای تبلیغِ عمومی نیستن (مثلاً کدِ مخصوصِ یه کمپینِ ایمیلی/معرفی). فقط
+  // مزون چون قیمت/تخفیفِ محصولاتِ خارجی دستِ ما نیست
+  showcaseOnProducts Boolean @default(false)
   createdAt      DateTime   @default(now())
 
   @@map("coupons")
+}
+
+// بک‌استاپِ اتمیکِ کوپنِ FIRST_BUY: قبل از ساختِ تراکنش، تعدادِ سفارش‌های
+// قبلیِ کاربر چک می‌شه، ولی این چک به‌تنهایی در برابرِ دو درخواستِ هم‌زمان
+// امن نیست (هر دو می‌تونن صفر ببینن). پس داخلِ همون تراکنشی که سفارش ساخته
+// می‌شه، یه ردیف اینجا هم درج می‌شه -- userId یکتاست، پس تلاشِ دومِ هم‌زمان
+// با P2002 شکست می‌خوره. با لغوِ سفارش (restoreOrderResources) پاک می‌شه تا
+// «اولین خرید» واقعاً معنیِ سفارشِ لغونشده رو حفظ کنه.
+model FirstBuyClaim {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  orderId   String
+  createdAt DateTime @default(now())
+
+  @@map("first_buy_claims")
 }
 
 enum CouponType {
@@ -1509,10 +1611,16 @@ model ExternalSite {
   // پیش‌فرض TRY چون فعلاً همه‌ی سایت‌های فعال (ترندیول/ترندیول‌میلا) ترکی‌ان
   currency  String   @default("TRY")
   isActive  Boolean  @default(true)
+  // مثل Product.isReturnable ولی برای کالاهای خارجی -- چون این سایت‌ها محصولِ
+  // خودشون توی DB ما ذخیره نمی‌شه، فلگِ مرجوعی روی سطحِ خودِ سایت (نه هر
+  // محصول) تنظیم می‌شه؛ فقط وقتی SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED
+  // روشن باشه معنی داره
+  isReturnable Boolean @default(true)
   createdAt DateTime @default(now())
 
   categoryParams  ExternalSiteCategoryParam[]
   attributeParams ExternalSiteAttributeParam[]
+  orderItems      OrderItem[]
 
   @@map("external_sites")
 }
@@ -1579,4 +1687,21 @@ model UserSession {
   @@unique([userId, deviceId])
   @@index([userId])
   @@map("user_sessions")
+}
+
+// ================= مجله/بلاگ =================
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  excerpt     String? // خلاصه‌ی کوتاه -- توی لیستِ مجله و متاتگِ سئو استفاده می‌شه
+  coverImage  String?
+  body        String // متن کامل -- پاراگراف‌ها با خط خالی (\n\n) جدا می‌شن، مثل بقیه‌ی متن‌های سایت
+  isPublished Boolean   @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("blog_posts")
 }

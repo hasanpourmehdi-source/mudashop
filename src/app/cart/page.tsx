@@ -37,18 +37,31 @@ function TrashIcon({ className }: { className?: string }) {
 }
 
 export default function CartPage() {
-  const { items, removeItem, updateQuantity, total, clear } = useCart();
+  const { items, removeItem, updateQuantity, total, clear, savedForLater, saveForLater, moveToCart, removeSaved } =
+    useCart();
 
   const [couponInput, setCouponInput] = useState("");
   const [cachedTrendyolUrls, setCachedTrendyolUrls] = useState<Record<string, string>>({});
 
+  // distinctProductIds: محصولات منحصر‌به‌فرد برای پیشگیری از fetchِ تکراری
+  // با هر تغییر تعداد (که items عوض میشه ولی productId ثابت می‌مونه)
+  const distinctProductIds = Array.from(new Set(items.map((i) => i.productId))).sort().join(",");
+
   // کش کردن آدرس کامل ترندیول (حتماًslug SEO داره) هر محصول توی سبد
-  // هنگام تغییر لیست محصولات -- از API سرور استفاده می‌کنیم تا Prisma
-  // در بافر مرورگر اجرا نشود (خطای EADDRINUSE / browser environment)
+  // هنگام تغییرِ ترکیبِ محصولات -- POSTِ آیدی‌هایِ فقطِ ترندیول؛
+  // API فقط آن‌ها رو برگردونه (نه کل جدول) + حساسیتِ tie-breaker کاهش می‌یابد
   useEffect(() => {
     async function loadCachedUrls() {
+      const trendyolIds = items.filter((i) => i.source === "TRENDYOL").map((i) => i.productId);
+      if (trendyolIds.length === 0) {
+        setCachedTrendyolUrls({});
+        return;
+      }
       try {
         const res = await fetch("/api/cart/product-urls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contentIds: trendyolIds }),
           cache: "no-store",
         });
         if (res.ok) {
@@ -60,7 +73,7 @@ export default function CartPage() {
       }
     }
     loadCachedUrls();
-  }, [items]);
+  }, [distinctProductIds]);
 
   // لینک صفحه‌ی محصول همین قلمِ سبد -- از کش شده شده URL استفاده می‌کنیم
   // تا slug SEO داشته باشیم و 404 ندهیم
@@ -85,7 +98,6 @@ export default function CartPage() {
 
   // پیشنهاد بر اساس همه‌ی محصولات موجود توی سبد -- فقط وقتی ترکیب محصولات
   // واقعاً عوض بشه دوباره fetch می‌شه، نه با هر تغییر تعداد
-  const distinctProductIds = Array.from(new Set(items.map((i) => i.productId))).sort().join(",");
   useEffect(() => {
     if (!distinctProductIds) {
       setRecommended([]);
@@ -134,7 +146,7 @@ export default function CartPage() {
     setAppliedCouponCode(data.code);
   }
 
-  if (items.length === 0) {
+  if (items.length === 0 && savedForLater.length === 0) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-20 text-center">
         <h1 className="text-xl font-bold mb-2">سبد خرید شما خالی است</h1>
@@ -156,20 +168,34 @@ export default function CartPage() {
       <div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold">سبد خرید</h1>
-          {/* پاک‌کردنِ یکجای کل سبد -- جدا از حذفِ تک‌تک اقلام */}
-          <button
-            onClick={() => {
-              if (confirm("کل سبد خرید حذف شود؟ این کار برگشت‌پذیر نیست.")) {
-                clear();
-                setAppliedCouponCode("");
-              }
-            }}
-            className="flex items-center gap-1.5 text-sm text-red-600 border border-red-200 rounded-full px-4 py-1.5 hover:bg-red-50 transition-colors"
-          >
-            <TrashIcon className="w-4 h-4" />
-            حذف کل سبد
-          </button>
+          {/* پاک‌کردنِ یکجای اقلامِ فعالِ سبد -- جدا از حذفِ تک‌تک اقلام. عمداً
+              savedForLater رو پاک نمی‌کنه (مثلِ آمازون یه لیستِ جداست که کاربر
+              خودش مدیریتش می‌کنه)، پس متن هم باید همین رو صریح بگه، نه «کل سبد» */}
+          {items.length > 0 && (
+            <button
+              onClick={() => {
+                const confirmMessage =
+                  savedForLater.length > 0
+                    ? "همه‌ی اقلامِ سبدِ فعال حذف شوند؟ این کار برگشت‌پذیر نیست (اقلامِ «ذخیره‌شده برای بعد» دست‌نخورده می‌مانند)."
+                    : "همه‌ی اقلامِ سبد حذف شوند؟ این کار برگشت‌پذیر نیست.";
+                if (confirm(confirmMessage)) {
+                  clear();
+                  setAppliedCouponCode("");
+                }
+              }}
+              className="flex items-center gap-1.5 text-sm text-red-600 border border-red-200 rounded-full px-4 py-1.5 hover:bg-red-50 transition-colors"
+            >
+              <TrashIcon className="w-4 h-4" />
+              خالی کردن سبد
+            </button>
+          )}
         </div>
+
+        {items.length === 0 && (
+          <p className="text-sm text-[var(--color-muted)] mb-6">
+            سبدت خالیه -- ولی چیزهایی برای بعد ذخیره کردی، پایین‌تر ببین.
+          </p>
+        )}
 
         <div className="space-y-4">
           {items.map((item) => {
@@ -252,18 +278,74 @@ export default function CartPage() {
                     <span className="text-[10px] text-[var(--color-ochre)]">حداکثر موجودی</span>
                   )}
                 </div>
-                <button
-                  onClick={() => removeItem(item.id)}
-                  aria-label="حذف از سبد"
-                  title="حذف از سبد"
-                  className="text-[var(--color-muted)] hover:text-red-600 p-1"
-                >
-                  <TrashIcon className="w-5 h-5" />
-                </button>
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onClick={() => removeItem(item.id)}
+                    aria-label="حذف از سبد"
+                    title="حذف از سبد"
+                    className="text-[var(--color-muted)] hover:text-red-600 p-1"
+                  >
+                    <TrashIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => saveForLater(item.id)}
+                    className="text-[10px] text-[var(--color-wine)] hover:underline whitespace-nowrap"
+                  >
+                    برای بعد
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
+
+        {savedForLater.length > 0 && (
+          <section className="mt-10 pt-6 border-t cut-line">
+            <h2 className="font-bold mb-4">
+              ذخیره‌شده برای بعد ({savedForLater.length.toLocaleString("fa-IR")})
+            </h2>
+            <div className="space-y-3">
+              {savedForLater.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex gap-4 border cut-line rounded-lg p-3 bg-[var(--color-linen-dim)] items-center"
+                >
+                  <div className="relative w-16 h-16 shrink-0 bg-white rounded overflow-hidden">
+                    {item.image && (
+                      <Image src={item.image} alt={item.title} fill className="object-cover" unoptimized />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{item.title}</p>
+                    {item.variantLabel && (
+                      <p className="text-xs text-[var(--color-muted)]">{item.variantLabel}</p>
+                    )}
+                    <p className="text-sm text-[var(--color-wine)] font-bold mt-1">
+                      {item.price.toLocaleString("fa-IR")} تومان
+                      {item.quantity > 1 && ` × ${item.quantity.toLocaleString("fa-IR")}`}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => moveToCart(item.id)}
+                      className="text-xs font-medium text-white bg-[var(--color-wine)] rounded-full px-3 py-1.5 whitespace-nowrap"
+                    >
+                      بازگشت به سبد
+                    </button>
+                    <button
+                      onClick={() => removeSaved(item.id)}
+                      aria-label="حذف از لیستِ خرید بعدی"
+                      title="حذف"
+                      className="text-[var(--color-muted)] hover:text-red-600 p-1"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {recommended.length > 0 && (
           <section className="mt-10 pt-6 border-t cut-line">
@@ -326,12 +408,18 @@ export default function CartPage() {
           <span className="text-[var(--color-wine)]">{currentTotal.toLocaleString("fa-IR")} تومان</span>
         </div>
 
-        <Link
-          href="/checkout"
-          className="block w-full text-center bg-[var(--color-wine)] text-white py-3 rounded-full font-medium hover:bg-[var(--color-wine-dark)] transition-colors"
-        >
-          تکمیل خرید
-        </Link>
+        {items.length > 0 ? (
+          <Link
+            href="/checkout"
+            className="block w-full text-center bg-[var(--color-wine)] text-white py-3 rounded-full font-medium hover:bg-[var(--color-wine-dark)] transition-colors"
+          >
+            تکمیل خرید
+          </Link>
+        ) : (
+          <p className="text-center text-xs text-[var(--color-muted)]">
+            چیزی توی سبدت نیست -- از لیستِ «ذخیره‌شده برای بعد» یه چیزی برگردون به سبد.
+          </p>
+        )}
 
         <CartProforma
           items={items}

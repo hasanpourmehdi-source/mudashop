@@ -43,6 +43,9 @@ type Product = {
   images: string;
   colorImages: string;
   fastShipping: boolean;
+  isReturnable: boolean;
+  careInstructions: string | null;
+  videoUrl: string | null;
   isActive: boolean;
   categoryId: string;
   category: { name: string };
@@ -133,6 +136,10 @@ export default function AdminProductsPage() {
   const [images, setImages] = useState<string[]>([]);
   const [colorImages, setColorImages] = useState<Record<string, string[]>>({});
   const [fastShipping, setFastShipping] = useState(false);
+  const [isReturnable, setIsReturnable] = useState(true);
+  const [careInstructions, setCareInstructions] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [variantBuilderKey, setVariantBuilderKey] = useState(0); // برای ریست کردن builder بعد از ذخیره
   const [form, setForm] = useState({
     title: "",
@@ -160,6 +167,10 @@ export default function AdminProductsPage() {
   const [editImages, setEditImages] = useState<string[]>([]);
   const [editColorImages, setEditColorImages] = useState<Record<string, string[]>>({});
   const [editFastShipping, setEditFastShipping] = useState(false);
+  const [editIsReturnable, setEditIsReturnable] = useState(true);
+  const [editCareInstructions, setEditCareInstructions] = useState("");
+  const [editVideoUrl, setEditVideoUrl] = useState("");
+  const [editUploadingVideo, setEditUploadingVideo] = useState(false);
   const [editError, setEditError] = useState("");
   const [editCategoryError, setEditCategoryError] = useState(false);
   const [editImagesError, setEditImagesError] = useState(false);
@@ -186,6 +197,18 @@ export default function AdminProductsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  // آپلودِ فایلِ ویدیو -- از همون اندپوینتِ آپلودِ نظرات استفاده می‌کنیم (mp4/webm/mov
+  // رو از قبل پشتیبانی می‌کنه)، چون اندپوینتِ عمومیِ آپلودِ ادمین فقط عکسه
+  async function uploadVideo(file: File, setter: (url: string) => void, setUploading: (v: boolean) => void) {
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/reviews/upload", { method: "POST", body: formData });
+    const data = await res.json();
+    setUploading(false);
+    if (res.ok) setter(data.url);
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -230,6 +253,9 @@ export default function AdminProductsPage() {
         images,
         colorImages,
         fastShipping,
+        isReturnable,
+        careInstructions: careInstructions || undefined,
+        videoUrl: videoUrl || undefined,
         categoryId: form.categoryId,
         variants: variantsPayload.length > 0 ? variantsPayload : undefined,
         specifications: specs.length > 0 ? specs : undefined,
@@ -258,6 +284,9 @@ export default function AdminProductsPage() {
     setImages([]);
     setColorImages({});
     setFastShipping(false);
+    setIsReturnable(true);
+    setCareInstructions("");
+    setVideoUrl("");
     setVariantBuilderKey((k) => k + 1);
     load();
   }
@@ -281,6 +310,9 @@ export default function AdminProductsPage() {
     setEditImages(parseImages(p.images));
     setEditColorImages(parseColorImagesJson(p.colorImages ?? "{}"));
     setEditFastShipping(p.fastShipping);
+    setEditIsReturnable(p.isReturnable);
+    setEditCareInstructions(p.careInstructions ?? "");
+    setEditVideoUrl(p.videoUrl ?? "");
     setEditExistingVariants(p.variants);
     setEditDeletedVariantIds([]);
     setEditNewVariants([]);
@@ -365,6 +397,9 @@ export default function AdminProductsPage() {
         images: editImages,
         colorImages: editColorImages,
         fastShipping: editFastShipping,
+        isReturnable: editIsReturnable,
+        careInstructions: editCareInstructions,
+        videoUrl: editVideoUrl,
         categoryId: editForm.categoryId,
         variantUpdates: variantUpdatesPayload,
         variantDeleteIds: [...editDeletedVariantIds, ...zeroedOutIds],
@@ -549,6 +584,50 @@ editingId === p.id ? (
                   />
                   🚚 ارسال فوری (نمایش بج توی صفحه محصول)
                 </label>
+
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={editIsReturnable}
+                    onChange={(e) => setEditIsReturnable(e.target.checked)}
+                  />
+                  ↩️ قابل مرجوع (اگه تیک برداری، این محصول از قابلیتِ مرجوعیِ سراسری مستثنی می‌شه)
+                </label>
+
+                <div>
+                  <label className="text-xs font-medium block mb-1">نحوه مصرف / نگهداری (اختیاری)</label>
+                  <textarea
+                    value={editCareInstructions}
+                    onChange={(e) => setEditCareInstructions(e.target.value)}
+                    rows={3}
+                    className="w-full border cut-line rounded-lg px-2 py-1.5 text-xs bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium block mb-1">ویدیوی رسمی محصول (اختیاری)</label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="text-xs border cut-line rounded-lg px-3 py-1.5 cursor-pointer hover:border-[var(--color-wine)]">
+                      {editUploadingVideo ? "در حال آپلود..." : editVideoUrl ? "تعویض ویدیو" : "📹 آپلود ویدیو"}
+                      <input
+                        type="file"
+                        accept="video/mp4,video/webm,video/quicktime"
+                        hidden
+                        disabled={editUploadingVideo}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (file) uploadVideo(file, setEditVideoUrl, setEditUploadingVideo);
+                        }}
+                      />
+                    </label>
+                    {editVideoUrl && (
+                      <button type="button" onClick={() => setEditVideoUrl("")} className="text-xs text-red-600 hover:underline">
+                        حذف ویدیو
+                      </button>
+                    )}
+                  </div>
+                </div>
 
                 <SpecificationsEditor specs={editSpecs} onChange={setEditSpecs} />
 
@@ -790,6 +869,51 @@ editingId === p.id ? (
             />
             🚚 ارسال فوری (نمایش بج توی صفحه محصول)
           </label>
+
+          <label className="sm:col-span-2 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={isReturnable}
+              onChange={(e) => setIsReturnable(e.target.checked)}
+            />
+            ↩️ قابل مرجوع (اگه تیک برداری، این محصول از قابلیتِ مرجوعیِ سراسری مستثنی می‌شه)
+          </label>
+
+          <div className="sm:col-span-2">
+            <label className="text-sm font-medium block mb-1">نحوه مصرف / نگهداری (اختیاری)</label>
+            <textarea
+              value={careInstructions}
+              onChange={(e) => setCareInstructions(e.target.value)}
+              placeholder="مثلاً دستور شست‌وشو، یا نحوه‌ی استفاده..."
+              rows={3}
+              className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="text-sm font-medium block mb-1">ویدیوی رسمی محصول (اختیاری)</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs border cut-line rounded-lg px-3 py-1.5 cursor-pointer hover:border-[var(--color-wine)]">
+                {uploadingVideo ? "در حال آپلود..." : videoUrl ? "تعویض ویدیو" : "📹 آپلود ویدیو"}
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime"
+                  hidden
+                  disabled={uploadingVideo}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) uploadVideo(file, setVideoUrl, setUploadingVideo);
+                  }}
+                />
+              </label>
+              {videoUrl && (
+                <button type="button" onClick={() => setVideoUrl("")} className="text-xs text-red-600 hover:underline">
+                  حذف ویدیو
+                </button>
+              )}
+            </div>
+          </div>
 
           <div className="sm:col-span-2">
             <SpecificationsEditor specs={specs} onChange={setSpecs} />

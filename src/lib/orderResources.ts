@@ -38,6 +38,10 @@ export async function restoreOrderResources(tx: Prisma.TransactionClient, order:
       orderId: order.id,
     });
   }
+
+  // اگه این سفارش، ادعای FIRST_BUY رو ثبت کرده بود (src/app/api/orders/route.ts)،
+  // با لغوش اون ادعا هم پاک می‌شه -- کاربر واقعاً هنوز «اولین خرید»ش رو نکرده
+  await tx.firstBuyClaim.deleteMany({ where: { userId: order.userId, orderId: order.id } });
 }
 
 // وقتی ادمین تعداد یه قلم مزون رو توی سفارشِ در انتظار تأیید ویرایش می‌کنه،

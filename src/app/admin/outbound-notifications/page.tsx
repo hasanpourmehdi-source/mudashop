@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { NOTIFICATION_EVENT_LABELS } from "@/lib/outboundNotify";
+import { NOTIFICATION_EVENT_LABELS } from "@/lib/outboundEvents";
 
 type LogRow = {
   id: string;

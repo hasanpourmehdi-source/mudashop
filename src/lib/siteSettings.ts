@@ -4,6 +4,21 @@ import { prisma } from "@/lib/prisma";
 // و یه مقدار پیش‌فرض تعریف می‌کنیم؛ اگه هنوز توی دیتابیس ذخیره نشده باشه، همون پیش‌فرض برمی‌گرده
 export const SITE_SETTING_KEYS = {
   RETURN_POLICY_TEXT: "returnPolicyText",
+  // مراحلِ قابلِ خاموش‌کردنِ چرخه‌ی سفارش -- "true"/"false" (پیش‌فرض false یعنی
+  // رفتارِ فعلی دست‌نخورده می‌مونه، مگر ادمین صراحتاً از تنظیمات روشنش کنه)
+  //  - SKIP_ADMIN_REVIEW: سفارش بدونِ بررسیِ دستیِ ادمین، همون لحظه‌ی ثبت،
+  //    مستقیم برای پرداخت به کارتِ پیش‌فرض (BankCard.isDefault) آماده می‌شه
+  //  - SKIP_PAYMENT_VERIFICATION: به‌محضِ آپلودِ فیش (دورِ اول یا دوم)، خودِ
+  //    سیستم PAID می‌کنه، بدونِ منتظرِ کلیکِ تأییدِ ادمین
+  //  - SKIP_SHIPPING_CALCULATION: هزینه‌ی ارسال (سفارشِ مزون) و باربری
+  //    (سفارشِ خارجی) همیشه صفر حساب می‌شه -- چون قبلاً توی قیمتِ کالا لحاظ شده
+  SKIP_ADMIN_REVIEW: "skipAdminReview",
+  SKIP_PAYMENT_VERIFICATION: "skipPaymentVerification",
+  SKIP_SHIPPING_CALCULATION: "skipShippingCalculation",
+  // هشدارِ موجودیِ کم -- پیش‌فرض خاموش (اختیاری، فقط اگه ادمین بخواد)؛ وقتی
+  // روشنه، به‌ازای هر ترکیبی که موجودیش بین ۱ تا آستانه باشه، ادمین مطلع می‌شه
+  LOW_STOCK_ALERT_ENABLED: "lowStockAlertEnabled",
+  LOW_STOCK_ALERT_THRESHOLD: "lowStockAlertThreshold",
   // آستانه‌های هشدار سفارش‌های گیرکرده (به ساعت) -- هر مرحله دو آستانه دارد:
   // «نیمه‌هشدار» (زرد) و «هشدار» (قرمز)، برای داشبورد ادمین
   ALERT_FIRST_REVIEW_WARN_H: "alertFirstReviewWarnHours",
@@ -30,8 +45,13 @@ export const SITE_SETTING_KEYS = {
   // مهلت پرداخت: از زمان ورود سفارش به «در انتظار پرداخت/تأیید فیش» این ساعت
   // بعد اگر مشتری هنوز واریز نکرده باشد، سفارش به‌صورت خودکار لغو می‌شود
   PAYMENT_DEADLINE_H: "paymentDeadlineHours",
-  // بعد از چند ساعت بی‌حرکتی در سبد خرید (و هنوز سفارش ثبت نشده)، یادآوری فرستاده شود
+  // دنباله‌ی یادآوریِ سبدِ رهاشده -- سه مرحله: STAGE1 (یادآوریِ نرم)، STAGE2
+  // (یادآوریِ فوریت/موجودی)، STAGE3 (دیگه به مشتری پیام نمی‌ره -- به ادمین
+  // اطلاع داده می‌شه که موقعِ تصمیم برای کد تخفیفه). همه بر اساسِ ساعت از
+  // آخرین تغییرِ سبد
   ABANDONED_CART_AFTER_H: "abandonedCartAfterHours",
+  ABANDONED_CART_STAGE2_H: "abandonedCartStage2Hours",
+  ABANDONED_CART_STAGE3_H: "abandonedCartStage3Hours",
   // پاداش کد معرفی -- وقتی اولین سفارشِ پرداخت‌شده‌ی کاربر معرفی‌شده ثبت شود، این مبلغ (تومان) به کیف‌پول معرف اضافه می‌شود
   REFERRAL_REWARD_AMOUNT: "referralRewardAmount",
   // متنِ باکسِ بنفشِ «نرخ ارز روزانه...» روی پوسترِ اینستاگرام -- چند خط با \n جدا می‌شن
@@ -42,6 +62,22 @@ export const SITE_SETTING_KEYS = {
   TERMS_TEXT: "termsText",
   PRIVACY_TEXT: "privacyText",
   FAQ_TEXT: "faqText",
+  // پرداخت در محل -- سراسری خاموش/روشن؛ وقتی روشنه، مشتری موقع چک‌اوت می‌تونه
+  // به‌جای کارت‌به‌کارت، «پرداخت نقدی موقع تحویل» رو انتخاب کنه
+  CASH_ON_DELIVERY_ENABLED: "cashOnDeliveryEnabled",
+  // غیرقابل‌بازگشت‌بودنِ بعضی محصولات -- سراسری خاموش/روشن؛ وقتی خاموشه، فلگِ
+  // Product.isReturnable نادیده گرفته می‌شه و همه‌چیز طبق رفتار قبلی قابل‌مرجوعه
+  NON_RETURNABLE_PRODUCTS_ENABLED: "nonReturnableProductsEnabled",
+  // نوارِ بج‌های اعتماد (پایینِ همه‌ی صفحات) -- ۴ بج ثابت، هرکدوم جدا
+  // روشن/خاموش می‌شه و متنش دلخواهِ ادمینه
+  TRUST_BADGE_1_ENABLED: "trustBadge1Enabled",
+  TRUST_BADGE_1_TEXT: "trustBadge1Text",
+  TRUST_BADGE_2_ENABLED: "trustBadge2Enabled",
+  TRUST_BADGE_2_TEXT: "trustBadge2Text",
+  TRUST_BADGE_3_ENABLED: "trustBadge3Enabled",
+  TRUST_BADGE_3_TEXT: "trustBadge3Text",
+  TRUST_BADGE_4_ENABLED: "trustBadge4Enabled",
+  TRUST_BADGE_4_TEXT: "trustBadge4Text",
 } as const;
 
 export const SITE_SETTING_DEFAULTS: Record<string, string> = {
@@ -59,12 +95,19 @@ export const SITE_SETTING_DEFAULTS: Record<string, string> = {
   [SITE_SETTING_KEYS.ALERT_ADMIN_ITEMS_REVIEW_ALERT_H]: "25",
   [SITE_SETTING_KEYS.ALERT_SHIPPED_TOO_LONG_WARN_H]: "90",
   [SITE_SETTING_KEYS.ALERT_SHIPPED_TOO_LONG_ALERT_H]: "130",
+  [SITE_SETTING_KEYS.SKIP_ADMIN_REVIEW]: "false",
+  [SITE_SETTING_KEYS.SKIP_PAYMENT_VERIFICATION]: "false",
+  [SITE_SETTING_KEYS.SKIP_SHIPPING_CALCULATION]: "false",
+  [SITE_SETTING_KEYS.LOW_STOCK_ALERT_ENABLED]: "false",
+  [SITE_SETTING_KEYS.LOW_STOCK_ALERT_THRESHOLD]: "5",
   [SITE_SETTING_KEYS.ALERT_RETURN_REVIEW_WARN_H]: "30",
   [SITE_SETTING_KEYS.ALERT_RETURN_REVIEW_ALERT_H]: "50",
   [SITE_SETTING_KEYS.CARGO_RATE_PER_KG]: "0",
   [SITE_SETTING_KEYS.REASSURANCE_PING_AFTER_H]: "48",
   [SITE_SETTING_KEYS.PAYMENT_DEADLINE_H]: "48",
   [SITE_SETTING_KEYS.ABANDONED_CART_AFTER_H]: "24",
+  [SITE_SETTING_KEYS.ABANDONED_CART_STAGE2_H]: "72",
+  [SITE_SETTING_KEYS.ABANDONED_CART_STAGE3_H]: "168",
   [SITE_SETTING_KEYS.REFERRAL_REWARD_AMOUNT]: "50000",
   [SITE_SETTING_KEYS.POSTER_CURRENCY_TEXT]: "نرخ ارز روزانه و\nهزینه ارسال هوایی",
   [SITE_SETTING_KEYS.ABOUT_TEXT]:
@@ -75,6 +118,16 @@ export const SITE_SETTING_DEFAULTS: Record<string, string> = {
     "مُداشاپ اطلاعات هویتی (نام، آدرس، شماره تماس) و اطلاعات سفارش شما را فقط برای پردازش و ارسال سفارش، و اطلاع‌رسانی درباره‌ی وضعیت آن استفاده می‌کند.\n\nاین اطلاعات با هیچ شخص ثالثی جز آنچه برای ارسال کالا (شرکت‌های پستی/باربری) لازم است، به اشتراک گذاشته نمی‌شود. رمز عبور حساب شما به‌صورت هش‌شده ذخیره می‌شود و حتی تیم مُداشاپ هم به آن دسترسی ندارد.\n\nدر صورت تمایل به حذف کامل اطلاعات حساب خود، از طریق پشتیبانی با ما در ارتباط باشید.",
   [SITE_SETTING_KEYS.FAQ_TEXT]:
     "س: چطور پرداخت کنم؟\nج: بعد از ثبت سفارش، شماره کارت نمایش داده می‌شود؛ واریز کنید و تصویر رسید را در همان صفحه بارگذاری کنید.\n\nس: خریدهای ترندیول/میلا چقدر طول می‌کشد؟\nج: چون این کالاها بعد از سفارش شما از سایت اصلی خریداری می‌شوند، معمولاً کمی بیشتر از کالاهای مزون طول می‌کشد؛ وضعیت دقیق را در صفحه‌ی سفارش می‌بینید.\n\nس: اگر سایز/رنگ اشتباه بود چه؟\nج: طبق «قوانین مرجوعی»، هزینه‌ی کالا به کیف پول شما بازگردانده می‌شود.\n\nس: کیف پول برای چیست؟\nج: مبلغ رفاندهای شما (لغو، مرجوعی، پاداش معرفی و...) به کیف پول واریز می‌شود و می‌توانید در خریدهای بعدی از آن استفاده کنید یا درخواست برداشت بدهید.",
+  [SITE_SETTING_KEYS.CASH_ON_DELIVERY_ENABLED]: "false",
+  [SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED]: "false",
+  [SITE_SETTING_KEYS.TRUST_BADGE_1_ENABLED]: "false",
+  [SITE_SETTING_KEYS.TRUST_BADGE_1_TEXT]: "ضمانت اصالت کالا",
+  [SITE_SETTING_KEYS.TRUST_BADGE_2_ENABLED]: "false",
+  [SITE_SETTING_KEYS.TRUST_BADGE_2_TEXT]: "ارسال سریع و مطمئن",
+  [SITE_SETTING_KEYS.TRUST_BADGE_3_ENABLED]: "false",
+  [SITE_SETTING_KEYS.TRUST_BADGE_3_TEXT]: "۷ روز فرصت بازگشت کالا",
+  [SITE_SETTING_KEYS.TRUST_BADGE_4_ENABLED]: "false",
+  [SITE_SETTING_KEYS.TRUST_BADGE_4_TEXT]: "ضمانت بازگشت وجه",
 };
 
 export async function getSiteSetting(key: string): Promise<string> {
@@ -90,4 +143,8 @@ export async function getSiteSettings(keys: string[]): Promise<Record<string, st
     result[key] = map.get(key) ?? SITE_SETTING_DEFAULTS[key] ?? "";
   }
   return result;
+}
+
+export async function getSiteSettingBool(key: string): Promise<boolean> {
+  return (await getSiteSetting(key)) === "true";
 }

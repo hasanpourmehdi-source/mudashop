@@ -53,6 +53,8 @@ export default function CheckoutPage() {
   const [addressForm, setAddressForm] = useState(emptyAddressForm);
   const [shippingMethod, setShippingMethod] = useState("");
   const [giftWrap, setGiftWrap] = useState(false);
+  const [cashOnDeliveryEnabled, setCashOnDeliveryEnabled] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"CARD_TRANSFER" | "CASH_ON_DELIVERY">("CARD_TRANSFER");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
@@ -110,6 +112,10 @@ export default function CheckoutPage() {
     fetch("/api/wallet")
       .then((res) => (res.ok ? res.json() : { balance: 0 }))
       .then((data) => setWalletBalance(data.balance ?? 0));
+
+    fetch("/api/settings/public")
+      .then((res) => (res.ok ? res.json() : { cashOnDeliveryEnabled: false }))
+      .then((data) => setCashOnDeliveryEnabled(!!data.cashOnDeliveryEnabled));
 
     // اگه توی صفحه‌ی سبد یه کد تخفیف اعمال شده بود، همون رو این‌جا هم پیش‌فرض
     // پر و اعمال می‌کنیم -- ولی دوباره از سرور اعتبارسنجی می‌شه (ممکنه منقضی شده باشه)
@@ -283,6 +289,7 @@ export default function CheckoutPage() {
         giftWrap,
         couponCode: coupon?.code,
         useWallet: isGuest ? false : useWallet,
+        paymentMethod: cashOnDeliveryEnabled ? paymentMethod : "CARD_TRANSFER",
         items: items.map((i) => ({
           source: i.source,
           productId: i.productId,
@@ -595,6 +602,39 @@ export default function CheckoutPage() {
             {shippingMethod && NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number]) && (
               <p className="text-xs text-green-700 mt-2">
                 هزینه‌ی این روش مستقیم توسط شما به تحویل‌دهنده پرداخت می‌شود — در سایت هزینه‌ای برای ارسال محاسبه نمی‌شود.
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* روش پرداخت -- فقط وقتی ادمین از تنظیمات پرداخت‌درمحل رو روشن کرده نشون داده می‌شه */}
+        {cashOnDeliveryEnabled && (
+          <section>
+            <h2 className="font-bold mb-3">روش پرداخت</h2>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { value: "CARD_TRANSFER", label: "کارت به کارت (آپلود فیش واریزی)" },
+                  { value: "CASH_ON_DELIVERY", label: "پرداخت در محل (نقدی موقع تحویل)" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(opt.value)}
+                  className={`border cut-line rounded-full px-4 py-2 text-sm transition-colors ${
+                    paymentMethod === opt.value
+                      ? "border-[var(--color-wine)] text-[var(--color-wine)] font-medium bg-[var(--color-wine)]/5"
+                      : "bg-white hover:border-[var(--color-wine)]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {paymentMethod === "CASH_ON_DELIVERY" && (
+              <p className="text-xs text-[var(--color-muted)] mt-2">
+                کل مبلغ سفارش (و هزینه ارسال، اگر بود) موقع تحویل کالا به‌صورت نقدی از شما دریافت می‌شود -- نیازی به واریز آنلاین نیست.
               </p>
             )}
           </section>

@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction } from "@/lib/wallet";
-import { PURCHASE_OUTCOME_LABELS as OUTCOME_LABELS, notifyIfAllArrived } from "@/lib/orderPurchaseStatus";
+import {
+  PURCHASE_OUTCOME_LABELS as OUTCOME_LABELS,
+  cascadeCancelIfAllVoided,
+  computePurchaseSummary,
+  notifyIfAllArrived,
+} from "@/lib/orderPurchaseStatus";
+import { autoSettleShippingCostIfEnabled } from "@/lib/orderFinalizePayment";
 import { z } from "zod";
 
 // سایز/رنگ اشتباه یه مغایرته، نه یه خرابیِ قطعی مثل گم‌شدن -- به‌جای رفاندِ
@@ -58,7 +64,7 @@ export async function POST(
   const isProblem = parsed.data.outcome !== "RECEIVED" && !isMismatch;
   const refundAmount = isProblem ? (item.purchasePriceActual ?? item.price) * item.quantity : 0;
 
-  const { allArrivedMessage } = await prisma.$transaction(async (tx) => {
+  const { cascaded, allArrivedMessage } = await prisma.$transaction(async (tx) => {
     const updatedItem = await tx.orderItem.update({
       where: { id: itemId },
       data: {
@@ -100,17 +106,27 @@ export async function POST(
       },
     });
 
-    // مغایرتِ هنوز حل‌نشده یعنی سفارش هنوز کامل نشده -- بررسیِ «همه رسید» فقط
-    // برای نتیجه‌های واقعاً نهایی معنی داره
-    const { message: allArrivedMessage } = isMismatch
-      ? { message: null }
-      : await notifyIfAllArrived(
-          tx,
-          order,
-          order.items.map((i) => (i.id === itemId ? updatedItem : i))
-        );
+    const itemsAfter = order.items.map((i) => (i.id === itemId ? updatedItem : i));
 
-    return { allArrivedMessage };
+    // مغایرتِ هنوز حل‌نشده یعنی سفارش هنوز کامل نشده -- بررسیِ «همه رسید»/لغوِ
+    // کل سفارش فقط برای نتیجه‌های واقعاً نهایی معنی داره (نه AWAITING_CUSTOMER_DECISION)
+    let cascaded = false;
+    let allArrivedMessage: string | null = null;
+    if (!isMismatch) {
+      // اگه این قلم مشکل داشت (LOST/ISSUE_OTHER) و با همین، همه‌ی اقلامِ
+      // خارجیِ یه سفارشِ کاملاً-خارجی به یه نتیجه‌ی رفاندی رسیدن، دیگه هیچی
+      // برای ارسال نمونده -- کل سفارش لغو می‌شه (نه فقط وقتی از همون اول
+      // نشد خرید؛ اینجا دقیقاً همون «مشکل‌دار رسید» ئه که باید لغو حساب بشه)
+      cascaded = await cascadeCancelIfAllVoided(tx, order, itemsAfter);
+      if (!cascaded) {
+        ({ message: allArrivedMessage } = await notifyIfAllArrived(tx, order, itemsAfter));
+        if (computePurchaseSummary(itemsAfter).allArrived) {
+          await autoSettleShippingCostIfEnabled(tx, id);
+        }
+      }
+    }
+
+    return { cascaded, allArrivedMessage };
   });
 
   await prisma.notification.create({
@@ -127,7 +143,15 @@ export async function POST(
     },
   });
 
-  if (allArrivedMessage) {
+  if (cascaded) {
+    await prisma.notification.create({
+      data: {
+        userId: order.userId,
+        message: `همه‌ی اقلام سفارش #${id.slice(-8)} نهایتاً به دستتون نرسید -- سفارش لغو و وجه همه‌ی اقلام بازگشت داده شد`,
+        link: `/orders/${id}`,
+      },
+    });
+  } else if (allArrivedMessage) {
     await prisma.notification.create({
       data: { userId: order.userId, message: allArrivedMessage, link: `/orders/${id}` },
     });

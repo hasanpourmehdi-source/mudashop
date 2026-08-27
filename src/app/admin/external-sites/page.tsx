@@ -27,6 +27,7 @@ type ExternalSite = {
   slug: string;
   baseUrl: string;
   isActive: boolean;
+  isReturnable: boolean;
   categoryParams: CategoryParam[];
   attributeParams: AttributeParam[];
 };
@@ -89,7 +90,7 @@ export default function ExternalSitesAdminPage() {
 
   async function handleUpdateSite(
     id: string,
-    patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive">>
+    patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable">>
   ) {
     const res = await fetch(`/api/admin/external-sites/${id}`, {
       method: "PATCH",
@@ -315,7 +316,7 @@ function SiteCard({
   categories: CategoryOption[];
   attributes: AttributeOption[];
   onDeleteSite: () => void;
-  onUpdateSite: (patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive">>) => void;
+  onUpdateSite: (patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable">>) => void;
   onChanged: () => void;
 }) {
   const [isEditingSite, setIsEditingSite] = useState(false);
@@ -548,6 +549,14 @@ function SiteCard({
                 }`}
               >
                 {site.isActive ? "فعال" : "غیرفعال"}
+              </span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
+                  site.isReturnable ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"
+                }`}
+                title="فقط وقتی از تنظیمات، «محصولات غیرقابل‌بازگشت» روشن باشه اعمال می‌شه"
+              >
+                {site.isReturnable ? "قابل مرجوع" : "غیرقابل مرجوع"}
               </span>
             </div>
             <p className="text-xs text-[var(--color-muted)]" dir="ltr">
@@ -852,6 +861,12 @@ function SiteCard({
               className="text-xs border cut-line rounded-full px-3 py-1 hover:border-[var(--color-wine)]"
             >
               {site.isActive ? "غیرفعال کن" : "فعال کن"}
+            </button>
+            <button
+              onClick={() => onUpdateSite({ isReturnable: !site.isReturnable })}
+              className="text-xs border cut-line rounded-full px-3 py-1 hover:border-[var(--color-wine)]"
+            >
+              {site.isReturnable ? "غیرقابل مرجوع کن" : "قابل مرجوع کن"}
             </button>
             <button onClick={onDeleteSite} className="text-xs text-red-600 hover:underline">
               حذف سایت

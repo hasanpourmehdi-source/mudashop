@@ -43,7 +43,7 @@ describe("recomputeOrderTotals", () => {
 
     expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: "order-1" },
-      data: { subtotal: 2500, total: 2400 },
+      data: { subtotal: 2500, total: 2400, discountTotal: 100 },
     });
   });
 
@@ -53,27 +53,52 @@ describe("recomputeOrderTotals", () => {
 
     expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: "order-1" },
-      data: { subtotal: 2500, total: 2500 - 100 + GIFT_WRAP_COST },
+      data: { subtotal: 2500, total: 2500 - 100 + GIFT_WRAP_COST, discountTotal: 100 },
     });
   });
 
-  it("discountTotal (کوپن) دست‌نخورده می‌ماند", async () => {
+  it("discountTotal (کوپن) دست‌نخورده می‌ماند وقتی هنوز از subtotal جدید کمتره", async () => {
     const tx = makeTx(makeOrder({ discountTotal: 250 }));
     await recomputeOrderTotals(tx as never, "order-1");
 
     expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: "order-1" },
-      data: { subtotal: 2500, total: 2250 },
+      data: { subtotal: 2500, total: 2250, discountTotal: 250 },
     });
   });
 
-  it("اقلام خالی => subtotal و total صفر", async () => {
+  it("رگرسیونِ باگِ واقعی: discountTotal ثابتی که از subtotal جدید (بعد از حذف/کاهش قلم) بیشتره، clamp می‌شه -- total هیچ‌وقت منفی نمی‌مونه", async () => {
+    // دقیقاً همون سناریویی که زنده پیدا شد: کوپن ثابتِ ۹۰,۰۰۰، ادمین قلمِ
+    // گرون‌تر رو حذف می‌کنه، فقط ۵۰,۰۰۰ باقی می‌مونه -- قبل از فیکس total
+    // می‌شد -۴۰,۰۰۰ و سفارش برای همیشه غیرقابل‌پرداخت می‌موند
+    const tx = makeTx(
+      makeOrder({ discountTotal: 90000, items: [{ price: 50000, quantity: 1, orderId: "order-1" }] })
+    );
+    await recomputeOrderTotals(tx as never, "order-1");
+
+    expect(tx.order.update).toHaveBeenCalledWith({
+      where: { id: "order-1" },
+      data: { subtotal: 50000, total: 0, discountTotal: 50000 },
+    });
+  });
+
+  it("اقلام خالی => subtotal و total صفر (discountTotal هم به صفر clamp می‌شه)", async () => {
     const tx = makeTx(makeOrder({ items: [], total: 999 }));
     await recomputeOrderTotals(tx as never, "order-1");
 
     expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: "order-1" },
-      data: { subtotal: 0, total: -100 },
+      data: { subtotal: 0, total: 0, discountTotal: 0 },
+    });
+  });
+
+  it("هزینه‌ی ارسالِ فعلی داخل total حفظ می‌شود (اینورینت finalize)", async () => {
+    const tx = makeTx(makeOrder({ shippingCost: 45000 }));
+    await recomputeOrderTotals(tx as never, "order-1");
+
+    expect(tx.order.update).toHaveBeenCalledWith({
+      where: { id: "order-1" },
+      data: { subtotal: 2500, total: 2400 + 45000, discountTotal: 100 },
     });
   });
 

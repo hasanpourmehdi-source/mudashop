@@ -19,7 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
   REFUNDED: "وجه به کیف پول بازگشت داده شد",
 };
 
-type OrderItemInfo = { id: string; title: string; quantity: number; price: number };
+type OrderItemInfo = { id: string; title: string; quantity: number; price: number; isReturnable: boolean };
 
 type ExistingReturn = {
   status: string;
@@ -166,14 +166,22 @@ export function ReturnRequestSection({
               const sel = selections[item.id];
               return (
                 <div key={item.id} className="border cut-line rounded-lg p-3">
-                  <label className="flex items-center gap-2 text-sm font-medium">
+                  <label
+                    className={`flex items-center gap-2 text-sm font-medium ${
+                      item.isReturnable ? "" : "opacity-50 cursor-not-allowed"
+                    }`}
+                  >
                     <input
                       type="checkbox"
                       checked={sel.checked}
+                      disabled={!item.isReturnable}
                       onChange={(e) => updateSelection(item.id, { checked: e.target.checked })}
                     />
                     {item.title} × {item.quantity}
                   </label>
+                  {!item.isReturnable && (
+                    <p className="text-[11px] text-red-600 mt-1 pr-6">این کالا قابل مرجوع نیست.</p>
+                  )}
                   {sel.checked && (
                     <div className="mt-2 space-y-2 pr-6">
                       <select

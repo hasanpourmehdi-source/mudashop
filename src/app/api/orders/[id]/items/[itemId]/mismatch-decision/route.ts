@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { applyWalletTransaction } from "@/lib/wallet";
-import { PURCHASE_OUTCOME_LABELS, notifyIfAllArrived } from "@/lib/orderPurchaseStatus";
+import {
+  PURCHASE_OUTCOME_LABELS,
+  cascadeCancelIfAllVoided,
+  computePurchaseSummary,
+  notifyIfAllArrived,
+} from "@/lib/orderPurchaseStatus";
+import { autoSettleShippingCostIfEnabled } from "@/lib/orderFinalizePayment";
 import type { OrderItemPurchaseStatus } from "@prisma/client";
 import { z } from "zod";
 
@@ -46,7 +52,7 @@ export async function POST(
   const refundAmount = keep ? 0 : (item.purchasePriceActual ?? item.price) * item.quantity;
   const now = new Date();
 
-  const { allArrivedMessage } = await prisma.$transaction(async (tx) => {
+  const { cascaded, allArrivedMessage } = await prisma.$transaction(async (tx) => {
     const updatedItem = await tx.orderItem.update({
       where: { id: itemId },
       data: {
@@ -76,16 +82,31 @@ export async function POST(
       },
     });
 
-    const { message: allArrivedMessage } = await notifyIfAllArrived(
-      tx,
-      order,
-      order.items.map((i) => (i.id === itemId ? updatedItem : i))
-    );
+    const itemsAfter = order.items.map((i) => (i.id === itemId ? updatedItem : i));
 
-    return { allArrivedMessage };
+    // اگه مشتری رفاند رو انتخاب کرد (نه نگه‌داشتن) و با همین، همه‌ی اقلامِ
+    // خارجیِ یه سفارشِ کاملاً-خارجی به یه نتیجه‌ی رفاندی رسیدن، کل سفارش لغو می‌شه
+    const cascaded = await cascadeCancelIfAllVoided(tx, order, itemsAfter);
+    let allArrivedMessage: string | null = null;
+    if (!cascaded) {
+      ({ message: allArrivedMessage } = await notifyIfAllArrived(tx, order, itemsAfter));
+      if (computePurchaseSummary(itemsAfter).allArrived) {
+        await autoSettleShippingCostIfEnabled(tx, id);
+      }
+    }
+
+    return { cascaded, allArrivedMessage };
   });
 
-  if (allArrivedMessage) {
+  if (cascaded) {
+    await prisma.notification.create({
+      data: {
+        userId: order.userId,
+        message: `همه‌ی اقلام سفارش #${id.slice(-8)} نهایتاً به دستتون نرسید -- سفارش لغو و وجه همه‌ی اقلام بازگشت داده شد`,
+        link: `/orders/${id}`,
+      },
+    });
+  } else if (allArrivedMessage) {
     await prisma.notification.create({
       data: { userId: order.userId, message: allArrivedMessage, link: `/orders/${id}` },
     });

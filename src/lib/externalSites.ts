@@ -764,3 +764,29 @@ export async function getSiteFilterOptions(siteSlug: string): Promise<SiteFilter
     attributeFilters,
   };
 }
+
+// از روی لینکِ واقعیِ محصول (مثلاً trendyol.com یا trendyol-milla.com)، رکوردِ
+// ExternalSiteِ متناظرش رو با مقایسه‌ی دامنه پیدا می‌کنه -- موقعِ ثبتِ سفارش
+// لازمه تا OrderItem.externalSiteId درست پر بشه (برای غیرقابل‌بازگشت‌بودنِ
+// سطح‌سایت). اگه هیچ سایتی با این دامنه مچ نشد null برمی‌گردونه (مثلاً محصول
+// دموی قدیمی که اصلاً URL واقعی نداره)
+export async function resolveExternalSiteIdFromUrl(productUrl: string): Promise<string | null> {
+  let hostname: string;
+  try {
+    hostname = new URL(productUrl).hostname;
+  } catch {
+    return null;
+  }
+  const sites = await prisma.externalSite.findMany({
+    where: { isActive: true },
+    select: { id: true, baseUrl: true },
+  });
+  for (const site of sites) {
+    try {
+      if (new URL(site.baseUrl).hostname === hostname) return site.id;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}

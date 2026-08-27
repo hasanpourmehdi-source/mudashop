@@ -9,6 +9,11 @@ import { GIFT_WRAP_COST, NO_COST_SHIPPING_METHODS, SHIPPING_METHODS, calculateSh
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { UserFacingError } from "@/lib/errors";
+import { finalizeItemsPayment } from "@/lib/orderFinalizePayment";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { resolveExternalSiteIdFromUrl } from "@/lib/externalSites";
+import { rateLimitOrNull, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 // محصولات دموی قدیمی (Fake Store API) فقط ۲۰ تا محصول دارن (id های ۱ تا ۲۰)؛
@@ -47,6 +52,9 @@ const orderSchema = z.object({
   giftWrap: z.boolean().default(false),
   couponCode: z.string().optional(),
   useWallet: z.boolean().default(false),
+  // فقط وقتی CASH_ON_DELIVERY_ENABLED روشنه معتبره -- وگرنه سرور نادیده
+  // می‌گیرتش (پایین‌تر) و همون کارت‌به‌کارتِ پیش‌فرض اعمال می‌شه
+  paymentMethod: z.enum(["CARD_TRANSFER", "CASH_ON_DELIVERY"]).default("CARD_TRANSFER"),
   // فقط برای خریدِ مهمان (بدون لاگین) لازمن
   guestName: z.string().min(2).optional(),
   guestEmail: z.string().email().optional(),
@@ -68,6 +76,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const limited = rateLimitOrNull(req, "ORDER_CREATE");
+  if (limited) {
+    return NextResponse.json(
+      { error: RATE_LIMIT_MESSAGE(limited.retryAfterSeconds) },
+      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
+    );
+  }
+
   const session = await auth();
 
   const body = await req.json();
@@ -79,8 +95,22 @@ export async function POST(req: Request) {
     );
   }
 
-  const { items, addressId, newAddress, shippingMethod, giftWrap, couponCode, useWallet, guestName, guestEmail, guestPhone } =
+  const { items, addressId, newAddress, shippingMethod, giftWrap, couponCode, useWallet, paymentMethod, guestName, guestEmail, guestPhone } =
     parsed.data;
+
+  // اگه ادمین از تنظیمات پرداخت‌درمحل رو خاموش کرده ولی کلاینت (مثلاً تب قدیمی
+  // باز مونده) هنوز CASH_ON_DELIVERY فرستاده، بی‌سروصدا به کارت‌به‌کارت
+  // برمی‌گردیم -- نه خطا، چون این یه انتخابِ نمایشیه نه چیزی که مشتری اونو
+  // «خراب» کرده باشه
+  const resolvedPaymentMethod =
+    paymentMethod === "CASH_ON_DELIVERY" && (await getSiteSettingBool(SITE_SETTING_KEYS.CASH_ON_DELIVERY_ENABLED))
+      ? "CASH_ON_DELIVERY"
+      : "CARD_TRANSFER";
+
+  // خریدِ مهمان دفترچه‌ی کیف‌پول ندارد (بدون لاگین موجودی‌ای برای اعمال وجود
+  // ندارد) -- finalizeItemsPayment عملاً همیشه صفر محاسبه می‌کند، ولی ذخیره‌ی
+  // useWalletRequested=true روی سفارشِ مهمان گمراه‌کننده است؛ بی‌سروصدا false می‌شود
+  const resolvedUseWallet = session?.user?.id ? useWallet : false;
 
   // خریدِ مهمان: بدون لاگین هم می‌شه سفارش ثبت کرد، ولی فقط با newAddress (نه
   // آدرسِ ذخیره‌شده -- مهمان دفترچه‌ی آدرس ندارد) و نام/ایمیل/تلفن. یه کاربرِ
@@ -153,6 +183,7 @@ export async function POST(req: Request) {
     productId: string | null;
     variantId: string | null;
     externalId: string | null;
+    externalSiteId: string | null;
     flashSaleId: string | null;
     source: "MAZON" | "TRENDYOL";
     title: string;
@@ -176,24 +207,39 @@ export async function POST(req: Request) {
         );
       }
 
-      let priceDiff = 0;
-      let variant = null;
-      if (item.variantId) {
-        variant = product.variants.find((v) => v.id === item.variantId) ?? null;
-        if (!variant) {
-          return NextResponse.json(
-            { error: "ترکیب انتخابی نامعتبر است" },
-            { status: 400 }
-          );
-        }
-        if (variant.stock < item.quantity) {
-          return NextResponse.json(
-            { error: `موجودی «${product.title}» کافی نیست` },
-            { status: 400 }
-          );
-        }
-        priceDiff = variant.priceDiff;
+      // موجودی فقط روی ProductVariant نگه‌داری می‌شه (Product خودش فیلد stock
+      // نداره) -- پس اگه محصول حتی یه ترکیب هم داشته باشه، انتخابِ ترکیب
+      // (variantId) الزامیه؛ وگرنه کل بلوکِ چکِ موجودی زیر (هم اینجا هم چکِ
+      // اتمیکِ داخل تراکنش) رد می‌شه و می‌شه با هر تعدادی، بدون کم‌شدنِ هیچ
+      // موجودی‌ای، سفارش ثبت کرد. محصولی که اصلاً ترکیبی نداره (طبق قراردادِ
+      // همین پروژه توی ساختِ محصول: «عدم وجودِ ترکیب یعنی عدم موجودی») هم
+      // ذاتاً قابل‌فروش نیست -- چیزی برای کم‌کردن ازش وجود نداره
+      if (product.variants.length === 0) {
+        return NextResponse.json(
+          { error: `محصول «${product.title}» موجود نیست` },
+          { status: 400 }
+        );
       }
+      if (!item.variantId) {
+        return NextResponse.json(
+          { error: `لطفاً ترکیب (سایز/رنگ) «${product.title}» را انتخاب کنید` },
+          { status: 400 }
+        );
+      }
+      const variant = product.variants.find((v) => v.id === item.variantId) ?? null;
+      if (!variant) {
+        return NextResponse.json(
+          { error: "ترکیب انتخابی نامعتبر است" },
+          { status: 400 }
+        );
+      }
+      if (variant.stock < item.quantity) {
+        return NextResponse.json(
+          { error: `موجودی «${product.title}» کافی نیست` },
+          { status: 400 }
+        );
+      }
+      const priceDiff = variant.priceDiff;
 
       // اگه flashSaleId ارسال شده، فعال بودنش رو خودمون از DB تأیید می‌کنیم (نه از کلاینت)
       let effectiveDiscount = product.discount;
@@ -235,6 +281,7 @@ export async function POST(req: Request) {
         productId: product.id,
         variantId: variant?.id ?? null,
         externalId: null,
+        externalSiteId: null,
         flashSaleId: resolvedFlashSaleId,
         source: "MAZON",
         title: product.title,
@@ -256,6 +303,9 @@ export async function POST(req: Request) {
         productId: null,
         variantId: null,
         externalId: item.productId,
+        // دموی قدیمی (Fake Store API) هیچ لینکِ واقعیِ ترندیول/میلا‌ای نداره،
+        // پس سایتش قابل‌تشخیص نیست -- null یعنی «نامشخص»، نه یه سایتِ خاص
+        externalSiteId: null,
         flashSaleId: null,
         source: "TRENDYOL",
         title: trendyolProduct.title,
@@ -303,6 +353,7 @@ export async function POST(req: Request) {
         productId: null,
         variantId: null,
         externalId: item.productId,
+        externalSiteId: await resolveExternalSiteIdFromUrl(trendyolUrl),
         flashSaleId: null,
         source: "TRENDYOL",
         title: detail.nameFa,
@@ -337,7 +388,7 @@ export async function POST(req: Request) {
   // اعتبارسنجی سرور-ساید کوپن (شبیه به /api/coupons/validate ولی مستقل، چون این نقطه مصرف واقعیه)
   let discountTotal = 0;
   let freeShipping = false;
-  let resolvedCoupon: { id: string; code: string; maxUses: number | null } | null = null;
+  let resolvedCoupon: { id: string; code: string; maxUses: number | null; type: string } | null = null;
 
   if (couponCode) {
     const coupon = await prisma.coupon.findUnique({
@@ -374,7 +425,7 @@ export async function POST(req: Request) {
     } else if (coupon.type === "FREE_SHIP") {
       freeShipping = true;
     }
-    resolvedCoupon = { id: coupon.id, code: coupon.code, maxUses: coupon.maxUses };
+    resolvedCoupon = { id: coupon.id, code: coupon.code, maxUses: coupon.maxUses, type: coupon.type };
   }
 
   // هزینه ارسال برای سفارش‌های فقط-مزون همین‌جا قابل محاسبه‌ست: روش‌های
@@ -387,7 +438,13 @@ export async function POST(req: Request) {
     const isNoCostMethod = NO_COST_SHIPPING_METHODS.includes(
       validatedShippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number]
     );
-    resolvedShippingCost = freeShipping || isNoCostMethod ? 0 : calculateShipping(subtotal);
+    // توگلِ «هزینه‌ی ارسال از قبل توی قیمت کالا لحاظ شده» -- اگه روشنه، اینجا
+    // نباید هیچ ارسالی روی total گذاشته بشه (وگرنه finalizeItemsPayment مسیر
+    // خودش صفرش می‌کنه ولی این مقدارِ از قبل پخته‌شده توی total می‌مونه و
+    // مشتری یه‌بار اضافه پرداخت می‌کنه)
+    const skipShippingCalculation = await getSiteSettingBool(SITE_SETTING_KEYS.SKIP_SHIPPING_CALCULATION);
+    resolvedShippingCost =
+      freeShipping || isNoCostMethod || skipShippingCalculation ? 0 : calculateShipping(subtotal);
   }
 
   const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
@@ -441,7 +498,8 @@ export async function POST(req: Request) {
           shippingCost: resolvedShippingCost,
           shippingMethod: validatedShippingMethod,
           freeShippingApplied: freeShipping,
-          useWalletRequested: useWallet,
+          useWalletRequested: resolvedUseWallet,
+          paymentMethod: resolvedPaymentMethod,
           discountTotal,
           total,
           giftWrap,
@@ -457,6 +515,7 @@ export async function POST(req: Request) {
               productId: i.productId,
               variantId: i.variantId,
               externalId: i.externalId,
+              externalSiteId: i.externalSiteId,
               flashSaleId: i.flashSaleId,
               source: i.source,
               title: i.title,
@@ -474,20 +533,66 @@ export async function POST(req: Request) {
         data: { orderId: createdOrder.id, status: "PENDING", note: "سفارش توسط مشتری ثبت شد" },
       });
 
+      // بک‌استاپِ اتمیکِ FIRST_BUY: چکِ previousOrders بالا خارج از تراکنش بود و
+      // در برابر دو درخواستِ هم‌زمان امن نیست (هر دو می‌تونن صفر ببینن). این ردیف
+      // چون userId یکتاست، تلاشِ دومِ هم‌زمان رو با شکستِ کل تراکنش رد می‌کنه
+      if (resolvedCoupon?.type === "FIRST_BUY") {
+        try {
+          await tx.firstBuyClaim.create({ data: { userId, orderId: createdOrder.id } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+            throw new UserFacingError("این کد فقط برای اولین خرید معتبر است");
+          }
+          throw err;
+        }
+      }
+
+      // سفارش با موفقیت ثبت شد -- دیگه «رهاشده» نیست، عکسِ لحظه‌ایِ سبد رو پاک
+      // کن. باید همراهِ خودِ سفارش اتمیک باشه، وگرنه اگه بعد از کامیت یه خطای
+      // جدا رخ بده، سبدِ سفارش‌شده هنوز به‌عنوانِ «رهاشده» می‌مونه و مشتری یه
+      // یادآوریِ نابه‌جا می‌گیره برای چیزی که قبلاً سفارش داده
+      if (session?.user?.id) {
+        await tx.cartSnapshot.deleteMany({ where: { userId: session.user.id } });
+      }
+
       return createdOrder;
     });
 
-    // هر سفارش تازه باید ادمین رو برای بررسی/تعیین هزینه ارسال خبر کنه (چون
-    // paymentStatus همیشه PENDING شروع می‌شه، دیگه شرطی نداره)
+    // اگه «تأییدِ اولیه‌ی ادمین» از تنظیمات خاموشه، همون‌جا (بدونِ منتظرِ باز
+    // کردنِ دستیِ سفارش توسط ادمین) نهایی‌سازیِ دورِ اولِ پرداخت رو با کارتِ
+    // پیش‌فرض انجام می‌دیم -- دقیقاً همون کاری که finalize-shipping دستی انجام
+    // می‌ده. اگه به هر دلیلی نشد (مثلاً هیچ کارتِ پیش‌فرضی تنظیم نشده)، بی‌سروصدا
+    // به همون مسیرِ عادیِ «منتظرِ بررسیِ ادمین» برمی‌گرده -- مشتری هیچ‌وقت به‌خاطرِ
+    // یه تنظیمِ ناقص، وسطِ خرید گیر نمی‌کنه
+    let autoFinalized = false;
+    if (await getSiteSettingBool(SITE_SETTING_KEYS.SKIP_ADMIN_REVIEW)) {
+      const result = await finalizeItemsPayment(order.id, {});
+      if (result.ok) {
+        await prisma.order.update({ where: { id: order.id }, data: { status: "PROCESSING" } });
+        await prisma.orderStatusHistory.create({
+          data: {
+            orderId: order.id,
+            status: "PROCESSING",
+            note: "سفارش بدونِ نیاز به بررسیِ دستیِ ادمین، خودکار پردازش شد",
+          },
+        });
+        autoFinalized = true;
+      }
+    }
+
+    // هر سفارش تازه باید ادمین رو برای بررسی/تعیین هزینه ارسال خبر کنه، مگر
+    // این‌که همین الان خودکار نهایی شده باشه (اون‌وقت چیزی برای بررسی نمونده)
     {
       const shortId = order.id.slice(-8);
-      await notifyAdminsOnce(
-        `سفارش جدید #${shortId}`,
-        `سفارش جدید #${shortId} توسط ${customerName || customerEmail}${session?.user?.id ? "" : " (خریدِ مهمان)"} ثبت شد -- مبلغ ${order.total.toLocaleString(
-          "fa-IR"
-        )} تومان ${order.shippingCost === null ? "(هزینه ارسال/باربری بعد از وزن‌کشی اعلام می‌شود)" : "(شامل هزینه ارسال)"}. برای بررسی، نهایی‌سازی و تخصیص شماره کارت به پنل سفارش‌ها مراجعه کنید.`,
-        `/admin/orders/${order.id}`
-      );
+      if (!autoFinalized) {
+        await notifyAdminsOnce(
+          `سفارش جدید #${shortId}`,
+          `سفارش جدید #${shortId} توسط ${customerName || customerEmail}${session?.user?.id ? "" : " (خریدِ مهمان)"} ثبت شد -- مبلغ ${order.total.toLocaleString(
+            "fa-IR"
+          )} تومان ${order.shippingCost === null ? "(هزینه ارسال/باربری بعد از وزن‌کشی اعلام می‌شود)" : "(شامل هزینه ارسال)"}. برای بررسی، نهایی‌سازی و تخصیص شماره کارت به پنل سفارش‌ها مراجعه کنید.`,
+          `/admin/orders/${order.id}`
+        );
+      }
       await notifyCustomerOutbound({
         userId: order.userId,
         eventType: "ORDER_CREATED",
@@ -496,12 +601,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // سفارش با موفقیت ثبت شد -- دیگه «رهاشده» نیست، عکسِ لحظه‌ایِ سبد رو پاک کن
-    if (session?.user?.id) {
-      await prisma.cartSnapshot.deleteMany({ where: { userId: session.user.id } });
-    }
-
-    return NextResponse.json(order, { status: 201 });
+    const responseOrder = autoFinalized
+      ? ((await prisma.order.findUnique({ where: { id: order.id }, include: { items: true } })) ?? order)
+      : order;
+    return NextResponse.json(responseOrder, { status: 201 });
   } catch (err) {
     console.error(err);
     const message =

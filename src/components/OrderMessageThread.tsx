@@ -11,30 +11,51 @@ type Message = {
 
 // گفت‌وگوی مستقیم درباره‌ی سفارش -- همون کامپوننت هم توی صفحه‌ی سفارش مشتری
 // هم توی صفحه‌ی سفارش ادمین استفاده می‌شه؛ فقط viewerRole تعیین می‌کنه پیام‌های
-// خودش سمت راست باشن یا چپ
-export function OrderMessageThread({ orderId, viewerRole }: { orderId: string; viewerRole: "CUSTOMER" | "ADMIN" }) {
+// خودش سمت راست باشن یا چپ. با دادنِ itemId، به‌جای گفت‌وگوی کلیِ سفارش، به
+// رشته‌ی توضیحاتِ مخصوصِ همون قلم محدود می‌شه (compact=true یعنی جمع‌شده شروع
+// بشه، فقط با کلیک باز بشه -- برای این‌که لیستِ اقلام شلوغ نشه)
+export function OrderMessageThread({
+  orderId,
+  viewerRole,
+  itemId,
+  title,
+  compact,
+}: {
+  orderId: string;
+  viewerRole: "CUSTOMER" | "ADMIN";
+  itemId?: string;
+  title?: string;
+  compact?: boolean;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(!compact);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function load() {
-    fetch(`/api/orders/${orderId}/messages`)
+    const qs = itemId ? `?itemId=${itemId}` : "";
+    fetch(`/api/orders/${orderId}/messages${qs}`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data: Message[]) => setMessages(data))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setLoaded(true);
+      });
   }
 
   useEffect(() => {
+    if (compact && !open) return;
     load();
     pollRef.current = setInterval(load, 15000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderId]);
+  }, [orderId, itemId, open]);
 
   async function handleSend() {
     if (!text.trim()) return;
@@ -43,7 +64,7 @@ export function OrderMessageThread({ orderId, viewerRole }: { orderId: string; v
     const res = await fetch(`/api/orders/${orderId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text.trim() }),
+      body: JSON.stringify({ message: text.trim(), itemId }),
     });
     setSending(false);
     if (!res.ok) {
@@ -55,9 +76,32 @@ export function OrderMessageThread({ orderId, viewerRole }: { orderId: string; v
     load();
   }
 
+  if (compact && !open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="text-[11px] text-[var(--color-wine)] hover:underline"
+      >
+        {title ?? "توضیحات"} {loaded && messages.length > 0 ? `(${messages.length.toLocaleString("fa-IR")})` : ""}
+      </button>
+    );
+  }
+
+  const Wrapper = compact ? "div" : "section";
+
   return (
-    <section className="mb-8 border cut-line rounded-lg p-4 bg-white">
-      <h2 className="font-bold text-sm mb-3">گفت‌وگو درباره‌ی این سفارش</h2>
+    <Wrapper
+      id={itemId ? `item-note-${itemId}` : undefined}
+      className={compact ? "border cut-line rounded-lg p-3 bg-[var(--color-linen-dim)]" : "mb-8 border cut-line rounded-lg p-4 bg-white"}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={compact ? "font-bold text-xs" : "font-bold text-sm"}>{title ?? "گفت‌وگو درباره‌ی این سفارش"}</h2>
+        {compact && (
+          <button onClick={() => setOpen(false)} className="text-[11px] text-[var(--color-muted)] hover:underline">
+            بستن
+          </button>
+        )}
+      </div>
 
       {loading ? (
         <p className="text-xs text-[var(--color-muted)]">در حال بارگذاری...</p>
@@ -106,6 +150,6 @@ export function OrderMessageThread({ orderId, viewerRole }: { orderId: string; v
           {sending ? "..." : "ارسال"}
         </button>
       </div>
-    </section>
+    </Wrapper>
   );
 }

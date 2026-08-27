@@ -1,11 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
 
-export async function GET() {
+const schema = z.object({
+  contentIds: z.array(z.string().min(1)).max(200),
+});
+
+export async function POST(req: Request) {
   try {
-    // کلاینت‌های adjacent (مثلidebar/سیل) ممکن است فقط contentId داشته باشند.
-    // این endpoint فقط آدرس‌های کش شده رو برگردارد تا Cart page بتواند لینک درست بسازه.
+    const body = await req.json();
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ urlMap: {} }, { status: 400 });
+    }
+
+    const { contentIds } = parsed.data;
+    if (contentIds.length === 0) {
+      return NextResponse.json({ urlMap: {} });
+    }
+
     const rows = await prisma.trendyolProductUrlCache.findMany({
+      where: { contentId: { in: contentIds } },
       select: { contentId: true, url: true },
     });
     const urlMap = rows.reduce((acc, { contentId, url }) => {

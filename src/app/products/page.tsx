@@ -153,6 +153,8 @@ export default async function ProductsPage({
         return a.price - b.price;
       case "price_desc":
         return b.price - a.price;
+      case "discount":
+        return b.discount - a.discount;
       case "popular":
         return (popularity[b.id] ?? 0) - (popularity[a.id] ?? 0);
       case "most_viewed":

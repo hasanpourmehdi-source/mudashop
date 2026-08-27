@@ -122,8 +122,12 @@ export async function POST(
   }
   const remainder = totalCost - walletOffset;
 
+  // پرداخت‌درمحل: باقی‌مانده هم نقدی موقع تحویل گرفته می‌شه -- نه کارتی لازمه نه
+  // منتظرِ فیش می‌مونیم، درست مثلِ اینکه از قبل صفر بوده
+  const isCashOnDelivery = order.paymentMethod === "CASH_ON_DELIVERY";
+
   let assignedCard: { cardNumber: string; shebaNumber: string | null; holderName: string } | null = null;
-  if (remainder > 0) {
+  if (remainder > 0 && !isCashOnDelivery) {
     if (!bankCardId) {
       return NextResponse.json(
         { error: "چون مبلغی باید دریافت شود، یک کارت بانکی انتخاب کنید" },
@@ -136,7 +140,7 @@ export async function POST(
     }
   }
 
-  const paidNow = remainder <= 0;
+  const paidNow = remainder <= 0 || isCashOnDelivery;
   // اگه اختلاف قیمت خرید باعث شد مشتری کلاً بستانکار باشه (totalCost منفی)،
   // نیازی به کارت نیست -- مستقیم به کیف‌پول برمی‌گرده (این جدا از walletOffset
   // بالاست -- اون کسر از موجودیِ از قبل موجود بود، این‌جا برعکس، اضافه‌کردنه)
@@ -214,12 +218,18 @@ export async function POST(
         note:
           refundToWallet > 0
             ? `هزینه ارسال/باربری با لحاظ اختلاف قیمت خرید تسویه شد -- ${refundToWallet.toLocaleString("fa-IR")} تومان به کیف پول مشتری بازگشت داده شد`
-            : walletOffset > 0 && paidNow
+            : walletOffset > 0 && remainder <= 0
             ? `هزینه ارسال/باربری (${totalCost.toLocaleString("fa-IR")} تومان) کامل از موجودی کیف پول مشتری کسر شد -- نیازی به پرداخت جدید نیست`
+            : walletOffset > 0 && isCashOnDelivery
+            ? `از هزینه ارسال/باربری (${totalCost.toLocaleString("fa-IR")} تومان)، ${walletOffset.toLocaleString(
+                "fa-IR"
+              )} تومان از کیف پول مشتری کسر شد و ${remainder.toLocaleString("fa-IR")} تومان باقی‌مانده پرداخت‌درمحل است`
             : walletOffset > 0
             ? `از هزینه ارسال/باربری (${totalCost.toLocaleString("fa-IR")} تومان)، ${walletOffset.toLocaleString(
                 "fa-IR"
               )} تومان از کیف پول مشتری کسر شد و ${remainder.toLocaleString("fa-IR")} تومان باقی‌مانده برای پرداخت ارسال شد`
+            : isCashOnDelivery && remainder > 0
+            ? `هزینه ارسال/باربری (${remainder.toLocaleString("fa-IR")} تومان) پرداخت‌درمحل است -- موقع تحویل نقدی دریافت می‌شود`
             : paidNow
             ? "هزینه ارسال/باربری صفر تعیین شد"
             : "هزینه ارسال و باربری توسط ادمین تعیین و برای پرداخت مشتری ارسال شد",
@@ -295,14 +305,22 @@ export async function POST(
       message:
         refundToWallet > 0
           ? `هزینه ارسال/باربری سفارش خارجی #${shortId} با لحاظ اختلاف قیمت خرید تسویه شد -- ${refundToWallet.toLocaleString("fa-IR")} تومان به کیف پول شما بازگشت داده شد.`
-          : walletOffset > 0 && paidNow
+          : walletOffset > 0 && remainder <= 0
           ? `هزینه ارسال/باربری سفارش خارجی #${shortId} مبلغ ${totalCost.toLocaleString("fa-IR")} تومان بود که کامل از موجودی کیف پول شما کسر شد -- نیازی به واریز نیست. سفارش شما «${shippingPaymentStatusLabel("PAID")}» قرار گرفت.`
+          : walletOffset > 0 && isCashOnDelivery
+          ? `هزینه ارسال/باربری سفارش خارجی #${shortId} مبلغ ${totalCost.toLocaleString("fa-IR")} تومان بود؛ ${walletOffset.toLocaleString(
+              "fa-IR"
+            )} تومان از موجودی کیف پول شما کسر شد و ${remainder.toLocaleString(
+              "fa-IR"
+            )} تومان باقی‌مانده رو موقع تحویل نقدی پرداخت می‌کنید.`
           : walletOffset > 0
           ? `هزینه ارسال/باربری سفارش خارجی #${shortId} مبلغ ${totalCost.toLocaleString("fa-IR")} تومان بود؛ ${walletOffset.toLocaleString(
               "fa-IR"
             )} تومان از موجودی کیف پول شما کسر شد و ${remainder.toLocaleString(
               "fa-IR"
             )} تومان باقی‌مانده رو باید واریز کنید -- برای پرداخت وارد صفحه‌ی سفارش خود شوید.`
+          : isCashOnDelivery && remainder > 0
+          ? `هزینه ارسال سفارش خارجی #${shortId} مبلغ ${remainder.toLocaleString("fa-IR")} تومان تعیین شد -- چون پرداخت‌درمحل انتخاب کرده‌اید، موقع تحویل نقدی دریافت می‌شود.`
           : paidNow
           ? `هزینه ارسال سفارش خارجی #${shortId} صفر تعیین شد -- سفارش شما «${shippingPaymentStatusLabel("PAID")}» قرار گرفت.`
           : `هزینه ارسال سفارش خارجی #${shortId} مشخص شد -- سفارش شما «${shippingPaymentStatusLabel("AWAITING_PAYMENT")}»ست، برای پرداخت وارد صفحه‌ی سفارش خود شوید.`,

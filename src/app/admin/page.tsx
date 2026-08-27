@@ -10,6 +10,7 @@ import {
 import { sendDueReassurancePings } from "@/lib/reassurancePing";
 import { runPaymentDeadlineAutoCancel } from "@/lib/orderPaymentDeadline";
 import { runAbandonedCartReminders } from "@/lib/abandonedCart";
+import { checkLowStockAndAlert } from "@/lib/lowStockAlert";
 
 function formatHours(h: number): string {
   if (h < 24) return `${Math.floor(h).toLocaleString("fa-IR")} ساعت`;
@@ -57,6 +58,8 @@ export default async function AdminDashboard() {
   const deadlineResult = await runPaymentDeadlineAutoCancel(now);
   // یادآوریِ سبدِ رهاشده -- به همون دلیل (پروژه cron ندارد) از همین‌جا صدا زده می‌شود
   await runAbandonedCartReminders(now);
+  // هشدارِ موجودیِ کم -- اختیاری (از تنظیمات روشن/خاموش می‌شه)، همون‌جا خودش چک می‌کنه
+  await checkLowStockAndAlert();
 
   const alerted = openOrders
     .map((o) => ({ order: o, alert: computeOrderAlert(o as AlertableOrder, thresholds, now) }))

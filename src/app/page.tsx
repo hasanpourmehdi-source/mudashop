@@ -18,6 +18,10 @@ import { PhotoReviewsShowcase } from "@/components/PhotoReviewsShowcase";
 import { RecentlyViewedSection } from "@/components/RecentlyViewedSection";
 import { HorizontalScroller } from "@/components/HorizontalScroller";
 import { fetchRecommendedForYou } from "@/lib/recommend";
+import { fetchVideoWallItems } from "@/lib/videoWall";
+import { VideoWallSection } from "@/components/VideoWallSection";
+import { fetchTrendyolTopDiscounts } from "@/lib/trendyolTopDiscounts";
+import { TrendyolTopDiscountsSection } from "@/components/TrendyolTopDiscountsSection";
 
 export default async function Home() {
   const session = await auth();
@@ -33,6 +37,8 @@ export default async function Home() {
     photoReviews,
     personalCategories,
     recommended,
+    videoWallItems,
+    trendyolTopDiscounts,
   ] = await Promise.all([
     fetchMazonProducts(),
     prisma.category.findMany({ orderBy: { name: "asc" }, take: 8 }),
@@ -47,6 +53,8 @@ export default async function Home() {
     fetchPopularPhotoReviews(),
     fetchPersonalCategories(session?.user?.id),
     fetchRecommendedForYou(session?.user?.id, 10),
+    fetchVideoWallItems(),
+    fetchTrendyolTopDiscounts("trendyol"),
   ]);
 
   // پرفروش‌ترین‌ها -- بر اساس تعداد واقعی خرید هر محصول (نه تصادفی)
@@ -278,8 +286,11 @@ export default async function Home() {
           اول یک محصولِ خاص، مستقیم وارد لیستِ کاملِ محصولاتِ یک کمپین شود */}
       <TrendyolCampaignsShowcase campaigns={trendyolCampaigns} isAdmin={isAdmin} />
 
+      <TrendyolTopDiscountsSection products={trendyolTopDiscounts} siteLabel="ترندیول" />
+
       {/* نظرات عکس‌دار محبوب */}
       <PhotoReviewsShowcase reviews={photoReviews} />
+      <VideoWallSection items={videoWallItems} />
 
       {/* محصولات ویژه */}
       <section className="max-w-[1600px] mx-auto px-4 py-8">

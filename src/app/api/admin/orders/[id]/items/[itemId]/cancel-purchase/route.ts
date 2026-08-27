@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction } from "@/lib/wallet";
-import { computePurchaseSummary, notifyIfAllArrived } from "@/lib/orderPurchaseStatus";
+import { cascadeCancelIfAllVoided, computePurchaseSummary, notifyIfAllArrived } from "@/lib/orderPurchaseStatus";
+import { autoSettleShippingCostIfEnabled } from "@/lib/orderFinalizePayment";
 import { z } from "zod";
 
 const schema = z.object({
@@ -50,7 +51,7 @@ export async function POST(
   const refundAmount = item.price * item.quantity;
   const now = new Date();
 
-  const { summary, allArrivedMessage } = await prisma.$transaction(async (tx) => {
+  const { summary, cascaded, allArrivedMessage } = await prisma.$transaction(async (tx) => {
     const updatedItem = await tx.orderItem.update({
       where: { id: itemId },
       data: { purchaseStatus: "CANCELLED", purchaseNote: parsed.data.reason, purchaseResolvedAt: now },
@@ -68,7 +69,6 @@ export async function POST(
 
     const items = order.items.map((i) => (i.id === itemId ? updatedItem : i));
     const summary = computePurchaseSummary(items);
-    const wholeOrderIsExternalOnly = order.items.every((i) => i.source === "TRENDYOL");
 
     await tx.orderStatusHistory.create({
       data: {
@@ -78,40 +78,29 @@ export async function POST(
       },
     });
 
+    // اگه با همین کنسلی، همه‌ی اقلامِ خارجیِ یه سفارشِ کاملاً-خارجی به یه
+    // نتیجه‌ی رفاندی رسیدن (نه فقط CANCELLED فاز-۱، بلکه شامل LOST/مغایرتِ
+    // رفاندشده‌ی فاز-۲ اقلامِ دیگه‌ی همین سفارش هم می‌شه)، کل سفارش لغو می‌شه
+    const cascaded = await cascadeCancelIfAllVoided(tx, order, items);
+
     let allArrivedMessage: string | null = null;
-    if (wholeOrderIsExternalOnly && summary.allCancelled) {
-      if (order.couponCode) {
-        await tx.coupon.updateMany({
-          where: { code: order.couponCode, usedCount: { gt: 0 } },
-          data: { usedCount: { decrement: 1 } },
-        });
-      }
-      await tx.order.update({ where: { id }, data: { status: "CANCELLED" } });
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId: id,
-          status: "CANCELLED",
-          // همون عبارت دقیقِ fallback مربوطه توی OrderTracking.tsx رو عمداً
-          // این‌جا هم تکرار می‌کنیم (نه یه فرمول‌بندیِ نزدیک ولی متفاوت) --
-          // وگرنه مشتری برای دقیقاً همون اتفاق، دو متن متفاوت می‌بینه بسته به
-          // اینکه سفارش کلاً خارجی بوده یا کالای مزون هم داشته
-          note: "هیچ‌کدوم از اقلام قابل خریداری‌شدن نبودن -- کل سفارش لغو شد",
-        },
-      });
-    } else {
+    if (!cascaded) {
       // اگه این کنسلی دقیقاً آخرین قلمِ باقی‌مونده بود (بقیه قبلاً به نتیجه‌ی
       // نهایی رسیده بودن)، مشتری باید بفهمه بررسی همه‌ی اقلام تموم شده
       ({ message: allArrivedMessage } = await notifyIfAllArrived(tx, order, items));
+      if (summary.allArrived) {
+        await autoSettleShippingCostIfEnabled(tx, id);
+      }
     }
 
-    return { summary, allArrivedMessage };
+    return { summary, cascaded, allArrivedMessage };
   });
 
   await prisma.notification.create({
     data: {
       userId: order.userId,
-      message: summary.allCancelled
-        ? `متأسفانه هیچ‌کدوم از اقلام سفارش #${id.slice(-8)} قابل خریداری‌شدن نبودن -- سفارش لغو و وجه بازگشت داده شد`
+      message: cascaded
+        ? `متأسفانه هیچ‌کدوم از اقلام سفارش #${id.slice(-8)} نهایتاً به دستتون نرسید -- سفارش لغو و وجه همه‌ی اقلام بازگشت داده شد`
         : `متأسفانه یکی از اقلام سفارش #${id.slice(-8)} قابل خریداری‌شدن نبود و وجهش بازگشت داده شد (${summary.purchased} از ${summary.total} کالا خریداری شد)`,
       link: `/orders/${id}`,
     },

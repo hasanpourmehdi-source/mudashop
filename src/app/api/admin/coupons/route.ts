@@ -10,6 +10,7 @@ const couponSchema = z.object({
   minOrderAmount: z.number().int().min(0, "حداقل مبلغ سفارش نمی‌تواند منفی باشد").default(0),
   maxUses: z.number().int().positive("حداکثر تعداد استفاده باید مثبت باشد").nullable().optional(),
   expiresAt: z.string().datetime().nullable().optional(),
+  showcaseOnProducts: z.boolean().optional(),
 });
 
 export async function GET() {

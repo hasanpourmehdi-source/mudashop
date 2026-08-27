@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { z } from "zod";
 
 const RETURN_WINDOW_DAYS = 7;
@@ -41,7 +42,15 @@ export async function POST(
 
   const order = await prisma.order.findUnique({
     where: { id },
-    include: { returnRequest: true, items: true },
+    include: {
+      returnRequest: true,
+      items: {
+        include: {
+          product: { select: { isReturnable: true } },
+          externalSite: { select: { isReturnable: true } },
+        },
+      },
+    },
   });
 
   // IDOR-safe: فقط صاحب سفارش می‌تونه براش درخواست مرجوعی بده
@@ -75,9 +84,24 @@ export async function POST(
   }
 
   const orderItemsById = new Map(order.items.map((i) => [i.id, i]));
+  const nonReturnableProductsEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED);
   for (const item of parsed.data.items) {
-    if (!orderItemsById.has(item.orderItemId)) {
+    const orderItem = orderItemsById.get(item.orderItemId);
+    if (!orderItem) {
       return NextResponse.json({ error: "کالای انتخاب‌شده متعلق به این سفارش نیست" }, { status: 400 });
+    }
+    // دو سطحِ جدا: اقلامِ مزون فلگِ خودِ محصول، اقلامِ ترندیول فلگِ سطحِ سایتِ
+    // خارجی‌شون (ترندیول/میلا ممکنه هرکدوم قانونِ مرجوعیِ متفاوتی داشته باشن).
+    // اگه سایتِ اون قلم نامشخص باشه (مثلاً دموی قدیمی)، محافظه‌کارانه رد نمی‌شه
+    const isNonReturnable =
+      nonReturnableProductsEnabled &&
+      ((orderItem.source === "MAZON" && orderItem.product?.isReturnable === false) ||
+        (orderItem.source === "TRENDYOL" && orderItem.externalSite?.isReturnable === false));
+    if (isNonReturnable) {
+      return NextResponse.json(
+        { error: `کالای «${orderItem.title}» قابل مرجوع نیست` },
+        { status: 400 }
+      );
     }
   }
 

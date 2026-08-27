@@ -54,6 +54,7 @@ describe("restoreOrderResources -- بازگردانی منابع رزروشده 
         },
       },
       walletTransaction: { create: async () => undefined },
+      firstBuyClaim: { deleteMany: async () => undefined },
     } as unknown as Prisma.TransactionClient;
 
     await restoreOrderResources(
@@ -87,6 +88,7 @@ describe("restoreOrderResources -- بازگردانی منابع رزروشده 
         },
       },
       walletTransaction: { create: async () => undefined },
+      firstBuyClaim: { deleteMany: async () => undefined },
     } as unknown as Prisma.TransactionClient;
 
     await restoreOrderResources(tx, orderLike(makeOrder({ couponCode: "WELCOME10", items: [] })));
@@ -105,6 +107,7 @@ describe("restoreOrderResources -- بازگردانی منابع رزروشده 
       flashSale: { update: async () => undefined },
       coupon: { updateMany: async () => ({ count: 0 }) },
       walletTransaction: { create: async () => undefined },
+      firstBuyClaim: { deleteMany: async () => undefined },
     } as unknown as Prisma.TransactionClient;
 
     await restoreOrderResources(tx, orderLike(makeOrder({ walletUsed: 250_000, couponCode: null, items: [] })));
@@ -125,6 +128,7 @@ describe("restoreOrderResources -- بازگردانی منابع رزروشده 
       flashSale: { update: async () => void updates++ },
       coupon: { updateMany: async () => ({ count: 0 }) },
       walletTransaction: { create: async () => undefined },
+      firstBuyClaim: { deleteMany: async () => undefined },
     } as unknown as Prisma.TransactionClient;
 
     await restoreOrderResources(tx, orderLike(makeOrder({})));

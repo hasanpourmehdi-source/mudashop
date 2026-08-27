@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
-import { shippingPaymentStatusLabel } from "@/lib/orderStatusMessages";
+import { approveShippingPayment } from "@/lib/orderPaymentApproval";
 import { z } from "zod";
 
 const schema = z.object({
@@ -43,41 +43,38 @@ export async function POST(
     return NextResponse.json({ error: "لطفاً دلیل رد پرداخت را بنویسید" }, { status: 400 });
   }
 
-  const now = new Date();
-  const updated = await prisma.shippingPayment.update({
-    where: { orderId: id },
-    data: parsed.data.action === "approve" ? { status: "PAID", paidAt: now } : { status: "FAILED" },
-  });
-
   if (parsed.data.action === "approve") {
-    const latestShippingEvent = await prisma.orderPaymentEvent.findFirst({
-      where: { orderId: id, round: "shipping", paidAt: null },
-      orderBy: { assignedAt: "desc" },
-    });
-    if (latestShippingEvent) {
-      await prisma.orderPaymentEvent.update({ where: { id: latestShippingEvent.id }, data: { paidAt: now } });
-    }
+    await approveShippingPayment(id);
+    const updated = await prisma.shippingPayment.findUniqueOrThrow({ where: { orderId: id } });
+    return NextResponse.json(updated);
   }
 
+  // گاردِ همزمانی: چکِ بالا روی خواندنِ اولیه‌ست، نه اتمیک -- اگه یه ادمینِ
+  // دیگه هم‌زمان approve کنه (که atomic guard داره، orderPaymentApproval.ts)،
+  // بدونِ این updateMany این‌جا بی‌قیدوشرط ردیفِ تازه‌PAIDشده رو FAILED می‌کرد
+  const claimed = await prisma.shippingPayment.updateMany({
+    where: { orderId: id, status: "AWAITING_VERIFICATION" },
+    data: { status: "FAILED" },
+  });
+  if (claimed.count === 0) {
+    return NextResponse.json(
+      { error: "این پرداخت قبلاً توسط ادمینِ دیگری بررسی/تأیید شده است" },
+      { status: 409 }
+    );
+  }
+  const updated = await prisma.shippingPayment.findUniqueOrThrow({ where: { orderId: id } });
   await prisma.orderStatusHistory.create({
     data: {
       orderId: id,
       status: shippingPayment.order.status,
-      note:
-        parsed.data.action === "approve"
-          ? "فیش هزینه ارسال/باربری توسط ادمین تأیید شد"
-          : `فیش هزینه ارسال/باربری رد شد توسط ادمین -- ${reason}`,
+      note: `فیش هزینه ارسال/باربری رد شد توسط ادمین -- ${reason}`,
     },
   });
-
   const shortId = id.slice(-8);
   await prisma.notification.create({
     data: {
       userId: shippingPayment.order.userId,
-      message:
-        parsed.data.action === "approve"
-          ? `فیش هزینه ارسال سفارش #${shortId} تأیید شد -- سفارش شما «${shippingPaymentStatusLabel("PAID")}» قرار گرفت.`
-          : `فیش هزینه ارسال سفارش #${shortId} تأیید نشد. لطفاً منتظر تعیین مجدد هزینه توسط ادمین باشید.`,
+      message: `فیش هزینه ارسال سفارش #${shortId} تأیید نشد. لطفاً منتظر تعیین مجدد هزینه توسط ادمین باشید.`,
       link: `/orders/${id}`,
     },
   });

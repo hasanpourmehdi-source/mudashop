@@ -14,6 +14,7 @@ type Coupon = {
   usedCount: number;
   isActive: boolean;
   expiresAt: string | null;
+  showcaseOnProducts: boolean;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -32,6 +33,7 @@ export default function AdminCouponsPage() {
     minOrderAmount: "0",
     maxUses: "",
     expiresAt: "",
+    showcaseOnProducts: false,
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -44,6 +46,7 @@ export default function AdminCouponsPage() {
     minOrderAmount: "0",
     maxUses: "",
     expiresAt: "",
+    showcaseOnProducts: false,
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -71,6 +74,7 @@ export default function AdminCouponsPage() {
         minOrderAmount: Number(form.minOrderAmount) || 0,
         maxUses: form.maxUses ? Number(form.maxUses) : null,
         expiresAt: form.expiresAt || null,
+        showcaseOnProducts: form.showcaseOnProducts,
       }),
     });
     const data = await res.json();
@@ -81,7 +85,7 @@ export default function AdminCouponsPage() {
       return;
     }
 
-    setForm({ code: "", type: "PERCENT", value: "10", minOrderAmount: "0", maxUses: "", expiresAt: "" });
+    setForm({ code: "", type: "PERCENT", value: "10", minOrderAmount: "0", maxUses: "", expiresAt: "", showcaseOnProducts: false });
     load();
   }
 
@@ -90,6 +94,15 @@ export default function AdminCouponsPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive: !isActive }),
+    });
+    load();
+  }
+
+  async function toggleShowcase(id: string, showcaseOnProducts: boolean) {
+    await fetch(`/api/admin/coupons/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ showcaseOnProducts: !showcaseOnProducts }),
     });
     load();
   }
@@ -109,6 +122,7 @@ export default function AdminCouponsPage() {
       minOrderAmount: String(c.minOrderAmount),
       maxUses: c.maxUses ? String(c.maxUses) : "",
       expiresAt: c.expiresAt ?? "",
+      showcaseOnProducts: c.showcaseOnProducts,
     });
     setEditError("");
   }
@@ -126,6 +140,7 @@ export default function AdminCouponsPage() {
         minOrderAmount: Number(editForm.minOrderAmount) || 0,
         maxUses: editForm.maxUses ? Number(editForm.maxUses) : null,
         expiresAt: editForm.expiresAt || null,
+        showcaseOnProducts: editForm.showcaseOnProducts,
       }),
     });
     const data = await res.json();
@@ -198,6 +213,14 @@ export default function AdminCouponsPage() {
             placeholder="تاریخ انقضا (اختیاری)"
             className="border cut-line rounded-lg px-3 py-2 bg-white w-full text-sm"
           />
+          <label className="sm:col-span-2 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.showcaseOnProducts}
+              onChange={(e) => setForm({ ...form, showcaseOnProducts: e.target.checked })}
+            />
+            نمایش این کد به‌عنوان بج تبلیغاتی روی صفحه‌ی محصولاتِ مزون
+          </label>
 
           {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
 
@@ -279,6 +302,14 @@ export default function AdminCouponsPage() {
                     className="border cut-line rounded-lg px-3 py-1.5 text-sm w-full"
                   />
                 </div>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={editForm.showcaseOnProducts}
+                    onChange={(e) => setEditForm({ ...editForm, showcaseOnProducts: e.target.checked })}
+                  />
+                  نمایش این کد به‌عنوان بج تبلیغاتی روی صفحه‌ی محصولاتِ مزون
+                </label>
                 {editError && <p className="text-xs text-red-600">{editError}</p>}
                 <div className="flex gap-2">
                   <button
@@ -318,6 +349,15 @@ export default function AdminCouponsPage() {
                     }`}
                   >
                     {c.isActive ? "فعال" : "غیرفعال"}
+                  </button>
+                  <button
+                    onClick={() => toggleShowcase(c.id, c.showcaseOnProducts)}
+                    title="نمایش به‌عنوان بج تبلیغاتی روی صفحه‌ی محصولاتِ مزون"
+                    className={`text-xs font-bold px-2 py-1 rounded-full ${
+                      c.showcaseOnProducts ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {c.showcaseOnProducts ? "نمایش‌داده‌شده روی محصولات" : "نمایش روی محصولات خاموش"}
                   </button>
                   <button onClick={() => startEdit(c)} className="text-[var(--color-wine)] hover:underline">
                     ویرایش

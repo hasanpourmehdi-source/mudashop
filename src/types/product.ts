@@ -28,6 +28,13 @@ export type UnifiedProduct = {
   // علاقه‌مندی از صفحه‌ی wishlist هم بتونه (در صورت نیاز) دوباره اضافه کنه
   sourceUrl?: string;
   fastShipping?: boolean; // بج «ارسال فوری» -- فقط محصولات مزون معنی داره
+  isReturnable?: boolean; // فقط محصولات مزون معنی داره -- undefined/true یعنی قابل‌مرجوع
+  careInstructions?: string | null; // فقط مزون
+  videoUrl?: string | null; // فقط مزون
+  // مجموع موجودیِ همه‌ی ترکیب‌ها -- فقط مزون، چون موجودیِ واقعیِ ترندیول رو
+  // نداریم (فیلدِ product_quantity خودِ ترندیول هم غیرقابل‌اعتماده، جزئیاتش
+  // توی products/trendyol/[slug]/page.tsx توضیح داده شده)
+  totalStock?: number;
   colorImages?: Record<string, string[]>; // مقدار رنگ -> عکس‌های اختصاصی همون رنگ (فقط مزون)
   flashSale?: {
     id: string;

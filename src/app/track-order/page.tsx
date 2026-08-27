@@ -7,6 +7,7 @@ import { OrderTracking, type OrderTrackingData } from "@/components/OrderTrackin
 type TrackedOrder = Omit<OrderTrackingData, "items"> & {
   total: number;
   trackingCode: string | null;
+  paymentAuthority: string | null;
   items: {
     source: string;
     purchaseStatus: string;
@@ -102,6 +103,14 @@ function TrackOrderForm() {
 
       {order && (
         <div className="space-y-4">
+          {order.paymentStatus === "AWAITING_PAYMENT" && order.paymentAuthority && (
+            <a
+              href={`/payment/bank-transfer/${order.paymentAuthority}`}
+              className="block text-center bg-[var(--color-wine)] text-white px-5 py-3 rounded-full text-sm font-medium"
+            >
+              پرداخت و ارسال فیش واریزی
+            </a>
+          )}
           <OrderTracking initialOrder={order} disablePolling />
           <div className="border cut-line rounded-xl p-5 bg-white space-y-2">
             <h2 className="font-bold text-sm">اقلام سفارش</h2>

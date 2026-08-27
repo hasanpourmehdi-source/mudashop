@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Prisma } from "@prisma/client";
 import {
+  cascadeCancelIfAllVoided,
   computePurchaseSummary,
   notifyIfAllArrived,
   PURCHASE_OUTCOME_LABELS,
@@ -48,6 +49,99 @@ describe("computePurchaseSummary", () => {
     expect(computePurchaseSummary([tr("RECEIVED"), tr("LOST")]).allArrived).toBe(true);
     expect(computePurchaseSummary([tr("PURCHASED"), tr("RECEIVED")]).allArrived).toBe(false);
     expect(computePurchaseSummary([tr("AWAITING_CUSTOMER_DECISION"), tr("RECEIVED")]).allArrived).toBe(false);
+  });
+
+  it("allVoided فقط وقتی همه‌ی اقلام یه نتیجه‌ی رفاندی داشته باشن -- یه RECEIVED کافیه که false بشه", () => {
+    expect(computePurchaseSummary([tr("CANCELLED"), tr("LOST")]).allVoided).toBe(true);
+    expect(computePurchaseSummary([tr("CANCELLED"), tr("WRONG_SIZE"), tr("ISSUE_OTHER")]).allVoided).toBe(true);
+    expect(computePurchaseSummary([tr("CANCELLED"), tr("RECEIVED")]).allVoided).toBe(false);
+    expect(computePurchaseSummary([tr("LOST"), tr("PURCHASED")]).allVoided).toBe(false);
+    expect(computePurchaseSummary([tr("LOST"), tr("AWAITING_CUSTOMER_DECISION")]).allVoided).toBe(false);
+    expect(computePurchaseSummary([]).allVoided).toBe(false);
+  });
+});
+
+describe("cascadeCancelIfAllVoided -- رگرسیونِ باگِ واقعی: سفارشی که تنها قلمش گم/مغایرت‌دار شد برای همیشه معلق نمی‌ماند", () => {
+  function fakeTx() {
+    const orderUpdates: unknown[] = [];
+    const historyNotes: string[] = [];
+    const couponUpdates: unknown[] = [];
+    const tx = {
+      order: {
+        update: async (args: unknown) => {
+          orderUpdates.push(args);
+          return undefined;
+        },
+      },
+      orderStatusHistory: {
+        create: async (args: { data: { note: string } }) => {
+          historyNotes.push(args.data.note);
+          return undefined;
+        },
+      },
+      coupon: {
+        updateMany: async (args: unknown) => {
+          couponUpdates.push(args);
+          return undefined;
+        },
+      },
+    } as unknown as Prisma.TransactionClient;
+    return { tx, orderUpdates, historyNotes, couponUpdates };
+  }
+
+  it("سفارشِ کاملاً-خارجی که همه‌ی اقلامش رفاندی شدن (نه فقط CANCELLED فاز-۱، شاملِ LOST هم) لغو می‌شه", async () => {
+    const { tx, orderUpdates, historyNotes } = fakeTx();
+    const cancelled = await cascadeCancelIfAllVoided(
+      tx,
+      { id: "order-1", status: "PROCESSING", couponCode: null },
+      [tr("LOST"), tr("WRONG_SIZE")]
+    );
+    expect(cancelled).toBe(true);
+    expect(orderUpdates).toEqual([{ where: { id: "order-1" }, data: { status: "CANCELLED" } }]);
+    expect(historyNotes[0]).toContain("لغو شد");
+  });
+
+  it("اگه حداقل یه قلم RECEIVED باشه (چیزی برای ارسال مونده)، سفارش لغو نمی‌شه", async () => {
+    const { tx, orderUpdates } = fakeTx();
+    const cancelled = await cascadeCancelIfAllVoided(
+      tx,
+      { id: "order-1", status: "PROCESSING", couponCode: null },
+      [tr("LOST"), tr("RECEIVED")]
+    );
+    expect(cancelled).toBe(false);
+    expect(orderUpdates).toHaveLength(0);
+  });
+
+  it("سفارشِ مختلط (مزون+خارجی) حتی وقتی همه‌ی اقلامِ خارجی رفاندی شدن، لغو نمی‌شه (کالای مزون هنوز باید ارسال بشه)", async () => {
+    const { tx, orderUpdates } = fakeTx();
+    const cancelled = await cascadeCancelIfAllVoided(
+      tx,
+      { id: "order-1", status: "PROCESSING", couponCode: null },
+      [tr("LOST"), mazon("PENDING")]
+    );
+    expect(cancelled).toBe(false);
+    expect(orderUpdates).toHaveLength(0);
+  });
+
+  it("کوپن رو هم برمی‌گردونه اگه سفارش کوپن داشته", async () => {
+    const { tx, couponUpdates } = fakeTx();
+    await cascadeCancelIfAllVoided(tx, { id: "order-1", status: "PROCESSING", couponCode: "SAVE10" }, [
+      tr("CANCELLED"),
+    ]);
+    expect(couponUpdates).toEqual([
+      { where: { code: "SAVE10", usedCount: { gt: 0 } }, data: { usedCount: { decrement: 1 } } },
+    ]);
+  });
+
+  it("سفارشی که از قبل CANCELLED بوده دوباره لغو/دستکاری نمی‌شه (idempotent)", async () => {
+    const { tx, orderUpdates } = fakeTx();
+    const cancelled = await cascadeCancelIfAllVoided(
+      tx,
+      { id: "order-1", status: "CANCELLED", couponCode: null },
+      [tr("LOST")]
+    );
+    expect(cancelled).toBe(false);
+    expect(orderUpdates).toHaveLength(0);
   });
 });
 

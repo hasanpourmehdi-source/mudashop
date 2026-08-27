@@ -97,6 +97,7 @@ export function SearchBox({ mobile = false }: { mobile?: boolean }) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => hasResults && setOpen(true)}
           placeholder="جستجوی محصول، دسته‌بندی یا برند..."
+          aria-label="جستجوی محصول، دسته‌بندی یا برند"
           className={`w-full border cut-line rounded-full pr-11 pl-4 text-sm bg-[var(--color-linen-dim)] focus:bg-white transition-colors ${
             mobile ? "py-2" : "py-2.5"
           }`}

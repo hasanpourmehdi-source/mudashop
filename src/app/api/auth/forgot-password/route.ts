@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { rateLimitOrNull, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 const schema = z.object({
   email: z.string().email("ایمیل معتبر نیست"),
@@ -10,6 +11,14 @@ const schema = z.object({
 const TOKEN_TTL_MS = 60 * 60 * 1000; // ۱ ساعت
 
 export async function POST(req: Request) {
+  const limited = rateLimitOrNull(req, "FORGOT_PASSWORD");
+  if (limited) {
+    return NextResponse.json(
+      { error: RATE_LIMIT_MESSAGE(limited.retryAfterSeconds) },
+      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
+    );
+  }
+
   const body = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

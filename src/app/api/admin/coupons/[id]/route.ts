@@ -11,6 +11,7 @@ const updateSchema = z.object({
   maxUses: z.number().int().positive("حداکثر تعداد استفاده باید مثبت باشد").nullable().optional(),
   expiresAt: z.string().datetime().nullable().optional(),
   isActive: z.boolean().optional(),
+  showcaseOnProducts: z.boolean().optional(),
 });
 
 export async function PATCH(

@@ -9,6 +9,7 @@ type BankCard = {
   holderName: string;
   label: string | null;
   isActive: boolean;
+  isDefault: boolean;
 };
 
 // شماره کارت رو همیشه به فرمت گروه‌های ۴تایی جدا با خط‌تیره نگه می‌داره (مثلاً
@@ -92,6 +93,17 @@ export default function AdminBankCardsPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive: !card.isActive }),
+    });
+    load();
+  }
+
+  // فقط وقتی «تأییدِ اولیه‌ی سفارش» از تنظیمات خاموشه معنا داره -- سیستم
+  // خودش بدونِ دخالتِ ادمین این کارت رو برای مشتری‌های جدید تخصیص می‌ده
+  async function makeDefault(card: BankCard) {
+    await fetch(`/api/admin/bank-cards/${card.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isDefault: true }),
     });
     load();
   }
@@ -256,16 +268,33 @@ export default function AdminBankCardsPage() {
                   {card.holderName}
                   {card.label && ` · ${card.label}`}
                 </p>
-                <button
-                  onClick={() => toggleActive(card)}
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    card.isActive
-                      ? "bg-green-100 text-green-700"
-                      : "bg-[var(--color-linen-dim)] text-[var(--color-muted)]"
-                  }`}
-                >
-                  {card.isActive ? "فعال" : "غیرفعال"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleActive(card)}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      card.isActive
+                        ? "bg-green-100 text-green-700"
+                        : "bg-[var(--color-linen-dim)] text-[var(--color-muted)]"
+                    }`}
+                  >
+                    {card.isActive ? "فعال" : "غیرفعال"}
+                  </button>
+                  {card.isDefault ? (
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-ochre)] text-[var(--color-ink)]"
+                      title="وقتی «تأییدِ اولیه‌ی سفارش» خاموشه، سیستم این کارت رو خودکار تخصیص می‌ده"
+                    >
+                      کارتِ پیش‌فرض
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => makeDefault(card)}
+                      className="text-[10px] text-[var(--color-muted)] hover:underline"
+                    >
+                      پیش‌فرض کن
+                    </button>
+                  )}
+                </div>
               </div>
             )
           )}

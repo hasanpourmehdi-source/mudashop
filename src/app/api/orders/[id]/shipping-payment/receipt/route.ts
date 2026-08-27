@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
+import { approveShippingPayment } from "@/lib/orderPaymentApproval";
+import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import { fileMatchesDeclaredType } from "@/lib/fileSignature";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -60,8 +63,12 @@ export async function POST(
   const uploadsDir = path.join(process.cwd(), "public", "uploads", "receipts");
   await mkdir(uploadsDir, { recursive: true });
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (!fileMatchesDeclaredType(buffer, file.type)) {
+    return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
+  }
+
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   await writeFile(path.join(uploadsDir, filename), buffer);
 
   const receiptUrl = `/uploads/receipts/${filename}`;
@@ -79,14 +86,18 @@ export async function POST(
     data: { orderId: id, status: order.status, note: "فیش هزینه ارسال/باربری توسط مشتری ارسال شد" },
   });
 
-  const shortId = order.id.slice(-8);
-  await notifyAdminsOnce(
-    `فیش هزینه ارسال سفارش #${shortId}`,
-    `فیش هزینه ارسال سفارش #${shortId} توسط ${order.user.name ?? order.user.email} ارسال شد -- مبلغ ${order.shippingPayment.amount.toLocaleString(
-      "fa-IR"
-    )} تومان. برای بررسی به پنل سفارش‌ها مراجعه کنید.`,
-    "/admin/orders"
-  );
+  if (await getSiteSettingBool(SITE_SETTING_KEYS.SKIP_PAYMENT_VERIFICATION)) {
+    await approveShippingPayment(id);
+  } else {
+    const shortId = order.id.slice(-8);
+    await notifyAdminsOnce(
+      `فیش هزینه ارسال سفارش #${shortId}`,
+      `فیش هزینه ارسال سفارش #${shortId} توسط ${order.user.name ?? order.user.email} ارسال شد -- مبلغ ${order.shippingPayment.amount.toLocaleString(
+        "fa-IR"
+      )} تومان. برای بررسی به پنل سفارش‌ها مراجعه کنید.`,
+      "/admin/orders"
+    );
+  }
 
   return NextResponse.json({ success: true, orderId: order.id });
 }

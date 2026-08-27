@@ -11,13 +11,15 @@ export function ProductGallery({
   images,
   title,
   colorImages,
+  videoUrl,
 }: {
   images: string[];
   title: string;
   colorImages?: Record<string, string[]>;
+  videoUrl?: string | null;
 }) {
   const { selectedColor } = useColorSync();
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState<number | "video">(0);
   const [isZooming, setIsZooming] = useState(false);
   const [lensPos, setLensPos] = useState({ x: 50, y: 50 }); // درصد -- مرکز مربع لنز
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,7 +34,8 @@ export function ProductGallery({
     setActive(0);
   }, [colorSpecificImages]);
 
-  const current = activeImages[active] ?? activeImages[0];
+  const isVideoActive = active === "video";
+  const current = isVideoActive ? undefined : activeImages[active as number] ?? activeImages[0];
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -56,13 +59,17 @@ export function ProductGallery({
     <div className="max-w-[440px] mx-auto md:mx-0">
       <div
         ref={containerRef}
-        className="relative aspect-[3/4] bg-[var(--color-linen-dim)] rounded-xl overflow-hidden cursor-zoom-in"
-        onMouseEnter={() => setIsZooming(true)}
+        className={`relative aspect-[3/4] bg-[var(--color-linen-dim)] rounded-xl overflow-hidden ${
+          isVideoActive ? "" : "cursor-zoom-in"
+        }`}
+        onMouseEnter={() => !isVideoActive && setIsZooming(true)}
         onMouseLeave={() => setIsZooming(false)}
         onMouseMove={handleMouseMove}
       >
-        {current && (
-          <Image src={current} alt={title} fill className="object-contain" unoptimized priority />
+        {isVideoActive && videoUrl ? (
+          <video src={videoUrl} controls className="absolute inset-0 w-full h-full object-contain" />
+        ) : (
+          current && <Image src={current} alt={title} fill className="object-contain" unoptimized priority />
         )}
 
         {/* مربع لنز -- فقط توی دسکتاپ، همون‌جا روی خود عکس */}
@@ -98,7 +105,7 @@ export function ProductGallery({
         />
       )}
 
-      {activeImages.length > 1 && (
+      {(activeImages.length > 1 || videoUrl) && (
         <div className="flex gap-2 mt-3 overflow-x-auto">
           {activeImages.map((src, i) => (
             <button
@@ -112,6 +119,18 @@ export function ProductGallery({
               <Image src={src} alt="" fill className="object-cover" unoptimized />
             </button>
           ))}
+          {videoUrl && (
+            <button
+              type="button"
+              onClick={() => setActive("video")}
+              className={`relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 bg-black ${
+                isVideoActive ? "border-[var(--color-wine)]" : "border-transparent"
+              }`}
+            >
+              <video src={videoUrl} muted preload="metadata" className="absolute inset-0 w-full h-full object-cover" />
+              <span className="absolute inset-0 flex items-center justify-center bg-black/30 text-white text-xl">▶</span>
+            </button>
+          )}
         </div>
       )}
     </div>

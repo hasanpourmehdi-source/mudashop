@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { applyWalletTransaction } from "@/lib/wallet";
 import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
+import { Prisma } from "@prisma/client";
 
 // ================= کد معرفی / افیلیت =================
 // هر کاربر یه کدِ معرفیِ یکتا دارد (lazily ساخته می‌شود، نه موقع ساختِ کاربر --
@@ -46,8 +47,11 @@ export async function resolveReferrerId(code: string | null | undefined, newUser
 }
 
 // اگه این سفارش، اولینِ «پرداخت‌شده»‌یِ یک کاربرِ معرفی‌شده باشه، یک‌بار به
-// معرف پاداش می‌دهد. idempotent (ReferralReward.orderId یکتاست) پس صدازدنِ
-// چندباره از چند مسیرِ مختلفِ «سفارش پرداخت شد» بی‌خطر است.
+// معرف پاداش می‌دهد. چکِ priorPaidCount زیر به‌تنهایی در برابرِ دو سفارشِ
+// هم‌زمانِ همون کاربرِ معرفی‌شده امن نیست (هر دو می‌تونن صفر ببینن) -- بک‌استاپِ
+// واقعی همون قیدِ یکتاییِ ReferralReward.referredId است: create داخل تراکنش
+// روی P2002 (چه از طرفِ orderId چه referredId) بی‌خطر لغو می‌شه، پس idempotent
+// بودن (صدازدنِ چندباره از چند مسیرِ مختلفِ «سفارش پرداخت شد») واقعاً تضمین می‌شه.
 export async function applyReferralRewardIfEligible(orderId: string): Promise<void> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
@@ -68,10 +72,19 @@ export async function applyReferralRewardIfEligible(orderId: string): Promise<vo
 
   const referrerId = order.user.referredById;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.referralReward.create({
-      data: { referrerId, referredId: order.userId, orderId, rewardAmount },
-    });
+  const rewarded = await prisma.$transaction(async (tx) => {
+    try {
+      await tx.referralReward.create({
+        data: { referrerId, referredId: order.userId, orderId, rewardAmount },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        // یه فراخوانیِ هم‌زمانِ دیگه (همین سفارش یا اولین سفارشِ هم‌زمانِ دیگه‌یِ
+        // همین کاربرِ معرفی‌شده) زودتر پاداش رو ثبت کرد -- بی‌خطر، دوباره کاری نکن
+        return false;
+      }
+      throw err;
+    }
     await applyWalletTransaction(tx, {
       userId: referrerId,
       amount: rewardAmount,
@@ -86,7 +99,10 @@ export async function applyReferralRewardIfEligible(orderId: string): Promise<vo
         link: "/referral",
       },
     });
+    return true;
   });
+
+  if (!rewarded) return;
 
   await notifyCustomerOutbound({
     userId: referrerId,

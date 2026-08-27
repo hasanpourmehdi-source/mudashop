@@ -41,6 +41,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/gift-cards", label: "کارت هدیه" },
       { href: "/admin/shipments", label: "محموله‌های ترکیبی" },
       { href: "/admin/poster-generator", label: "پوستر اینستاگرام" },
+      { href: "/admin/blog", label: "مجله/بلاگ" },
     ],
   },
   {

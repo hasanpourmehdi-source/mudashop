@@ -25,13 +25,14 @@ describe("computeOrderTotals", () => {
     expect(total).toBe(1000 + GIFT_WRAP_COST);
   });
 
-  it("تخفیف بیشتر از subtotal، total منفی می‌شود (منطقِ upstream بر عهده‌ی کوپن است)", () => {
-    const { total } = computeOrderTotals([{ price: 100, quantity: 1 }], 300, false);
-    expect(total).toBe(-200);
+  it("تخفیف بیشتر از subtotal همیشه clamp می‌شه -- total هیچ‌وقت منفی نمی‌شه (رگرسیونِ باگِ واقعی: حذفِ یه قلمِ گرون از سفارشی با کوپنِ ثابت، total رو منفی و سفارش رو برای همیشه غیرقابل‌پرداخت می‌کرد)", () => {
+    const { total, discountTotal } = computeOrderTotals([{ price: 100, quantity: 1 }], 300, false);
+    expect(discountTotal).toBe(100);
+    expect(total).toBe(0);
   });
 
   it("سبد خالی => subtotal و total صفر", () => {
     const totals = computeOrderTotals([], 0, false);
-    expect(totals).toEqual({ subtotal: 0, total: 0 });
+    expect(totals).toEqual({ subtotal: 0, total: 0, discountTotal: 0 });
   });
 });

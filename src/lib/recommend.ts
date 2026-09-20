@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { fetchMazonProducts } from "@/lib/products";
-import { extractSeoSlugFromUrl } from "@/lib/trendyolProductLink";
+import { fetchMazonProducts, resolveTrendyolProductSnapshots } from "@/lib/products";
 import type { UnifiedProduct } from "@/types/product";
 
 // ================= توصیه‌گر محصول =================
@@ -193,79 +192,6 @@ export async function fetchPopularProductIds(limit: number): Promise<string[]> {
   return grouped.map((g) => g.productId).filter(Boolean);
 }
 
-// نگاشتِ شناسه‌های "ext:<externalId>" به کارتِ قابل‌نمایش -- عنوان/عکس/قیمت از
-// جدیدترین snapshotِ موجود (اول ویشلیست، بعد سفارش) میاد، ولی لینکِ داخلی فقط
-// وقتی ساخته می‌شه که TrendyolProductUrlCache واقعاً همون contentId رو داشته
-// باشه -- چون صفحه‌ی مقصد (/products/trendyol/[slug]) دقیقاً همین کش رو دوباره
-// چک می‌کنه و بدونش notFound می‌ده؛ بدون لینکِ قابل‌کلیک، این محصول اصلاً پیشنهاد
-// نمی‌شه (به‌جای نشون‌دادن یه کارتِ خراب)
-async function resolveTrendyolSnapshots(externalIds: string[]): Promise<Map<string, UnifiedProduct>> {
-  const result = new Map<string, UnifiedProduct>();
-  if (externalIds.length === 0) return result;
-
-  const [cachedUrls, wishlistRows, orderRows] = await Promise.all([
-    prisma.trendyolProductUrlCache.findMany({
-      where: { contentId: { in: externalIds } },
-      select: { contentId: true, url: true },
-    }),
-    prisma.wishlistItem.findMany({
-      where: { externalId: { in: externalIds } },
-      select: { externalId: true, externalTitle: true, externalImage: true, externalPrice: true },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.orderItem.findMany({
-      where: { externalId: { in: externalIds } },
-      select: { externalId: true, title: true, image: true, price: true },
-    }),
-  ]);
-
-  const urlByContentId = new Map(cachedUrls.map((c) => [c.contentId, c.url]));
-
-  const snapshotByExternalId = new Map<string, { title: string; image: string | null; price: number }>();
-  for (const row of wishlistRows) {
-    if (row.externalId && row.externalTitle && !snapshotByExternalId.has(row.externalId)) {
-      snapshotByExternalId.set(row.externalId, {
-        title: row.externalTitle,
-        image: row.externalImage,
-        price: row.externalPrice ?? 0,
-      });
-    }
-  }
-  for (const row of orderRows) {
-    if (row.externalId && !snapshotByExternalId.has(row.externalId)) {
-      snapshotByExternalId.set(row.externalId, { title: row.title, image: row.image, price: row.price });
-    }
-  }
-
-  for (const externalId of externalIds) {
-    const url = urlByContentId.get(externalId);
-    const snapshot = snapshotByExternalId.get(externalId);
-    if (!url || !snapshot) continue;
-
-    // اگه اسلاگِ سئو از URL درنیومد، به‌جای برگشتن به contentId خالی (که با
-    // یه رجکسِ "فقط رقم" توی صفحه‌ی مقصد به‌اشتباه محصولِ دموی قدیمی تشخیص داده
-    // می‌شه) یه پیشوندِ بی‌معنی بعد از "-" اضافه می‌کنیم تا همیشه مسیر واقعی برود
-    const seoSlug = extractSeoSlugFromUrl(url);
-    const slugOrId = seoSlug ? `${externalId}-${seoSlug}` : `${externalId}-x`;
-
-    result.set(`ext:${externalId}`, {
-      id: `ext:${externalId}`,
-      source: "TRENDYOL",
-      slugOrId,
-      externalId,
-      sourceUrl: url,
-      title: snapshot.title,
-      price: snapshot.price,
-      originalPrice: snapshot.price,
-      discount: 0,
-      image: snapshot.image ?? "",
-      images: snapshot.image ? [snapshot.image] : [],
-      createdAt: new Date(0).toISOString(),
-    });
-  }
-  return result;
-}
-
 // نگاشت امتیازها به محصولات واقعی (مزون یا ترندیول/میلا)، با پر کردن کمبود از
 // پرفروش‌ترین‌های مزون
 async function resolveScoredProducts(
@@ -279,7 +205,7 @@ async function resolveScoredProducts(
 
   const [mazonAll, trendyolByKey] = await Promise.all([
     fetchMazonProducts(),
-    resolveTrendyolSnapshots(externalIds),
+    resolveTrendyolProductSnapshots(externalIds),
   ]);
   const mazonById = new Map(mazonAll.map((p) => [p.id, p]));
 

@@ -15,7 +15,17 @@ type ChatMessage = {
 // چت زنده‌ی پشتیبانی -- دکمه‌ی شناور پایین‌چپ که پنل گفتگو را باز می‌کند.
 // پیام‌های جدید با SSE همان‌لحظه می‌رسند (بدون پولینگ) + ایندیکاتور «در حال
 // نوشتن» ادمین. ادمین‌ها از پنل ادمین پاسخ می‌دهند.
-export function SupportChatWidget() {
+//
+// دکمه‌های واتس‌اپ/تلگرام (whatsappNumber/telegramUsername) برخلافِ خودِ چت،
+// مشروط به لاگین نیستن -- مهمان‌هایی که چتِ زنده براشون نیست (isLoggedIn پایین‌تر)
+// هم باید بتونن سریع تماس بگیرن. هرکدوم خالی باشه، دکمه‌ش اصلاً نشون داده نمی‌شه
+export function SupportChatWidget({
+  whatsappNumber,
+  telegramUsername,
+}: {
+  whatsappNumber?: string;
+  telegramUsername?: string;
+}) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -93,8 +103,10 @@ export function SupportChatWidget() {
     if (open && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, adminTyping, open]);
 
-  if (status === "loading") return null;
-  if (!isLoggedIn) return null;
+  const showChat = status !== "loading" && isLoggedIn;
+  const showWhatsapp = !!whatsappNumber;
+  const showTelegram = !!telegramUsername;
+  if (!showChat && !showWhatsapp && !showTelegram) return null;
 
   function sendTyping(typing: boolean) {
     if (typing === typingSentRef.current) return;
@@ -132,8 +144,8 @@ export function SupportChatWidget() {
   }
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 flex flex-col items-start gap-3">
-      {open && (
+    <div className="fixed bottom-20 md:bottom-4 left-4 z-50 flex flex-col items-start gap-3">
+      {showChat && open && (
         <div className="w-[320px] max-w-[calc(100vw-2rem)] border cut-line rounded-2xl bg-white shadow-2xl overflow-hidden flex flex-col">
           <div className="bg-[var(--color-wine)] text-white px-4 py-3 flex items-center justify-between">
             <p className="font-bold text-sm">پشتیبانی مُداشاپ</p>
@@ -219,26 +231,54 @@ export function SupportChatWidget() {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => {
-          setOpen((o) => {
-            const next = !o;
-            if (next) loadMessages(true);
-            else loadUnread();
-            return next;
-          });
-        }}
-        aria-label="پشتیبانی"
-        className="relative w-14 h-14 rounded-full bg-[var(--color-wine)] text-white shadow-lg hover:scale-105 transition-transform flex items-center justify-center text-2xl"
-      >
-        {open ? "✕" : "💬"}
-        {!open && unread > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-            {unread > 9 ? "۹+" : unread.toLocaleString("fa-IR")}
-          </span>
-        )}
-      </button>
+      {/* دکمه‌های سریعِ تماس -- برخلافِ خودِ چت، به لاگین مشروط نیستن؛ چون
+          خیلی از مشتری‌های ایرانی واتس‌اپ/تلگرام رو به چتِ وب ترجیح می‌دن، و
+          مهمان‌ها (که چتِ زنده براشون نیست) هم باید بتونن سریع تماس بگیرن */}
+      {showWhatsapp && (
+        <a
+          href={`https://wa.me/${whatsappNumber}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="تماس با واتس‌اپ"
+          className="w-12 h-12 rounded-full bg-[#25D366] text-white shadow-lg hover:scale-105 transition-transform flex items-center justify-center text-xl"
+        >
+          🟢
+        </a>
+      )}
+      {showTelegram && (
+        <a
+          href={`https://t.me/${telegramUsername}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="تماس با تلگرام"
+          className="w-12 h-12 rounded-full bg-[#26A5E4] text-white shadow-lg hover:scale-105 transition-transform flex items-center justify-center text-xl"
+        >
+          ✈️
+        </a>
+      )}
+
+      {showChat && (
+        <button
+          type="button"
+          onClick={() => {
+            setOpen((o) => {
+              const next = !o;
+              if (next) loadMessages(true);
+              else loadUnread();
+              return next;
+            });
+          }}
+          aria-label="پشتیبانی"
+          className="relative w-14 h-14 rounded-full bg-[var(--color-wine)] text-white shadow-lg hover:scale-105 transition-transform flex items-center justify-center text-2xl"
+        >
+          {open ? "✕" : "💬"}
+          {!open && unread > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {unread > 9 ? "۹+" : unread.toLocaleString("fa-IR")}
+            </span>
+          )}
+        </button>
+      )}
     </div>
   );
 }

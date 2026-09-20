@@ -47,17 +47,21 @@ export function RecentlyViewedSection() {
                   />
                 )}
                 {p.discount > 0 && (
-                  <span className="ribbon-tag absolute top-2 left-0 font-bold">{p.discount}%-</span>
+                  <span className="ribbon-tag absolute top-2 left-0 font-bold">{p.discount}%</span>
                 )}
               </div>
               <div className="p-3 flex flex-col flex-1">
                 <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">{p.title}</h3>
-                <div className="flex items-baseline gap-2 mt-auto">
-                  <span className="font-bold text-[var(--color-wine)] text-sm">
+                <div className="flex items-baseline gap-2 flex-wrap mt-auto">
+                  {/* whitespace-nowrap لازمه چون توی کارتِ باریک (w-40)، بدونش عددِ
+                      قیمت از خودِ کلمه‌ی «تومان» جدا می‌شه و به خط بعد می‌ره --
+                      اگه قیمتِ خط‌خورده هم جا نشه، خودش (کامل) می‌ره خط بعد، نه
+                      این‌که وسطِ عددِ قیمتِ اصلی بشکنه */}
+                  <span className="font-bold text-[var(--color-wine)] text-sm whitespace-nowrap">
                     {p.price.toLocaleString("fa-IR")} تومان
                   </span>
                   {p.discount > 0 && (
-                    <span className="text-xs text-[var(--color-muted)] line-through">
+                    <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
                       {p.originalPrice.toLocaleString("fa-IR")}
                     </span>
                   )}
@@ -68,7 +72,7 @@ export function RecentlyViewedSection() {
               type="button"
               onClick={() => remove(p.id)}
               aria-label="حذف از اخیراً دیدهاید"
-              className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border cut-line text-[var(--color-muted)] text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-[var(--color-wine)] transition-opacity"
+              className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border cut-line text-[var(--color-muted)] text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-[var(--color-wine)] transition-opacity"
             >
               ✕
             </button>

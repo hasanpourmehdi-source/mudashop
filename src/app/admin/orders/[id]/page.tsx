@@ -11,7 +11,7 @@ import { OrderPaymentHistory } from "@/components/OrderPaymentHistory";
 import { parseTrackingCodes } from "@/lib/trackingCodes";
 import { checkTrendyolItemsStock } from "@/lib/orderStockCheck";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
-import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
+import { internalTrendyolProductHref, withMerchantId } from "@/lib/trendyolProductLink";
 import { AdminItemPurchasePanel } from "@/components/AdminItemPurchasePanel";
 import { AdminChangeAddressPanel } from "@/components/AdminChangeAddressPanel";
 import { OrderInvoice } from "@/components/OrderInvoice";
@@ -127,6 +127,15 @@ export default async function AdminOrderDetailPage({
     }
   }
 
+  // اگه مشتری موقعِ خرید یه فروشنده‌ی غیرِ پیش‌فرض انتخاب کرده بود (OrderItem.merchantId)،
+  // لینکِ خودِ ترندیول برای همون فروشنده رو از روی همون لینکِ کانونیک با
+  // override‌کردنِ merchantId می‌سازیم -- بدونِ نیازِ کشِ جدا
+  const merchantUrlByItemId = new Map<string, string | null>();
+  for (const item of order.items) {
+    const baseUrl = productUrlByItemId.get(item.id);
+    merchantUrlByItemId.set(item.id, item.merchantId && baseUrl ? withMerchantId(baseUrl, item.merchantId) : null);
+  }
+
   const addressSnapshot = JSON.parse(order.addressSnapshot) as {
     title: string;
     fullName: string;
@@ -216,6 +225,9 @@ export default async function AdminOrderDetailPage({
               itemCargoCost: i.itemCargoCost,
               variantLabel: i.variantLabel,
               secondarySourceUrl: i.secondarySourceUrl,
+              merchantId: i.merchantId,
+              merchantName: i.merchantName,
+              merchantUrl: merchantUrlByItemId.get(i.id) ?? null,
             }))}
         />
       )}

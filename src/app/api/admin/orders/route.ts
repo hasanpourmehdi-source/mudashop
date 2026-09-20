@@ -37,7 +37,11 @@ export async function GET(req: Request) {
           }
         : {}),
     },
-    include: { items: true, user: { select: { name: true, email: true } } },
+    include: {
+      items: true,
+      user: { select: { name: true, email: true } },
+      shippingGroup: { select: { totalShippingCost: true, totalCargoCost: true, trackingCode: true } },
+    },
     orderBy: { createdAt: "desc" },
     ...(q || paymentStatus || tag ? { take: 20 } : {}),
   });

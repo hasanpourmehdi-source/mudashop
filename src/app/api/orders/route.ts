@@ -10,11 +10,16 @@ import { notifyAdminsOnce } from "@/lib/adminAlerts";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { UserFacingError } from "@/lib/errors";
 import { finalizeItemsPayment } from "@/lib/orderFinalizePayment";
-import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getSiteSetting, getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getLoyaltyConfig, getLoyaltyTier } from "@/lib/loyaltyTier";
 import { resolveExternalSiteIdFromUrl } from "@/lib/externalSites";
 import { rateLimitOrNull, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
 
 // محصولات دموی قدیمی (Fake Store API) فقط ۲۰ تا محصول دارن (id های ۱ تا ۲۰)؛
 // contentId های محصولات واقعی ترندیول (از /marketplaces/trendyol، کارت‌های
@@ -32,6 +37,10 @@ const orderItemSchema = z.object({
   flashSaleId: z.string().optional(),
   quantity: z.number().int().positive("تعداد باید حداقل ۱ باشد"),
   variantLabel: z.string().optional(), // مثلاً "سایز: L / رنگ: قرمز"
+  // فقط ترندیول -- وقتی مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ
+  // پیش‌فرض انتخاب کرده. قیمت هیچ‌وقت از کلاینت گرفته نمی‌شه؛ فقط همین id رو
+  // می‌فرستیم تا سرور خودش از روی otherSellers دوباره پیداش کنه
+  merchantId: z.number().int().positive().optional(),
 });
 
 const newAddressSchema = z.object({
@@ -76,6 +85,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // سدِ واقعیِ حالتِ «فروش موقتاً متوقف» -- مخفی‌کردنِ دکمه‌ها توی UI فقط
+  // نمایشیه؛ این‌جا (قبلِ هر پردازشِ دیگه‌ای) واقعاً جلویِ ثبتِ سفارش گرفته
+  // می‌شه، حتی اگه مستقیم به همین API درخواست بزنن
+  if (await getSiteSettingBool(SITE_SETTING_KEYS.SALES_PAUSED_ENABLED)) {
+    const message = await getSiteSetting(SITE_SETTING_KEYS.SALES_PAUSED_MESSAGE);
+    return NextResponse.json({ error: message || "فروش سایت موقتاً متوقف شده است." }, { status: 403 });
+  }
+
   const limited = rateLimitOrNull(req, "ORDER_CREATE");
   if (limited) {
     return NextResponse.json(
@@ -137,14 +154,35 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
-    const guestUser =
-      existingUser ??
-      (await prisma.user.create({
-        data: { name: guestName, email: guestEmail, phone: guestPhone, isGuest: true },
-      }).catch(() =>
-        // شماره تماس با کاربرِ دیگری برخورد کرد (یکتاست) -- بدونِ شماره دوباره بساز
-        prisma.user.create({ data: { name: guestName, email: guestEmail, isGuest: true } })
-      ));
+    let guestUser = existingUser;
+    if (!guestUser) {
+      try {
+        guestUser = await prisma.user.create({
+          data: { name: guestName, email: guestEmail, phone: guestPhone, isGuest: true },
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && "code" in err && (err as { code: string }).code === "P2002") {
+          // ریسِ همزمان: ایمیل یا شماره همزمان توسط درخواستِ موازی ثبت شد
+          const retry = await prisma.user.findUnique({ where: { email: guestEmail } });
+          if (retry) {
+            guestUser = retry;
+          } else {
+            // تداخل روی phone بود و ایمیل هنوز آزاد -- بدونِ phone دوباره بساز
+            try {
+              guestUser = await prisma.user.create({
+                data: { name: guestName, email: guestEmail, isGuest: true },
+              });
+            } catch {
+              const retry2 = await prisma.user.findUnique({ where: { email: guestEmail } });
+              if (!retry2) throw err;
+              guestUser = retry2;
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
     userId = guestUser.id;
     customerName = guestName;
     customerEmail = guestEmail;
@@ -191,20 +229,43 @@ export async function POST(req: Request) {
     price: number;
     quantity: number;
     variantLabel: string | null;
+    merchantId: number | null;
+    merchantName: string | null;
   };
-  const resolvedItems: ResolvedItem[] = [];
+  type ItemResolution =
+    | { ok: true; item: ResolvedItem }
+    | { ok: false; error: string; status: number };
 
-  for (const item of items) {
+  // قبلاً این حلقه یکی‌یکی (await پشتِ‌سرِهم) روی هر آیتمِ سبد اجرا می‌شد -- برای
+  // آیتم‌های ترندیول یعنی هر خط یه اسکرِیپِ زنده‌ی جداگانه، *پشتِ‌سرِهم*
+  // (سبدِ ۵تایی = ۵ اسکرِیپِ متوالی، هرکدوم زیرِ چالشِ Cloudflare چند ثانیه‌ای).
+  // الان همه‌ی خط‌ها با هم (Promise.all پایین‌تر) resolve می‌شن -- exactly همون
+  // اعتبارسنجی/پیام‌خطاهای قبلی، فقط اجراش موازیه؛ اگه یه خط نامعتبر باشه،
+  // بعد از resolveِ همه (نه فوری)، دقیقاً همون خطای همونی که توی سبد اول
+  // نامعتبره برگردونده می‌شه (ترتیبِ original حفظ می‌شه)
+  const trendyolDetailByUrl = new Map<
+    string,
+    ReturnType<typeof fetchTrendyolProductDetail>
+  >();
+  // اگه دو تا خطِ سبد (مثلاً دو سایزِ متفاوتِ همون محصول) به یه لینکِ ترندیولِ
+  // یکسان resolve بشن، فقط یه‌بار اسکرِیپ می‌شه -- نه به‌ازای هر خط جداگانه
+  function fetchTrendyolDetailCached(url: string) {
+    let pending = trendyolDetailByUrl.get(url);
+    if (!pending) {
+      pending = fetchTrendyolProductDetail(url);
+      trendyolDetailByUrl.set(url, pending);
+    }
+    return pending;
+  }
+
+  async function resolveItem(item: (typeof items)[number]): Promise<ItemResolution> {
     if (item.source === "MAZON") {
       const product = await prisma.product.findUnique({
         where: { slug: item.productId },
         include: { variants: { include: { values: true } } },
       });
       if (!product || !product.isActive) {
-        return NextResponse.json(
-          { error: `محصول «${item.productId}» یافت نشد` },
-          { status: 400 }
-        );
+        return { ok: false, error: `محصول «${item.productId}» یافت نشد`, status: 400 };
       }
 
       // موجودی فقط روی ProductVariant نگه‌داری می‌شه (Product خودش فیلد stock
@@ -215,29 +276,21 @@ export async function POST(req: Request) {
       // همین پروژه توی ساختِ محصول: «عدم وجودِ ترکیب یعنی عدم موجودی») هم
       // ذاتاً قابل‌فروش نیست -- چیزی برای کم‌کردن ازش وجود نداره
       if (product.variants.length === 0) {
-        return NextResponse.json(
-          { error: `محصول «${product.title}» موجود نیست` },
-          { status: 400 }
-        );
+        return { ok: false, error: `محصول «${product.title}» موجود نیست`, status: 400 };
       }
       if (!item.variantId) {
-        return NextResponse.json(
-          { error: `لطفاً ترکیب (سایز/رنگ) «${product.title}» را انتخاب کنید` },
-          { status: 400 }
-        );
+        return {
+          ok: false,
+          error: `لطفاً ترکیب (سایز/رنگ) «${product.title}» را انتخاب کنید`,
+          status: 400,
+        };
       }
       const variant = product.variants.find((v) => v.id === item.variantId) ?? null;
       if (!variant) {
-        return NextResponse.json(
-          { error: "ترکیب انتخابی نامعتبر است" },
-          { status: 400 }
-        );
+        return { ok: false, error: "ترکیب انتخابی نامعتبر است", status: 400 };
       }
       if (variant.stock < item.quantity) {
-        return NextResponse.json(
-          { error: `موجودی «${product.title}» کافی نیست` },
-          { status: 400 }
-        );
+        return { ok: false, error: `موجودی «${product.title}» کافی نیست`, status: 400 };
       }
       const priceDiff = variant.priceDiff;
 
@@ -257,10 +310,7 @@ export async function POST(req: Request) {
         });
         if (flashSale) {
           if (flashSale.stock < item.quantity) {
-            return NextResponse.json(
-              { error: `موجودی حراج «${product.title}» کافی نیست` },
-              { status: 400 }
-            );
+            return { ok: false, error: `موجودی حراج «${product.title}» کافی نیست`, status: 400 };
           }
           effectiveDiscount = flashSale.discountPercent;
           resolvedFlashSaleId = flashSale.id;
@@ -277,43 +327,50 @@ export async function POST(req: Request) {
         images = [product.images];
       }
 
-      resolvedItems.push({
-        productId: product.id,
-        variantId: variant?.id ?? null,
-        externalId: null,
-        externalSiteId: null,
-        flashSaleId: resolvedFlashSaleId,
-        source: "MAZON",
-        title: product.title,
-        image: images[0] ?? null,
-        price: unitPrice,
-        quantity: item.quantity,
-        variantLabel: item.variantLabel ?? null,
-      });
+      return {
+        ok: true,
+        item: {
+          productId: product.id,
+          variantId: variant?.id ?? null,
+          externalId: null,
+          externalSiteId: null,
+          flashSaleId: resolvedFlashSaleId,
+          source: "MAZON",
+          title: product.title,
+          image: images[0] ?? null,
+          price: unitPrice,
+          quantity: item.quantity,
+          variantLabel: item.variantLabel ?? null,
+          merchantId: null,
+          merchantName: null,
+        },
+      };
     } else if (isLegacyDemoTrendyolId(item.productId)) {
       // محصول دموی قدیمی (کاتالوگ نمایشی صفحه‌ی اصلی، از Fake Store API)
       const trendyolProduct = await fetchTrendyolProductById(item.productId);
       if (!trendyolProduct) {
-        return NextResponse.json(
-          { error: `محصول ترندیول «${item.productId}» یافت نشد` },
-          { status: 400 }
-        );
+        return { ok: false, error: `محصول ترندیول «${item.productId}» یافت نشد`, status: 400 };
       }
-      resolvedItems.push({
-        productId: null,
-        variantId: null,
-        externalId: item.productId,
-        // دموی قدیمی (Fake Store API) هیچ لینکِ واقعیِ ترندیول/میلا‌ای نداره،
-        // پس سایتش قابل‌تشخیص نیست -- null یعنی «نامشخص»، نه یه سایتِ خاص
-        externalSiteId: null,
-        flashSaleId: null,
-        source: "TRENDYOL",
-        title: trendyolProduct.title,
-        image: trendyolProduct.image,
-        price: trendyolProduct.price,
-        quantity: item.quantity,
-        variantLabel: item.variantLabel ?? null,
-      });
+      return {
+        ok: true,
+        item: {
+          productId: null,
+          variantId: null,
+          externalId: item.productId,
+          // دموی قدیمی (Fake Store API) هیچ لینکِ واقعیِ ترندیول/میلا‌ای نداره،
+          // پس سایتش قابل‌تشخیص نیست -- null یعنی «نامشخص»، نه یه سایتِ خاص
+          externalSiteId: null,
+          flashSaleId: null,
+          source: "TRENDYOL",
+          title: trendyolProduct.title,
+          image: trendyolProduct.image,
+          price: trendyolProduct.price,
+          quantity: item.quantity,
+          variantLabel: item.variantLabel ?? null,
+          merchantId: null,
+          merchantName: null,
+        },
+      };
     } else {
       // محصول واقعی از /marketplaces/trendyol (کارت لایو یا «نگاه سریع») --
       // اینا توی جدول محلی نیستن، باید از روی contentId آدرس کامل رو از کش
@@ -321,15 +378,12 @@ export async function POST(req: Request) {
       // (نه از قیمتی که کلاینت فرستاده)
       const trendyolUrl = await getCachedTrendyolProductUrl(item.productId);
       if (!trendyolUrl) {
-        return NextResponse.json(
-          { error: `محصول ترندیول «${item.productId}» یافت نشد` },
-          { status: 400 }
-        );
+        return { ok: false, error: `محصول ترندیول «${item.productId}» یافت نشد`, status: 400 };
       }
 
       let detail;
       try {
-        detail = await fetchTrendyolProductDetail(trendyolUrl);
+        detail = await fetchTrendyolDetailCached(trendyolUrl);
       } catch (err) {
         console.warn("خطا در واکشی جزئیات محصول ترندیول در لحظه‌ی ثبت سفارش:", err);
         await logTrendyolFetchFailure({ url: trendyolUrl, error: String(err), source: "checkout" });
@@ -337,33 +391,65 @@ export async function POST(req: Request) {
       }
 
       if (!detail || detail.price == null) {
-        return NextResponse.json(
-          { error: `محصول ترندیول «${item.productId}» در حال حاضر در دسترس نیست` },
-          { status: 400 }
-        );
+        return {
+          ok: false,
+          error: `محصول ترندیول «${item.productId}» در حال حاضر در دسترس نیست`,
+          status: 400,
+        };
       }
       if (!detail.inStock) {
-        return NextResponse.json(
-          { error: `محصول «${detail.nameFa}» دیگر موجود نیست` },
-          { status: 400 }
-        );
+        return { ok: false, error: `محصول «${detail.nameFa}» دیگر موجود نیست`, status: 400 };
       }
 
-      resolvedItems.push({
-        productId: null,
-        variantId: null,
-        externalId: item.productId,
-        externalSiteId: await resolveExternalSiteIdFromUrl(trendyolUrl),
-        flashSaleId: null,
-        source: "TRENDYOL",
-        title: detail.nameFa,
-        image: detail.images[0] ?? null,
-        price: detail.price,
-        quantity: item.quantity,
-        variantLabel: item.variantLabel ?? null,
-      });
+      // اگه مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ پیش‌فرض انتخاب
+      // کرده، قیمت رو از همون آرایه‌ی otherSellers (که از همین fetchِ بالا اومده،
+      // نه یه فچِ زنده‌ی جدید) پیدا می‌کنیم -- هیچ‌وقت به قیمتی که کلاینت فرستاده
+      // اعتماد نمی‌کنیم
+      let price = detail.price;
+      let merchantId: number | null = null;
+      let merchantName: string | null = null;
+      if (item.merchantId) {
+        const chosen = detail.otherSellers.find((s) => s.merchantId === item.merchantId);
+        if (!chosen || chosen.price == null || !chosen.inStock) {
+          return {
+            ok: false,
+            error: `این فروشنده دیگه محصول «${detail.nameFa}» رو نداره؛ لطفاً دوباره امتحان کنید`,
+            status: 400,
+          };
+        }
+        price = chosen.price;
+        merchantId = chosen.merchantId;
+        merchantName = chosen.name;
+      }
+
+      return {
+        ok: true,
+        item: {
+          productId: null,
+          variantId: null,
+          externalId: item.productId,
+          externalSiteId: await resolveExternalSiteIdFromUrl(trendyolUrl),
+          flashSaleId: null,
+          source: "TRENDYOL",
+          title: detail.nameFa,
+          image: detail.images[0] ?? null,
+          price,
+          quantity: item.quantity,
+          variantLabel: item.variantLabel ?? null,
+          merchantId,
+          merchantName,
+        },
+      };
     }
   }
+
+  const resolutions = await Promise.all(items.map(resolveItem));
+  for (const r of resolutions) {
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+  }
+  const resolvedItems: ResolvedItem[] = resolutions.map(
+    (r) => (r as { ok: true; item: ResolvedItem }).item
+  );
 
   const subtotal = resolvedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
@@ -426,6 +512,21 @@ export async function POST(req: Request) {
       freeShipping = true;
     }
     resolvedCoupon = { id: coupon.id, code: coupon.code, maxUses: coupon.maxUses, type: coupon.type };
+  }
+
+  // مزیتِ باشگاه مشتریان -- سطوحِ بالاتر می‌تونن ارسالِ رایگانِ نامحدود داشته
+  // باشن (فقط سفارشِ بدونِ کالای خارجی؛ باربریِ خارجی دستی و جداست). مهمان‌ها
+  // هم یوزرِ سایه‌ای با loyaltyPoints:0 دارن، پس بی‌خطر به برنزی/بدونِ‌مزیت resolve می‌شه
+  if (!freeShipping && !hasExternalItems) {
+    const loyaltyEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.LOYALTY_CASHBACK_ENABLED);
+    if (loyaltyEnabled) {
+      const [loyaltyUser, loyaltyConfig] = await Promise.all([
+        prisma.user.findUnique({ where: { id: userId }, select: { loyaltyPoints: true } }),
+        getLoyaltyConfig(),
+      ]);
+      const tier = getLoyaltyTier(loyaltyUser?.loyaltyPoints ?? 0, loyaltyConfig.tiers);
+      if (tier.freeShipping) freeShipping = true;
+    }
   }
 
   // هزینه ارسال برای سفارش‌های فقط-مزون همین‌جا قابل محاسبه‌ست: روش‌های
@@ -523,6 +624,8 @@ export async function POST(req: Request) {
               price: i.price,
               quantity: i.quantity,
               variantLabel: i.variantLabel,
+              merchantId: i.merchantId,
+              merchantName: i.merchantName,
             })),
           },
         },

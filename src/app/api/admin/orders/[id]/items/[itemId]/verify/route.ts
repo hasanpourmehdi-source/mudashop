@@ -30,7 +30,7 @@ export async function POST(
   }
 
   const order = await prisma.order.findUnique({ where: { id }, include: { items: true } });
-  if (!order || order.userId !== session.user.id) {
+  if (!order) {
     return NextResponse.json({ error: "سفارش یافت نشد" }, { status: 404 });
   }
 

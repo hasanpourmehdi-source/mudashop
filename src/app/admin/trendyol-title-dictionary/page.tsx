@@ -233,7 +233,7 @@ export default function TrendyolTitleDictionaryAdminPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div>
-        <h1 className="text-xl font-bold">دیکشنری ترجمه‌ی عنوان محصولات ترندیول</h1>
+        <h1 className="text-xl font-bold">دیکشنری ترجمه‌ی عنوانِ محصولاتِ سایت‌های خارجی</h1>
         <p className="text-xs text-[var(--color-muted)] mt-1">
           هر اصطلاح ترکی که اینجا اضافه/ویرایش بشه، توی ترجمه‌ی عنوان محصولات جدید فوراً اعمال می‌شه (محصولاتی
           که قبلاً ترجمه و کش شدن، دست‌نخورده می‌مونن مگر این‌که کش‌شون پاک بشه).

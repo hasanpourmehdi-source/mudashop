@@ -1,7 +1,10 @@
 import { TrendyolProductLink } from "@/components/TrendyolProductLink";
 import { VerifiedBadge } from "@/components/TrendyolBadges";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
+import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 import type { TrendyolSimilarProduct } from "@/lib/trendyolSimilarProducts";
+import { formatTomanOrOriginalCurrency } from "@/lib/exchangeRate";
 
 // نمایش «محصولات مشابه» -- یک ردیف با اسکرول افقی (مثل ترندیول)، و اطلاعات
 // زیر عکس هر کارت دقیقاً هماهنگ با ProductCard معمولی سایت (برند+تیک،
@@ -19,7 +22,7 @@ export function TrendyolSimilarProducts({
   return (
     <div className="mt-8 pt-6 border-t cut-line">
       <h2 className="font-bold mb-4">محصولات مشابه</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-thin">
+      <HorizontalScroller>
         {products.map((p) => (
           <TrendyolProductLink
             key={p.id}
@@ -37,11 +40,6 @@ export function TrendyolSimilarProducts({
                   className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
               )}
-              {p.isRushDelivery && (
-                <div className="absolute bottom-0 inset-x-0 bg-green-600 text-white text-[10px] font-bold px-2 py-1 text-center">
-                  🚚 ارسال فوری
-                </div>
-              )}
             </div>
 
             <div className="p-3 flex flex-col flex-1">
@@ -55,8 +53,10 @@ export function TrendyolSimilarProducts({
                   )}
                 </p>
               )}
-              <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">{p.nameFa}</h3>
-              <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} />
+              <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">
+                <AdminClickToTranslate text={p.nameFa} isAdmin={isAdmin} />
+              </h3>
+              <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} brand={p.brand} />
 
               {!!p.favoriteCount && p.favoriteCount > 0 && (
                 <p className="text-[11px] text-[var(--color-muted)] mb-1 flex items-center gap-1">
@@ -75,22 +75,32 @@ export function TrendyolSimilarProducts({
                 </p>
               )}
 
-              <div className="flex items-baseline gap-2 mt-auto pt-1">
-                {p.price != null && (
-                  <span className="font-bold text-[var(--color-wine)]">
-                    {p.price.toLocaleString("fa-IR")} تومان
-                  </span>
-                )}
-                {p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
-                  <span className="text-xs text-[var(--color-muted)] line-through">
-                    {p.originalPrice.toLocaleString("fa-IR")}
-                  </span>
-                )}
+              <div className="flex items-baseline gap-2 flex-wrap mt-auto pt-1">
+                {(() => {
+                  const formatted = formatTomanOrOriginalCurrency(p.price, p.priceLira);
+                  if (!formatted) return null;
+                  const rateNotSet = !p.price || p.price <= 0;
+                  return (
+                    <>
+                      <span className="font-bold text-[var(--color-wine)] whitespace-nowrap">{formatted}</span>
+                      {rateNotSet && p.originalPriceLira != null && p.priceLira != null && p.originalPriceLira > p.priceLira && (
+                        <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
+                          {Math.round(p.originalPriceLira).toLocaleString("fa-IR")} لیر
+                        </span>
+                      )}
+                      {!rateNotSet && p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
+                        <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
+                          {p.originalPrice.toLocaleString("fa-IR")}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </TrendyolProductLink>
         ))}
-      </div>
+      </HorizontalScroller>
     </div>
   );
 }

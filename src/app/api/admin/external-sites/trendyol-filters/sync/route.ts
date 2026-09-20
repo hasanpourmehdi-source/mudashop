@@ -5,6 +5,10 @@ import { fetchTrendyolAggregations } from "@/lib/trendyolAggregations";
 import { suggestTranslation } from "@/lib/trendyolTranslationDictionary";
 import { siteSlugToKind } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // «به‌روزرسانی» -- یه wc/wg نمونه (مثلاً از یه دسته‌ی پرمحصول) می‌گیره و همه‌ی
 // ~۳۰ گروه فیلتر واقعی ترندیول (نه فقط رنگ/برند) رو با تمام مقادیرشون توی
 // TrendyolFilterCache می‌ریزه. برای هر گروه، هم خودِ عنوان گروه (valueId="")

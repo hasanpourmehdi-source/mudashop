@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { canCustomerCancelOrder } from "@/lib/orderCancellation";
+import { Spinner } from "@/components/Spinner";
 
 export function CancelOrderButton({
   orderId,
@@ -78,8 +79,9 @@ export function CancelOrderButton({
         <button
           onClick={handleCancel}
           disabled={loading}
-          className="text-sm bg-red-600 text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
+          className="text-sm inline-flex items-center justify-center gap-1.5 bg-red-600 text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
         >
+          {loading && <Spinner className="w-3.5 h-3.5" />}
           {loading ? "در حال لغو..." : "تأیید لغو سفارش"}
         </button>
         <button

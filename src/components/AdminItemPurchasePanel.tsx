@@ -20,6 +20,11 @@ type PurchaseItem = {
   itemCargoCost: number | null;
   variantLabel: string | null;
   secondarySourceUrl: string | null; // لینک تامین‌کننده‌ی دوم که قبل از این فاز (موقع ویرایش اقلام) ثبت شده، اگه بوده
+  // مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ پیش‌فرض انتخاب کرده --
+  // null یعنی فروشنده‌ی پیش‌فرض/کانونیک (همون url بالا)
+  merchantId: number | null;
+  merchantName: string | null;
+  merchantUrl: string | null; // همون url کانونیک با merchantId جایگزین‌شده
 };
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
@@ -351,6 +356,27 @@ export function AdminItemPurchasePanel({
                 >
                   🔗 لینک اصلی ۲ (فقط ادمین)
                 </a>
+              )}
+
+              {/* مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ پیش‌فرض
+                  انتخاب کرده -- تیمِ خرید باید دقیقاً از همین فروشنده بخره،
+                  نه فروشنده‌ی پیش‌فرضِ لینکِ کانونیک */}
+              {item.merchantId && (
+                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-ochre)]/15 text-[var(--color-ochre)]">
+                    فروشنده‌ی انتخابیِ مشتری: {item.merchantName ?? item.merchantId}
+                  </span>
+                  {item.merchantUrl && (
+                    <a
+                      href={item.merchantUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-[var(--color-wine)] hover:underline"
+                    >
+                      🔗 خرید از همین فروشنده
+                    </a>
+                  )}
+                </div>
               )}
 
               {item.purchaseTag && (

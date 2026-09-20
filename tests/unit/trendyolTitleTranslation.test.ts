@@ -1,7 +1,7 @@
 // تستِ هسته‌ی خالصِ الگوریتم ترجمه‌ی عنوان ترندیول -- بدون DB
 // (دیکشنری آزمون با همان ترتیبِ خروجیِ loadDictionary مرتب است: طولانی‌ترین اول، سپس priority نزولی)
 import { describe, expect, it } from "vitest";
-import { tokenizeAndTranslate, type DictionaryEntry } from "@/lib/trendyolTitleTranslation";
+import { tokenizeAndTranslate, withCategoryPrefix, type DictionaryEntry } from "@/lib/trendyolTitleTranslation";
 
 const dict: DictionaryEntry[] = [
   { termTr: "beli lastikli", termFa: "کمر کش‌دار", priority: 10 },
@@ -89,5 +89,55 @@ describe("tokenizeAndTranslate", () => {
     const r = tokenizeAndTranslate("Pamuklu Fjordco Pantolon", dict);
     expect(r.translated).toBe("شلوار پنبه‌ای");
     expect(r.unknownTerms).toContain("fjordco");
+  });
+
+  it("کلمه/عبارتِ تکراری (هرجای عنوان، بعدِ چسبوندنِ نهایی) فقط بارِ اول نگه داشته می‌شود", () => {
+    const r = tokenizeAndTranslate("Pantolon Pamuklu Pantolon", dict);
+    expect(r.translated).toBe("شلوار پنبه‌ای");
+  });
+
+  it("عبارتِ دوکلمه‌ایِ تکراری هم به‌عنوانِ یه واحد حذف می‌شود، نه کلمه‌به‌کلمه", () => {
+    // "Beli Lastikli" (-> "کمر کش‌دار") دوبار میاد؛ باید کلِ عبارتِ دوکلمه‌ای
+    // یکجا حذف بشه، نه اینکه مثلاً فقط "کمر" یا فقط "کش‌دار" تکی حذف بشه
+    const r = tokenizeAndTranslate("Beli Lastikli Pantolon Beli Lastikli", dict);
+    expect(r.translated).toBe("کمر کش‌دار شلوار");
+  });
+});
+
+describe("withCategoryPrefix", () => {
+  it("دسته‌بندی را اولِ عنوان می‌گذارد", () => {
+    expect(withCategoryPrefix("پنبه‌ای اسپانیول", "شلوار")).toBe("شلوار پنبه‌ای اسپانیول");
+  });
+
+  it("اگه عنوان از قبل دقیقاً با همون کلمه شروع شده، تکرار نمی‌کند", () => {
+    expect(withCategoryPrefix("شلوار پنبه‌ای", "شلوار")).toBe("شلوار پنبه‌ای");
+  });
+
+  it("بدونِ دسته‌بندی، عنوان دست‌نخورده می‌ماند", () => {
+    expect(withCategoryPrefix("پنبه‌ای اسپانیول", null)).toBe("پنبه‌ای اسپانیول");
+    expect(withCategoryPrefix("پنبه‌ای اسپانیول", "")).toBe("پنبه‌ای اسپانیول");
+  });
+
+  it("دسته‌بندیِ چندکلمه‌ای هم اگه از قبل اولِ عنوان بود تکرار نمی‌شود", () => {
+    expect(withCategoryPrefix("ست پیژامه آستین کوتاه صورتی", "ست پیژامه")).toBe(
+      "ست پیژامه آستین کوتاه صورتی"
+    );
+  });
+
+  it("اگه دسته‌بندی وسطِ عنوان باشه (نه اولش)، به جلو منتقل می‌شود", () => {
+    // معکوس‌سازیِ segmentها می‌تونه اسمِ اصلیِ محصول رو وسطِ عنوان بندازه --
+    // ولی اسمِ دسته‌بندی/محصول باید همیشه اولِ عنوان باشه، نه هرجایی که افتاده
+    expect(
+      withCategoryPrefix("سایز بزرگ کیف لوازم آرایش طرح‌دار چهارگوش زرد", "کیف لوازم آرایش")
+    ).toBe("کیف لوازم آرایش سایز بزرگ طرح‌دار چهارگوش زرد");
+  });
+
+  it("اگه کلماتِ دسته‌بندی توی عنوان پراکنده باشن (نه پشتِ‌سرِهم)، بازم بعدِ اضافه‌کردن یکتا می‌مونه", () => {
+    // «پیراهن» و «سایز بزرگ» توی عنوان هستن ولی پشتِ‌سرِهم نیستن («مجلسی»
+    // وسطشونه) -- includesِ ساده این رو تشخیص نمی‌ده و «پیراهن سایز بزرگ» رو
+    // دوباره اول اضافه می‌کرد؛ dropRepeatedPhrasesِ بعدی باید تکرار رو جمع کنه
+    expect(
+      withCategoryPrefix("پیراهن مجلسی سایز بزرگ شیک دراز بافت ماکسی مشکی", "پیراهن سایز بزرگ")
+    ).toBe("پیراهن سایز بزرگ مجلسی شیک دراز بافت ماکسی مشکی");
   });
 });

@@ -1,7 +1,10 @@
 import { TrendyolProductLink } from "@/components/TrendyolProductLink";
 import { VerifiedBadge } from "@/components/TrendyolBadges";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
+import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 import type { TrendyolLiveProduct } from "@/lib/trendyol";
+import { formatTomanOrOriginalCurrency } from "@/lib/exchangeRate";
 
 // جای‌گزین ما برای ویجت «Popüler Ürünler» صفحه‌ی محصول ترندیول -- اون ویجت با
 // یه فچ جدای سمت کلاینت خودِ ترندیول میاد که توی HTML اولیه‌ی صفحه نیست و
@@ -19,7 +22,7 @@ export function TrendyolBestSellers({
   return (
     <div className="mt-8 pt-6 border-t cut-line">
       <h2 className="font-bold mb-4">پرفروش‌ترین‌های همین دسته</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-thin">
+      <HorizontalScroller>
         {products.map((p) => (
           <TrendyolProductLink
             key={p.id}
@@ -50,8 +53,10 @@ export function TrendyolBestSellers({
                   )}
                 </p>
               )}
-              <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">{p.nameFa}</h3>
-              <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} />
+              <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">
+                <AdminClickToTranslate text={p.nameFa} isAdmin={isAdmin} />
+              </h3>
+              <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} brand={p.brand} />
 
               {!!p.reviewCount && p.reviewCount > 0 && (
                 <p className="text-[11px] text-[var(--color-muted)] mb-2 flex items-center gap-1">
@@ -63,22 +68,32 @@ export function TrendyolBestSellers({
                 </p>
               )}
 
-              <div className="flex items-baseline gap-2 mt-auto pt-1">
-                {p.price != null && (
-                  <span className="font-bold text-[var(--color-wine)]">
-                    {p.price.toLocaleString("fa-IR")} تومان
-                  </span>
-                )}
-                {p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
-                  <span className="text-xs text-[var(--color-muted)] line-through">
-                    {p.originalPrice.toLocaleString("fa-IR")}
-                  </span>
-                )}
+              <div className="flex items-baseline gap-2 flex-wrap mt-auto pt-1">
+                {(() => {
+                  const formatted = formatTomanOrOriginalCurrency(p.price, p.priceLira);
+                  if (!formatted) return null;
+                  const rateNotSet = !p.price || p.price <= 0;
+                  return (
+                    <>
+                      <span className="font-bold text-[var(--color-wine)] whitespace-nowrap">{formatted}</span>
+                      {rateNotSet && p.originalPriceLira != null && p.priceLira != null && p.originalPriceLira > p.priceLira && (
+                        <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
+                          {Math.round(p.originalPriceLira).toLocaleString("fa-IR")} لیر
+                        </span>
+                      )}
+                      {!rateNotSet && p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
+                        <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
+                          {p.originalPrice.toLocaleString("fa-IR")}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </TrendyolProductLink>
         ))}
-      </div>
+      </HorizontalScroller>
     </div>
   );
 }

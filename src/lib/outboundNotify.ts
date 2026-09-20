@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import webpush from "web-push";
+import { getSiteSettings, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
 // Re-export constants from separate file (avoids dragging web-push into client bundles)
 export {
@@ -67,15 +68,47 @@ export function parseDisabledEvents(raw: string): string[] {
   }
 }
 
-// ارسال ایمیل -- در صورت تنظیم RESEND_API_KEY از Resend استفاده می‌کند،
-// وگرنه فقط لاگ می‌شود (خیلی شبیه به الگوی موجودِ بازیابی رمز در dev).
+// ارسال ایمیل -- دو پرووایدر پشتیبانی می‌شه:
+//  - "resend" (پیش‌فرض): اول تنظیماتِ ادمین (SiteSetting) رو چک می‌کنه، اگه
+//    کلیدِ API اونجا پر بود همون استفاده می‌شه؛ وگرنه رفتارِ قبلی (env varهای
+//    RESEND_API_KEY/RESEND_FROM) حفظ می‌شه.
+//  - "smtp": برای وصل‌کردنِ جیمیل یا هر سرورِ SMTPِ دیگه (هاست/پورت/یوزر/پس).
+// اگه هیچ‌کدوم پیکربندی نشده بود، فقط لاگ می‌شود (خیلی شبیه به الگوی موجودِ
+// بازیابی رمز در dev).
 export async function deliverEmail(opts: {
   to: string;
   subject: string;
   body: string;
 }): Promise<{ status: "SENT" | "LOGGED" | "FAILED"; error?: string }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM ?? "مداشاپ <noreply@mudashop.ir>";
+  const settings = await getSiteSettings([
+    SITE_SETTING_KEYS.EMAIL_PROVIDER,
+    SITE_SETTING_KEYS.EMAIL_PROVIDER_API_KEY,
+    SITE_SETTING_KEYS.EMAIL_PROVIDER_FROM_ADDRESS,
+    SITE_SETTING_KEYS.SMTP_HOST,
+    SITE_SETTING_KEYS.SMTP_PORT,
+    SITE_SETTING_KEYS.SMTP_SECURE,
+    SITE_SETTING_KEYS.SMTP_USER,
+    SITE_SETTING_KEYS.SMTP_PASSWORD,
+  ]);
+  const from =
+    settings[SITE_SETTING_KEYS.EMAIL_PROVIDER_FROM_ADDRESS] ||
+    process.env.RESEND_FROM ||
+    "مداشاپ <noreply@mudashop.ir>";
+
+  if (settings[SITE_SETTING_KEYS.EMAIL_PROVIDER] === "smtp") {
+    return deliverEmailViaSmtp({ ...opts, from, settings });
+  }
+  return deliverEmailViaResend({ ...opts, from, settings });
+}
+
+async function deliverEmailViaResend(opts: {
+  to: string;
+  subject: string;
+  body: string;
+  from: string;
+  settings: Record<string, string>;
+}): Promise<{ status: "SENT" | "LOGGED" | "FAILED"; error?: string }> {
+  const apiKey = opts.settings[SITE_SETTING_KEYS.EMAIL_PROVIDER_API_KEY] || process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log(`[outbound-email:LOGGED] به ${opts.to} -- ${opts.subject}\n${opts.body}`);
     return { status: "LOGGED" };
@@ -88,7 +121,7 @@ export async function deliverEmail(opts: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from,
+        from: opts.from,
         to: [opts.to],
         subject: opts.subject,
         text: opts.body,
@@ -98,6 +131,43 @@ export async function deliverEmail(opts: {
       const text = await res.text();
       return { status: "FAILED", error: `Resend ${res.status}: ${text.slice(0, 300)}` };
     }
+    return { status: "SENT" };
+  } catch (err) {
+    return { status: "FAILED", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// جیمیل رمزِ عبورِ معمولی رو برای SMTP رد می‌کنه -- باید «رمزِ اپلیکیشن» (App
+// Password، ۱۶ کاراکتری) از تنظیماتِ امنیتیِ اکانتِ گوگل (با ۲مرحله‌ای روشن)
+// ساخته بشه. هاست/پورتِ جیمیل: smtp.gmail.com:587 (بدونِ secure) یا :465 (با secure)
+async function deliverEmailViaSmtp(opts: {
+  to: string;
+  subject: string;
+  body: string;
+  from: string;
+  settings: Record<string, string>;
+}): Promise<{ status: "SENT" | "LOGGED" | "FAILED"; error?: string }> {
+  const host = opts.settings[SITE_SETTING_KEYS.SMTP_HOST];
+  const user = opts.settings[SITE_SETTING_KEYS.SMTP_USER];
+  const password = opts.settings[SITE_SETTING_KEYS.SMTP_PASSWORD];
+  if (!host || !user || !password) {
+    console.log(`[outbound-email:LOGGED] به ${opts.to} -- ${opts.subject}\n${opts.body}`);
+    return { status: "LOGGED" };
+  }
+  try {
+    const nodemailer = await import("nodemailer");
+    const transport = nodemailer.createTransport({
+      host,
+      port: Number(opts.settings[SITE_SETTING_KEYS.SMTP_PORT]) || 587,
+      secure: opts.settings[SITE_SETTING_KEYS.SMTP_SECURE] === "true",
+      auth: { user, pass: password },
+    });
+    await transport.sendMail({
+      from: opts.from,
+      to: opts.to,
+      subject: opts.subject,
+      text: opts.body,
+    });
     return { status: "SENT" };
   } catch (err) {
     return { status: "FAILED", error: err instanceof Error ? err.message : String(err) };

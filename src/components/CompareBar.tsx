@@ -13,7 +13,7 @@ export function CompareBar() {
   if (ids.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 inset-x-0 z-40 px-4">
+    <div className="fixed bottom-20 md:bottom-4 inset-x-0 z-40 px-4">
       <div className="max-w-3xl mx-auto border cut-line rounded-2xl bg-white shadow-lg px-4 py-3 ml-16 sm:ml-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 overflow-x-auto flex-1">
@@ -28,7 +28,7 @@ export function CompareBar() {
                 <button
                   onClick={() => remove(p.id)}
                   aria-label="حذف از مقایسه"
-                  className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-[var(--color-wine)] text-white text-[9px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-[var(--color-wine)] text-white text-[9px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
                 >
                   ✕
                 </button>

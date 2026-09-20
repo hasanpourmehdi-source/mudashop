@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useState, useTransition } from "react";
+import { Spinner } from "@/components/Spinner";
 
 const SORT_OPTIONS: { id: string; label: string }[] = [
   { id: "SCORE", label: "پیشنهادی" },
@@ -19,7 +20,7 @@ export function TrendyolSortDropdown() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
 
   const currentSst = searchParams.get("sst") ?? "SCORE";
   const currentLabel = SORT_OPTIONS.find((o) => o.id === currentSst)?.label ?? "پیشنهادی";
@@ -39,15 +40,20 @@ export function TrendyolSortDropdown() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 border cut-line rounded-lg px-3 py-2 bg-white hover:border-[var(--color-wine)]"
+        disabled={isPending}
+        className="flex items-center gap-2 border cut-line rounded-lg px-3 py-2 bg-white hover:border-[var(--color-wine)] disabled:opacity-60"
       >
+        {isPending && <Spinner className="w-3.5 h-3.5" />}
         {currentLabel}
         <span className="text-xs text-[var(--color-muted)]">↕</span>
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <ul className="absolute left-0 mt-1 z-20 bg-white border cut-line rounded-lg shadow-md min-w-[180px] py-1">
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          {/* z-40 -- بالاتر از هرچی توی گریدِ محصولات هست (مثلاً دکمه‌ی
+              «نگاه سریع» با z-20)، وگرنه با هاورِ یه کارتِ زیرِ همین منو، اون
+              دکمه روی خودِ لیستِ باز بازِ مرتب‌سازی می‌نشست */}
+          <ul className="absolute left-0 mt-1 z-40 bg-white border cut-line rounded-lg shadow-md min-w-[180px] py-1">
             {SORT_OPTIONS.map((opt) => (
               <li key={opt.id}>
                 <button

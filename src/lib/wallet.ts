@@ -23,14 +23,25 @@ export async function applyWalletTransaction(
   const wallet = await getOrCreateWallet(params.userId, client);
   const isCredit = ["TOPUP", "REFUND", "LOYALTY", "GIFT_CARD", "REFERRAL"].includes(params.type);
 
-  if (!isCredit && wallet.balance < params.amount) {
-    throw new Error("موجودی کیف پول کافی نیست");
+  let updated;
+  if (isCredit) {
+    updated = await client.wallet.update({
+      where: { id: wallet.id },
+      data: { balance: { increment: params.amount } },
+    });
+  } else {
+    // برداشت باید اتمیک باشد: balance را فقط اگر کافی باشد کم کن
+    // (updateMany با شرط balance >= amount)، وگرنه بین چک و update
+    // تراکنشِ همزمان می‌تونه موجودی را منفی کند
+    const res = await client.wallet.updateMany({
+      where: { id: wallet.id, balance: { gte: params.amount } },
+      data: { balance: { decrement: params.amount } },
+    });
+    if (res.count === 0) {
+      throw new Error("موجودی کیف پول کافی نیست");
+    }
+    updated = await client.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
   }
-
-  const updated = await client.wallet.update({
-    where: { id: wallet.id },
-    data: { balance: isCredit ? { increment: params.amount } : { decrement: params.amount } },
-  });
 
   await client.walletTransaction.create({
     data: {

@@ -5,6 +5,10 @@ import { fetchTrendyolAggregations, type TrendyolAggregationGroup } from "@/lib/
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { siteSlugToKind, MILLA_HOUSE_BRAND_IDS, MILLA_HOUSE_BRANDS } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // wg فقط برای دو بخش جنسیتی (Kadın/Erkek) معنی داره -- خودِ Trendyol API
 // (fetchTrendyolAggregations) این پارامتر رو اختیاری می‌گیره، پس برای ۸ بخش
 // دیگه (Ev & Yaşam، Süpermarket، ...) بدون wg هم می‌شه aggregations رو گرفت،
@@ -90,6 +94,17 @@ function toGroup(
 ): DynamicFilterGroup {
   const isSingle = g.title === "Ürün Puanı" || g.title === "Fiyat";
   const isGeneric = paramKey === "attr" || paramKey === "vr";
+
+  // خودِ aggregations زنده‌ی ترندیول بعضی وقتا همون valueId رو دوبار توی یه
+  // گروه برمی‌گردونه (مشابهِ همون کراس‌لیستِ دسته‌بندی‌ها) -- بدونِ این dedupe،
+  // چک‌باکس‌های سمتِ کلاینت با کلیدِ تکراری رندر می‌شن؛ اولین occurrence رو نگه می‌داریم
+  const seenIds = new Set<string>();
+  const uniqueValues = g.values.filter((v) => {
+    if (seenIds.has(v.id)) return false;
+    seenIds.add(v.id);
+    return true;
+  });
+
   return {
     key: isGeneric ? `${paramKey}:${g.filterKey}` : paramKey,
     title: titleFa ?? g.title,
@@ -97,7 +112,7 @@ function toGroup(
     attrFilterKey: isGeneric ? g.filterKey : undefined,
     selectionType: isSingle ? "SINGLE" : "MULTIPLE",
     order: displayOrderFor(g.title),
-    values: g.values.map((v) => ({
+    values: uniqueValues.map((v) => ({
       id: v.id,
       label: valueLabels.get(`${g.filterKey}::${v.id}`) ?? v.text,
       count: v.count,

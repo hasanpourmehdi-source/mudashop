@@ -50,6 +50,25 @@ export async function convertToToman(amount: number, currency: string): Promise<
   return applyExchangeRate(amount, info);
 }
 
+// وقتی نرخِ ارزِ این محصول هنوز توی تنظیمات ثبت نشده، تبدیل به تومان صفر
+// برمی‌گرده (طبقِ طراحیِ عمدیِ getExchangeRateInfo بالا) -- به‌جای نشون‌دادنِ
+// «۰ تومان»ِ گمراه‌کننده به مشتری، این تابع قیمتِ خامِ ارزی رو به‌عنوانِ
+// جایگزین برمی‌گردونه. هرجا قیمتِ لایوِ ترندیول نمایش داده می‌شه (نه قیمتِ
+// ثبت‌شده‌ی یه سفارشِ قدیمی که همیشه معتبره) باید از این استفاده کنه
+export function formatTomanOrOriginalCurrency(
+  amountToman: number | null | undefined,
+  amountOriginal: number | null | undefined,
+  currencyLabel: string = "لیر"
+): string | null {
+  if (amountToman != null && amountToman > 0) {
+    return `${amountToman.toLocaleString("fa-IR")} تومان`;
+  }
+  if (amountOriginal != null && amountOriginal > 0) {
+    return `${Math.round(amountOriginal).toLocaleString("fa-IR")} ${currencyLabel}`;
+  }
+  return null;
+}
+
 // موقع ذخیره‌ی نرخ جدید از پنل ادمین صدا زده می‌شه تا کش کهنه نمونه
 export function invalidateExchangeRateCache(currency?: string) {
   if (currency) cache.delete(currency);

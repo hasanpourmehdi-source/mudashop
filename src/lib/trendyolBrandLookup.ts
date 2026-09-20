@@ -17,27 +17,48 @@ import {
 // می‌کنیم، نه شکست‌های گذرا (که باید دوباره امتحان بشن)
 const brandIdCache = new Map<string, number | null>();
 
+async function searchTrendyolBrandsByName(name: string): Promise<Array<{ id: number; name: string }>> {
+  const url = `https://apigw.trendyol.com/integration/product/brands/by-name?name=${encodeURIComponent(name)}`;
+  const { res, retried } = await requestTrendyolWithRetry(() =>
+    gotScraping({
+      url,
+      headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
+      cookieJar: trendyolCookieJar,
+      headers: { accept: "application/json" },
+      throwHttpErrors: false,
+      responseType: "json",
+    })
+  );
+
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw buildTrendyolFetchError("جستجوی ID برند ترندیول", res, retried);
+  }
+
+  return (res.body as Array<{ id: number; name: string }>) ?? [];
+}
+
 export async function resolveTrendyolBrandId(brandName: string): Promise<number | null> {
   if (brandIdCache.has(brandName)) return brandIdCache.get(brandName)!;
 
   try {
-    const url = `https://apigw.trendyol.com/integration/product/brands/by-name?name=${encodeURIComponent(brandName)}`;
-    const { res, retried } = await requestTrendyolWithRetry(() =>
-      gotScraping({
-        url,
-        headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
-        cookieJar: trendyolCookieJar,
-        headers: { accept: "application/json" },
-        throwHttpErrors: false,
-        responseType: "json",
-      })
-    );
+    let list = await searchTrendyolBrandsByName(brandName);
 
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw buildTrendyolFetchError("جستجوی ID برند ترندیول", res, retried);
+    // «Trendyolmilla Man» (و مشابه‌هاش) توی دایرکتوریِ برندهای ترندیول با همین
+    // اسمِ دقیق ثبت نشده -- تأیید شده با تستِ مستقیم: جستجوی «Trendyolmilla Man»
+    // چیزی برنمی‌گردونه، ولی خودِ برندِ رسمیِ مردانه زیرِ اسمِ «TRENDYOL MAN»
+    // (بدونِ «milla») ثبت شده. یه بار با حذفِ «milla» هم امتحان می‌کنیم
+    if (list.length === 0 && /^trendyolmilla\s+\S/i.test(brandName)) {
+      list = await searchTrendyolBrandsByName(brandName.replace(/trendyolmilla/i, "Trendyol"));
     }
 
-    const list = (res.body as Array<{ id: number; name: string }>) ?? [];
+    // هنوز هیچی؟ (مثلاً «Trendyolmilla Woman»/«Trendyolmilla Kids» -- که برخلافِ
+    // مردانه، برندِ جدایی توی ترندیول ندارن) برندِ عمومیِ میلا (بدونِ پسوندِ
+    // جنسیت/دسته) رو fallback بگیر -- برای این‌که «محصولات مشابه» بی‌خودی
+    // کامل حذف نشه؛ بهتر از هیچیه چون این endpoint فقط شخصی‌سازیه
+    if (list.length === 0 && /^trendyolmilla\b/i.test(brandName.trim())) {
+      list = await searchTrendyolBrandsByName("Trendyolmilla");
+    }
+
     // تطبیق دقیق (case-insensitive) روی اسم -- اگه چندتا نتیجه‌ی مشابه اومد
     // (مثلاً "Framgan" و "Framgan Kids")، فقط دقیقاً هم‌نام رو قبول کن، وگرنه
     // اولین نتیجه رو fallback بگیر

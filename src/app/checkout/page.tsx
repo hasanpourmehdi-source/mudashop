@@ -8,6 +8,10 @@ import { useCart } from "@/hooks/useCart";
 import { GIFT_WRAP_COST, NO_COST_SHIPPING_METHODS, availableShippingMethods, calculateShipping } from "@/lib/shipping";
 import { getAppliedCouponCode, setAppliedCouponCode } from "@/lib/appliedCoupon";
 import { trackBeginCheckout, trackPurchase } from "@/lib/analytics";
+import { Spinner } from "@/components/Spinner";
+import { TrustBadgesInline } from "@/components/TrustBadgesInline";
+import { useTrustBadges } from "@/components/TrustBadgesProvider";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 
 type Address = {
   id: string;
@@ -43,6 +47,8 @@ export default function CheckoutPage() {
   const router = useRouter();
   const { status: sessionStatus } = useSession();
   const { items, total, clear } = useCart();
+  const trustBadges = useTrustBadges();
+  const { paused: salesPaused, message: salesPausedMessage } = useSalesPaused();
   // خریدِ مهمان: بدون لاگین هم می‌شه سفارش ثبت کرد (فقط با نام/ایمیل/تلفن)
   const isGuest = sessionStatus === "unauthenticated";
   const [guestEmail, setGuestEmail] = useState("");
@@ -68,6 +74,11 @@ export default function CheckoutPage() {
   // کیف پول
   const [walletBalance, setWalletBalance] = useState(0);
   const [useWallet, setUseWallet] = useState(false);
+
+  // مزیتِ باشگاه مشتریان -- سطوحِ بالاتر ممکنه ارسالِ رایگانِ نامحدود داشته
+  // باشن؛ اینجا فقط برای این‌که پیش‌نمایشِ چک‌اوت با چیزی که سرور واقعاً
+  // محاسبه می‌کنه یکی باشه (خودِ منطق سمتِ سرور، src/app/api/orders/route.ts)
+  const [tierFreeShipping, setTierFreeShipping] = useState(false);
 
   // ویرایش آدرس
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
@@ -112,6 +123,12 @@ export default function CheckoutPage() {
     fetch("/api/wallet")
       .then((res) => (res.ok ? res.json() : { balance: 0 }))
       .then((data) => setWalletBalance(data.balance ?? 0));
+
+    if (!isGuest) {
+      fetch("/api/loyalty")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => setTierFreeShipping(!!data?.tier?.freeShipping));
+    }
 
     fetch("/api/settings/public")
       .then((res) => (res.ok ? res.json() : { cashOnDeliveryEnabled: false }))
@@ -159,6 +176,7 @@ export default function CheckoutPage() {
     !hasExternalItems &&
     shippingMethod &&
     !coupon?.freeShipping &&
+    !tierFreeShipping &&
     !NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number])
       ? calculateShipping(subtotal)
       : 0;
@@ -249,6 +267,10 @@ export default function CheckoutPage() {
 
   async function handlePlaceOrder() {
     setError("");
+    if (salesPaused) {
+      setError(salesPausedMessage);
+      return;
+    }
     if (!agreedToTerms) {
       setError("برای ثبت سفارش، باید قوانین و مقررات را بپذیرید");
       return;
@@ -297,6 +319,7 @@ export default function CheckoutPage() {
           flashSaleId: i.flashSaleId,
           quantity: i.quantity,
           variantLabel: i.variantLabel,
+          merchantId: i.merchantId,
         })),
       }),
     });
@@ -342,7 +365,17 @@ export default function CheckoutPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 grid md:grid-cols-[1fr_320px] gap-8">
-      <div className="space-y-8">
+      {/* min-w-0 لازمه چون این ستون مستقیم فرزندِ گریده -- پایینِ md که فقط
+          یه ستونِ ضمنی داره، بدونِ این، محتوای داخلش می‌تونه عرضِ کلِ صفحه رو
+          به بیرون بزنه و باعثِ اسکرولِ افقیِ کل صفحه بشه (دقیقاً همون باگِ
+          سبدخرید) */}
+      <div className="space-y-8 min-w-0">
+        {salesPaused && (
+          <div className="border-2 cut-line rounded-lg p-4 bg-amber-50 text-sm">
+            <p className="font-medium">⏸️ {salesPausedMessage}</p>
+          </div>
+        )}
+
         {!isGuest && !emailVerified && (
           <div className="border-2 cut-line rounded-lg p-4 bg-amber-50 text-sm">
             <p className="font-medium">
@@ -413,9 +446,9 @@ export default function CheckoutPage() {
                       <button
                         onClick={() => handleSaveEditAddress(a.id)}
                         disabled={editAddressSaving}
-                        className="text-xs bg-[var(--color-wine)] text-white px-3 py-1.5 rounded-full disabled:opacity-50"
+                        className="text-xs inline-flex items-center justify-center gap-1 bg-[var(--color-wine)] text-white px-3 py-1.5 rounded-full disabled:opacity-50"
                       >
-                        {editAddressSaving ? "..." : "ذخیره"}
+                        {editAddressSaving ? <Spinner className="w-3 h-3" /> : "ذخیره"}
                       </button>
                       <button
                         onClick={() => setEditingAddressId(null)}
@@ -653,8 +686,9 @@ export default function CheckoutPage() {
             <button
               onClick={handleApplyCoupon}
               disabled={checkingCoupon}
-              className="border cut-line px-4 py-2 rounded-full text-sm font-medium bg-white disabled:opacity-50"
+              className="border cut-line inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium bg-white disabled:opacity-50"
             >
+              {checkingCoupon && <Spinner className="w-4 h-4" />}
               {checkingCoupon ? "در حال بررسی..." : "اعمال"}
             </button>
           </div>
@@ -704,12 +738,14 @@ export default function CheckoutPage() {
             {items.map((item) => (
               <div
                 key={item.id}
-                className="flex justify-between text-sm border cut-line rounded-lg p-3 bg-white"
+                className="flex justify-between gap-2 flex-wrap text-sm border cut-line rounded-lg p-3 bg-white"
               >
                 <span>
                   {item.title} {item.variantLabel && `(${item.variantLabel})`} × {item.quantity}
                 </span>
-                <span className="font-medium">
+                {/* whitespace-nowrap لازمه چون بدونش، توی ردیفِ باریک، عددِ
+                    قیمت از خودِ «تومان» جدا می‌شه و به خط بعد می‌ره */}
+                <span className="font-medium whitespace-nowrap">
                   {(item.price * item.quantity).toLocaleString("fa-IR")} تومان
                 </span>
               </div>
@@ -719,7 +755,7 @@ export default function CheckoutPage() {
       </div>
 
       {/* خلاصه سفارش */}
-      <aside className="border cut-line rounded-lg p-5 bg-white h-fit space-y-3 text-sm">
+      <aside className="border cut-line rounded-lg p-5 bg-white h-fit min-w-0 space-y-3 text-sm">
         <h2 className="font-bold mb-2">خلاصه سفارش</h2>
         <div className="flex justify-between">
           <span className="text-[var(--color-muted)]">جمع اقلام</span>
@@ -734,7 +770,7 @@ export default function CheckoutPage() {
         <div className="flex justify-between">
           <span className="text-[var(--color-muted)]">
             هزینه ارسال
-            {!hasExternalItems && shippingCost === 0 && !coupon?.freeShipping && (
+            {!hasExternalItems && shippingCost === 0 && !coupon?.freeShipping && !tierFreeShipping && (
               <span className="block text-[10px] text-[var(--color-muted)]">
                 {NO_COST_SHIPPING_METHODS.includes(shippingMethod as (typeof NO_COST_SHIPPING_METHODS)[number])
                   ? "پرداخت مستقیم به تحویل‌دهنده"
@@ -748,7 +784,9 @@ export default function CheckoutPage() {
               : shippingCost === 0
                 ? coupon?.freeShipping
                   ? "رایگان (کد تخفیف)"
-                  : "رایگان"
+                  : tierFreeShipping
+                    ? "رایگان (مزیت باشگاه مشتریان)"
+                    : "رایگان"
                 : shippingMethod
                   ? `${shippingCost.toLocaleString("fa-IR")} تومان`
                   : "پس از انتخاب نحوه ارسال"}
@@ -799,11 +837,14 @@ export default function CheckoutPage() {
 
         <button
           onClick={handlePlaceOrder}
-          disabled={submitting}
-          className="w-full bg-[var(--color-wine)] text-white py-3 rounded-full font-medium disabled:opacity-50"
+          disabled={submitting || salesPaused}
+          className="w-full inline-flex items-center justify-center gap-2 bg-[var(--color-wine)] text-white py-3 rounded-full font-medium disabled:opacity-50"
         >
+          {submitting && <Spinner className="w-4 h-4" />}
           {submitting ? "در حال ثبت سفارش..." : "ثبت سفارش"}
         </button>
+
+        <TrustBadgesInline badges={trustBadges} />
       </aside>
     </div>
   );

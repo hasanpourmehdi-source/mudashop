@@ -9,6 +9,7 @@ import { WishlistButton } from "@/components/WishlistButton";
 import { StarRating, VerifiedBadge, EyeIcon, getStripBadgeLabel } from "@/components/TrendyolBadges";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
 import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
+import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
 
 // میلا/ترندیول در مرز صفحه‌ها محصولات تکراری برمی‌گردونن (همان id) -- dedup
 // به‌جای append خام، تا کلید React تکراری نشه (که باعث می‌شد کارت‌ها dup
@@ -22,16 +23,39 @@ export function dedupeProducts(
   return [...current, ...fresh];
 }
 
+// عکس‌های ترندیول/میلا از cdn.dsmcdn.com همیشه با یه سگمنتِ اندازه‌ی ثابت
+// می‌رسن (مثلاً .../mnresize/400/-/...)، حتی اگه کارتِ گرید (خصوصاً موبایلِ
+// ۲ستونه) خیلی کوچیک‌تر از ۴۰۰px نمایش بده. برای srcset یه نسخه‌ی کوچیک‌تر
+// و یه نسخه‌ی بزرگ‌تر می‌سازیم -- روی خودِ URL پراکسی‌شده کار می‌کنه (نه دیتای
+// خام)، پس نیازی به تغییرِ لایه‌ی داده/تایپ‌ها نیست. اگه فرمتِ آدرس فرق داشت،
+// بی‌خطر همون URL اصلی برمی‌گرده
+function resizeProxiedTrendyolImage(proxiedUrl: string, width: number): string {
+  try {
+    const u = new URL(proxiedUrl, "https://mudashop.vercel.app");
+    const inner = u.searchParams.get("url");
+    if (!inner) return proxiedUrl;
+    const resized = inner.replace(/\/mnresize\/\d+\//, `/mnresize/${width}/`);
+    if (resized === inner) return proxiedUrl;
+    return `/api/image-proxy?url=${encodeURIComponent(resized)}`;
+  } catch {
+    return proxiedUrl;
+  }
+}
+
 function TrendyolProductCard({
   p,
+  index,
   onQuickView,
   isWishlisted,
   attrsQuery,
+  minDiscountPercentToShow = 2,
 }: {
   p: TrendyolLiveProduct;
+  index: number;
   onQuickView: (p: TrendyolLiveProduct) => void;
   isWishlisted: boolean;
   attrsQuery?: string;
+  minDiscountPercentToShow?: number;
 }) {
   const gallery = p.images.length > 0 ? p.images : p.image ? [p.image] : [];
   const [activeIndex, setActiveIndex] = useState(0);
@@ -57,18 +81,31 @@ function TrendyolProductCard({
       contentId={p.id}
       trendyolUrl={p.url}
       attrsQuery={attrsQuery}
-      className="group flex flex-col h-full border cut-line rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow"
+      // min-w-0 لازمه چون این کارت مستقیم فرزندِ گریده -- بدونش، اسپنِ
+      // whitespace-nowrapِ قیمت (برای جلوگیری از دوخطی‌شدنِ «تومان») می‌تونه
+      // عریض‌تر از ستونِ گرید بشه و کلِ گرید/صفحه رو عرضی اسکرول‌پذیر کنه
+      // (دقیقاً چیزی که با فیکسِ whitespace-nowrap موقعِ اعدادِ بزرگ پیش میومد)
+      className="group flex flex-col h-full min-w-0 border cut-line rounded-lg bg-white hover:shadow-lg transition-shadow"
     >
+      {/* rounded-t-lg مستقیم اینجا (نه overflow-hidden روی کلِ کارت) -- وگرنه
+          پاپ‌آپِ ترجمه/ویرایشِ کلمه (که پایین‌ترِ همین کارت، زیرِ عنوان باز
+          می‌شه) توسطِ همون overflow قطع/مخفی می‌شد */}
       <div
-        className="relative aspect-[3/4] shrink-0 bg-[var(--color-linen-dim)] overflow-hidden"
+        className="relative aspect-[3/4] shrink-0 rounded-t-lg overflow-hidden bg-[var(--color-linen-dim)]"
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
       >
         {displayedImage && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={displayedImage}
+            src={resizeProxiedTrendyolImage(displayedImage, 400)}
+            srcSet={`${resizeProxiedTrendyolImage(displayedImage, 240)} 240w, ${resizeProxiedTrendyolImage(displayedImage, 480)} 480w`}
+            sizes="(min-width: 768px) 22vw, (min-width: 640px) 31vw, 48vw"
             alt=""
+            // ردیفِ اول (بالای تاخوردگی) eager، بقیه lazy -- طبقِ درخواستِ صریح
+            // برای کاهشِ لودِ اولیه؛ ۴ کارتِ اول چون بیشترین breakpoint چهارستونه‌ست
+            loading={index < 4 ? "eager" : "lazy"}
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         )}
@@ -119,8 +156,10 @@ function TrendyolProductCard({
           </span>
         )}
 
-        {/* دکمه‌ی «نگاه سریع» -- فقط موقع هاور روی عکس ظاهر می‌شه، مثل Hızlı Bakış
-            ترندیول. preventDefault+stopPropagation لازمه چون این دکمه داخل
+        {/* دکمه‌ی «نگاه سریع» -- موقع هاور روی عکس ظاهر می‌شه، مثل Hızlı Bakış
+            ترندیول؛ روی دستگاه‌های بدون ماوس (هاور بی‌معنی) همیشه نشون داده
+            می‌شه، وگرنه توی اپ/موبایل اصلاً قابل‌کلیک نبود.
+            preventDefault+stopPropagation لازمه چون این دکمه داخل
             TrendyolProductLink (یه <a>) هست و نباید ناوبری رو راه بندازه.
             hover:bg/hover:text تغییر رنگ موقع هاور مستقیم روی خودِ دکمه رو
             تضمین می‌کنه (نه فقط ظاهرشدنش موقع هاور روی عکس) */}
@@ -131,7 +170,7 @@ function TrendyolProductCard({
             e.stopPropagation();
             onQuickView(p);
           }}
-          className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-colors bg-white/95 hover:bg-[var(--color-wine)] text-[var(--color-ink)] hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow flex items-center gap-1.5 z-20 cursor-pointer"
+          className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-colors bg-white/95 hover:bg-[var(--color-wine)] text-[var(--color-ink)] hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow flex items-center gap-1.5 z-20 cursor-pointer"
         >
           <EyeIcon className="w-3.5 h-3.5" />
           نگاه سریع
@@ -170,10 +209,10 @@ function TrendyolProductCard({
           className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]"
           dir="rtl"
         >
-          {p.nameFa}
+          <AdminClickToTranslate text={p.nameFa} isAdmin={isAdmin} />
         </h3>
         <div className="flex flex-wrap items-center gap-2 mb-1.5">
-          <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} />
+          <AdminOriginalTitleCopy originalTitle={p.name} isAdmin={isAdmin} brand={p.brand} />
           {p.url && <AdminOriginalLinkCopy url={p.url} isAdmin={isAdmin} alwaysVisible={false} />}
         </div>
 
@@ -207,26 +246,94 @@ function TrendyolProductCard({
           </p>
         )}
 
-        <div className="flex items-baseline gap-2 mt-auto pt-1">
-          {p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
-            <span
-              dir="ltr"
-              className="text-[11px] font-bold text-white bg-[var(--color-wine)] rounded px-1.5 py-0.5"
-            >
-              ٪-{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100).toLocaleString("fa-IR")}
-            </span>
-          )}
-          {p.price != null && (
-            <span className="font-bold text-[var(--color-wine)]">
-              {p.price.toLocaleString("fa-IR")} تومان
-            </span>
-          )}
-          {p.originalPrice != null && p.price != null && p.originalPrice > p.price && (
-            <span className="text-xs text-[var(--color-muted)] line-through">
-              {p.originalPrice.toLocaleString("fa-IR")}
-            </span>
-          )}
-        </div>
+        {(() => {
+          const hasNormalDiscount = p.originalPrice != null && p.price != null && p.originalPrice > p.price;
+          // برخلافِ تخفیفِ عادی (که خودِ ترندیول از قبل روی price اعمال کرده)،
+          // تخفیفِ سبد شرطیه و روی دیتای خام اعمال نشده -- خودمون از روی درصد
+          // حسابش می‌کنیم؛ درصدش هم با رنگِ سبز (نه برچسبِ متنیِ «تخفیفِ سبد»)
+          const hasBasketDiscount = p.basketCampaignPercent != null && p.price != null;
+          const finalPrice = hasBasketDiscount
+            ? Math.round((p.price! * (1 - p.basketCampaignPercent! / 100)) / 1000) * 1000
+            : p.price;
+          const finalPriceLira =
+            hasBasketDiscount && p.priceLira != null
+              ? p.priceLira * (1 - p.basketCampaignPercent! / 100)
+              : p.priceLira;
+          // اگه هردو تخفیف باشن، به‌جای دوتا بجِ جدا، یه درصدِ کلی (نسبتِ
+          // originalPrice به قیمتِ نهایی) نشون می‌دیم؛ و از دوتا قیمتِ
+          // خط‌خورده‌ی احتمالی، فقط اولی (اصلی‌ترین/originalPrice) رو -- نه
+          // قیمتِ میانیِ price رو هم -- تا شلوغ نشه
+          const combinedPercent =
+            hasNormalDiscount && hasBasketDiscount && finalPrice != null
+              ? Math.round(((p.originalPrice! - finalPrice) / p.originalPrice!) * 100)
+              : hasNormalDiscount
+                ? Math.round(((p.originalPrice! - p.price!) / p.originalPrice!) * 100)
+                : hasBasketDiscount
+                  ? p.basketCampaignPercent!
+                  : null;
+          const struckValue = hasNormalDiscount ? p.originalPrice : hasBasketDiscount ? p.price : null;
+          const struckLira = hasNormalDiscount ? p.originalPriceLira : hasBasketDiscount ? p.priceLira : null;
+          // فقط برای ادمین -- تولتیقِ عدد خامِ لیرِ همون قیمت، برای تأییدِ سریعِ
+          // نرخِ تبدیل بدون رفتن به صفحه‌ی جزئیات
+          const liraTitle = (lira: number | null | undefined) =>
+            isAdmin && lira != null ? `${lira.toLocaleString("en-US", { maximumFractionDigits: 2 })} TL` : undefined;
+          return (
+            <div className="flex items-baseline gap-2 mt-auto pt-1 flex-wrap">
+              {combinedPercent != null && combinedPercent >= minDiscountPercentToShow && (
+                <span
+                  dir="ltr"
+                  className={`text-[11px] font-bold text-white rounded px-1.5 py-0.5 ${
+                    hasBasketDiscount ? "bg-emerald-600" : "bg-[var(--color-wine)]"
+                  }`}
+                >
+                  ٪{combinedPercent.toLocaleString("fa-IR")}
+                </span>
+              )}
+              {(() => {
+                // اگه نرخِ لیر توی تنظیمات ثبت نشده باشه، تبدیل به تومان صفر
+                // برمی‌گرده -- به‌جایِ «۰ تومان»ِ گمراه‌کننده، قیمتِ خامِ لیر
+                // رو مستقیم نشون می‌دیم (برای همه، نه فقط تولتیقِ ادمین)
+                const rateNotSet = !finalPrice && finalPriceLira != null && finalPriceLira > 0;
+                if (rateNotSet) {
+                  return (
+                    <>
+                      <span
+                        className={`font-bold whitespace-nowrap ${hasBasketDiscount ? "text-emerald-600" : "text-[var(--color-wine)]"}`}
+                      >
+                        {Math.round(finalPriceLira).toLocaleString("fa-IR")} لیر
+                      </span>
+                      {struckLira != null && (
+                        <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
+                          {Math.round(struckLira).toLocaleString("fa-IR")} لیر
+                        </span>
+                      )}
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    {finalPrice != null && (
+                      <span
+                        className={`font-bold whitespace-nowrap ${hasBasketDiscount ? "text-emerald-600" : "text-[var(--color-wine)]"}`}
+                        title={liraTitle(finalPriceLira)}
+                      >
+                        {finalPrice.toLocaleString("fa-IR")} تومان
+                      </span>
+                    )}
+                    {struckValue != null && (
+                      <span
+                        className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap"
+                        title={liraTitle(struckLira)}
+                      >
+                        {struckValue.toLocaleString("fa-IR")}
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          );
+        })()}
 
         {/* دکمه‌ی خرید -- چون سایز/رنگ دقیق و موجودی واقعی رو فقط بعد از فچ
             جزئیات کامل داریم (نه توی همین کارت سبک گرید)، کلیک همون مودال
@@ -253,11 +360,13 @@ export function TrendyolLiveGrid({
   initialNextUrl,
   initialWishlistedIds = [],
   activeAttrsQuery,
+  minDiscountPercentToShow = 2,
 }: {
   initialProducts: TrendyolLiveProduct[];
   initialNextUrl: string | null;
   initialWishlistedIds?: string[];
   activeAttrsQuery?: string;
+  minDiscountPercentToShow?: number;
 }) {
   const [products, setProducts] = useState(initialProducts);
   const [nextUrl, setNextUrl] = useState(initialNextUrl);
@@ -316,13 +425,15 @@ export function TrendyolLiveGrid({
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-        {visibleProducts.map((p) => (
+        {visibleProducts.map((p, index) => (
           <TrendyolProductCard
             key={p.id}
             p={p}
+            index={index}
             onQuickView={setQuickViewProduct}
             isWishlisted={wishlistedIds.has(String(p.id))}
             attrsQuery={activeAttrsQuery}
+            minDiscountPercentToShow={minDiscountPercentToShow}
           />
         ))}
       </div>
@@ -332,6 +443,7 @@ export function TrendyolLiveGrid({
           initialProduct={quickViewProduct}
           isWishlisted={wishlistedIds.has(String(quickViewProduct.id))}
           onClose={() => setQuickViewProduct(null)}
+          minDiscountPercentToShow={minDiscountPercentToShow}
         />
       )}
 

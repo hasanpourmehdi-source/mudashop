@@ -7,6 +7,11 @@ import { fetchTrendyolProductsFromUrl } from "@/lib/trendyol";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { VerifiedBadge } from "@/components/TrendyolBadges";
 import { TrendyolLiveGrid } from "@/components/TrendyolLiveGrid";
+import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
 
 export default async function TrendyolStorePage({
   params,
@@ -37,6 +42,8 @@ export default async function TrendyolStorePage({
 
   const session = await auth();
   const wishlistedTrendyolIds = await fetchWishlistedTrendyolIds(session?.user?.id);
+  const minDiscountPercentToShow =
+    Number(await getSiteSetting(SITE_SETTING_KEYS.MIN_DISCOUNT_PERCENT_TO_SHOW)) || 2;
 
   let initialProducts: Awaited<ReturnType<typeof fetchTrendyolProductsFromUrl>>["products"] = [];
   let initialNextUrl: string | null = null;
@@ -58,7 +65,7 @@ export default async function TrendyolStorePage({
   }
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 py-8">
+    <div className="max-w-[1600px] mx-auto px-4 pt-3 pb-8 md:pt-8">
       <div className="border cut-line rounded-xl overflow-hidden bg-white mb-8">
         {seller.bannerImage && (
           <div className="relative h-32 sm:h-48 bg-[var(--color-linen-dim)]">
@@ -92,6 +99,7 @@ export default async function TrendyolStorePage({
           initialProducts={initialProducts}
           initialNextUrl={initialNextUrl}
           initialWishlistedIds={Array.from(wishlistedTrendyolIds)}
+          minDiscountPercentToShow={minDiscountPercentToShow}
         />
       )}
     </div>

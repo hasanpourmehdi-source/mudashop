@@ -24,6 +24,7 @@ export async function checkLowStockAndAlert(): Promise<void> {
       product: { select: { title: true } },
       values: { select: { attribute: true, value: true } },
     },
+    orderBy: { stock: "asc" },
     take: 50, // محضِ احتیاط -- سقفی برای این‌که یه فروشگاهِ خیلی بزرگ توی یه اجرا صدها اعلان نسازه
   });
 

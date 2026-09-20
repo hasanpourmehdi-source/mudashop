@@ -5,15 +5,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { useCart } from "@/hooks/useCart";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 import { SearchBox } from "@/components/SearchBox";
 import { CategoryMegaMenu } from "@/components/CategoryMegaMenu";
 import { MobileMenuSuspense } from "@/components/MobileMenu";
 import { NotificationBell } from "@/components/NotificationBell";
+import { LoyaltyTierBadge } from "@/components/LoyaltyTierBadge";
 import { MessageLink } from "@/components/MessageLink";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { useLang } from "@/components/LanguageProvider";
 import { t } from "@/lib/i18n";
+import { useCurrentMarketplaceStore } from "@/store/currentMarketplace";
 import type { CategoryNode, MegaMenuRoot } from "@/lib/categories";
 
 export function Header({
@@ -27,9 +30,14 @@ export function Header({
 }) {
   const { data: session, status } = useSession();
   const { items } = useCart();
+  const { paused: salesPaused } = useSalesPaused();
   const { lang } = useLang();
   const cartCount = items.reduce((sum, i) => sum + i.quantity, 0);
   const pathname = usePathname();
+  // چون /products/trendyol/[slug] برای هم خودِ ترندیول و هم ترندیول‌میلا مشترکه
+  // و از روی pathname قابل‌تشخیص نیست، خودِ صفحه‌ی محصول (CurrentMarketplaceSync)
+  // این مقدار رو موقعِ mount ست می‌کنه تا هدر بدونه دقیقاً مالِ کدوم سایته
+  const currentProductSiteSlug = useCurrentMarketplaceStore((s) => s.siteSlug);
 
   // صفحه‌ی جزئیات محصول ترندیول (/products/trendyol/[slug]) هم بخشی از «ترندیول»
   // حساب می‌شه، نه «موجود در مزون» -- با اینکه زیر مسیر /marketplaces نیست
@@ -45,6 +53,14 @@ export function Header({
   // startsWith روی مسیر باعث می‌شد توی "/marketplaces/trendyol-milla" هم لینک
   // «ترندیول» رنگی بمونه
   const currentMarketplaceSlug = pathname.match(/^\/marketplaces\/([^/]+)/)?.[1] ?? null;
+
+  // برای منوی موبایل -- همون منطقِ isActive بالا (خطِ ~۱۲۷)، فقط یه‌بار جمع‌شده
+  // به یه مقدارِ ساده، چون MobileMenu نمی‌خواد useCurrentMarketplaceStore رو
+  // دوباره صدا بزنه یا کل این محاسبه رو تکرار کنه
+  const activeMarketplaceSlug: "mazon" | string | null = isMazonActive
+    ? "mazon"
+    : (currentMarketplaceSlug ??
+      (isTrendyolProductPage ? (currentProductSiteSlug ?? "trendyol") : null));
 
   // توی پنل ادمین جستجوی محصول و منوی دسته‌بندی‌های افقی معنی ندارن -- این
   // بخش‌ها مخصوص گشت‌وگذار توی فروشگاهه، نه مدیریت
@@ -91,20 +107,20 @@ export function Header({
     // wrap کردن اضافه بشه، ارتفاع اون والد دقیقاً برابر همین محتوا می‌شه و
     // چسبناک بعد از رد شدن از همون ارتفاع کم دیگه جایی برای موندن نداره و از
     // صفحه خارج می‌شه. با چسبناک بودن خودِ header، والدش body می‌شه که کل
-    // صفحه رو در بر می‌گیره). با اسکرول به پایین، فقط نوار بالا و منوی
-    // دسته‌بندی جمع می‌شن (پایین‌تر همین کد)؛ با اسکرول به بالا (از هر جای
-    // صفحه) دوباره باز می‌شن. ردیف اصلی (لوگو/جستجو/آیکون‌ها) همیشه سرجاش می‌مونه
+    // صفحه رو در بر می‌گیره). با اسکرول به پایین، فقط منوی دسته‌بندی جمع می‌شه
+    // (پایین‌تر همین کد)؛ با اسکرول به بالا (از هر جای صفحه) دوباره باز می‌شه.
+    // نوار نازکِ بالایی (شاملِ سوییچِ سریعِ مزون/ترندیول/میلا) و ردیف اصلی
+    // (لوگو/جستجو/آیکون‌ها) همیشه سرجاشون می‌مونن -- تا وسطِ اسکرول گم نشن
     <header
       className="sticky top-0 z-30 bg-[var(--color-linen)]/95 backdrop-blur border-b cut-line"
       style={{ overflowAnchor: "none" }}
     >
-        {/* نوار نازک بالایی -- لینک‌های کم‌کاربردتر، دقیقاً مثل نسخه‌ی ترندیول.
-            با اسکرول به پایین، دقیقاً مثل منوی دسته‌بندی جمع می‌شه (همون
-            menuVisible)، تا فقط ردیف اصلی (لوگو/جستجو) سرجاش بمونه */}
-        <div
-          className="hidden md:block overflow-hidden transition-[max-height] duration-300 ease-in-out"
-          style={{ maxHeight: menuVisible ? "36px" : "0px" }}
-        >
+        {/* نوار نازک بالایی -- لینک‌های کم‌کاربردتر + سوییچِ سریعِ مزون/ترندیول/میلا.
+            عمداً دیگه با اسکرول جمع نمی‌شه (برخلافِ قبل) -- چون همون سوییچِ
+            سریعِ مارکت‌پلیس این‌جاست، و وسطِ اسکرول گم‌شدنش یعنی کاربر برای
+            عوض‌کردنِ سایت باید برگرده بالای صفحه. فقط منوی دسته‌بندیِ زیرش
+            (پایین‌تر همین کد) با اسکرول جمع می‌شه */}
+        <div className="hidden md:block">
           <div className="bg-[var(--color-ink)] text-white">
             <div className="max-w-[1600px] mx-auto px-4 h-9 flex items-center justify-between text-xs">
               <div className="flex items-center gap-5">
@@ -121,7 +137,10 @@ export function Header({
                 {externalSites.map((site) => {
                   const isActive =
                     currentMarketplaceSlug === site.slug ||
-                    (site.slug === "trendyol" && isTrendyolProductPage);
+                    (isTrendyolProductPage &&
+                      (currentProductSiteSlug
+                        ? currentProductSiteSlug === site.slug
+                        : site.slug === "trendyol"));
                   return (
                     <Link
                       key={site.id}
@@ -203,7 +222,10 @@ export function Header({
                 className="flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
               >
                 <span className="text-lg leading-none">👤</span>
-                {session.user?.name?.split(" ")[0] ?? t(lang, "profile")}
+                <span className="flex items-center gap-1">
+                  {session.user?.name?.split(" ")[0] ?? t(lang, "profile")}
+                  <LoyaltyTierBadge variant="icon" />
+                </span>
               </Link>
             ) : (
               <Link
@@ -223,23 +245,32 @@ export function Header({
               {t(lang, "wishlist")}
             </Link>
 
-            <Link
-              href="/cart"
-              className="relative flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
-            >
-              <span className="text-lg leading-none">🛒</span>
-              {t(lang, "cart")}
-              {cartCount > 0 && (
-                <span className="absolute -top-1 -left-3 bg-[var(--color-wine)] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                  {cartCount}
-                </span>
-              )}
-            </Link>
+            {!salesPaused && (
+              <Link
+                href="/cart"
+                className="relative flex flex-col items-center gap-0.5 hover:text-[var(--color-wine)] transition-colors"
+              >
+                <span className="text-lg leading-none">🛒</span>
+                {t(lang, "cart")}
+                {cartCount > 0 && (
+                  <span className="absolute -top-1 -left-3 bg-[var(--color-wine)] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
+                    {cartCount}
+                  </span>
+                )}
+              </Link>
+            )}
           </div>
         </div>
 
         {/* جستجو + دسته‌بندی موبایل -- فقط در اندازه‌های md و کوچک‌تر */}
-        {!isAdminPage && <MobileMenuSuspense categories={categories} genderGroups={genderGroups} />}
+        {!isAdminPage && (
+          <MobileMenuSuspense
+            categories={categories}
+            genderGroups={genderGroups}
+            externalSites={externalSites}
+            activeMarketplaceSlug={activeMarketplaceSlug}
+          />
+        )}
 
         {/* منوی دسته‌بندی‌های افقی -- عمداً داخل همون div چسبناک بالاست (نه
             بیرونش)، تا جمع‌شدنش با اسکرول به پایین هیچ فضای خالی نذاره -- فقط

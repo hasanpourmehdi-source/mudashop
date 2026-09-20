@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import type { Prisma } from "@prisma/client";
-import { invalidateTitleDictionaryCache, invalidateTitleCacheForTerm } from "@/lib/trendyolTitleTranslation";
+import {
+  invalidateTitleDictionaryCache,
+  invalidateTitleCacheForTerm,
+  bumpDictionaryVersion,
+} from "@/lib/trendyolTitleTranslation";
 import { foldTurkish } from "@/lib/turkishText";
 import { refreshUntranslatedRowsContaining } from "@/lib/trendyolTranslationDictionary";
 
@@ -14,10 +18,18 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get("q") ?? "").trim();
   const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
+  // exact=true: برای وقتی که از قبل دقیقاً می‌دونیم چه termFaـی می‌خوایم (مثلاً
+  // کلیک روی یه کلمه‌ی ترجمه‌شده‌ی مشخص توی عنوان) -- عمداً contains نیست، چون
+  // یه کلمه‌ی کوتاه مثل «نوع» زیرمجموعه‌ی رشته‌ی کاملاً بی‌ربطی مثل «مصنوعی» هم
+  // هست و با contains نتیجه‌های نامربوطِ زیادی برمی‌گردوند (و حتی می‌تونست
+  // نتیجه‌ی واقعی رو از سقفِ limit بیرون بندازه)
+  const exact = searchParams.get("exact") === "true";
 
-  const where: Prisma.TrendyolTitleTermDictionaryWhereInput = q
-    ? { OR: [{ termTr: { contains: q } }, { termFa: { contains: q } }] }
-    : {};
+  const where: Prisma.TrendyolTitleTermDictionaryWhereInput = exact
+    ? { termFa: q }
+    : q
+      ? { OR: [{ termTr: { contains: q } }, { termFa: { contains: q } }] }
+      : {};
 
   const results = await prisma.trendyolTitleTermDictionary.findMany({
     where,
@@ -57,6 +69,7 @@ export async function POST(request: Request) {
       update: { termFa, priority, noTranslationNeeded },
     });
     invalidateTitleDictionaryCache();
+    await bumpDictionaryVersion();
     await invalidateTitleCacheForTerm(termTr);
     await refreshUntranslatedRowsContaining(termTr, termFa);
     return NextResponse.json(created);

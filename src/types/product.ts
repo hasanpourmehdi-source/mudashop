@@ -29,6 +29,8 @@ export type UnifiedProduct = {
   sourceUrl?: string;
   fastShipping?: boolean; // بج «ارسال فوری» -- فقط محصولات مزون معنی داره
   isReturnable?: boolean; // فقط محصولات مزون معنی داره -- undefined/true یعنی قابل‌مرجوع
+  defectNote?: string | null; // فقط مزون -- پرشده یعنی محصول «ایراد دار»
+  defectImage?: string | null;
   careInstructions?: string | null; // فقط مزون
   videoUrl?: string | null; // فقط مزون
   // مجموع موجودیِ همه‌ی ترکیب‌ها -- فقط مزون، چون موجودیِ واقعیِ ترندیول رو

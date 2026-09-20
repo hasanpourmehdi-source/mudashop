@@ -28,7 +28,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   const links = scopes.map((s) => SCOPE_LINKS[s]).filter((l): l is { href: string; label: string } => !!l);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 grid md:grid-cols-[190px_1fr] gap-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 md:grid-cols-[190px_1fr] gap-8">
       <aside className="space-y-1.5 text-sm md:sticky md:top-4 md:self-start">
         <p className="text-[10px] font-bold text-[var(--color-muted)] tracking-wide px-1 mb-2">پرتال کارمندان</p>
         {links.length === 0 ? (

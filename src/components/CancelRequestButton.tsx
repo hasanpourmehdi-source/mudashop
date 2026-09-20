@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { canCustomerCancelOrder } from "@/lib/orderCancellation";
+import { Spinner } from "@/components/Spinner";
 
 // برای سفارش‌های حاوی کالای خارجی: مشتری نمی‌تونه مستقیم لغو کنه -- فقط یه
 // «درخواست لغو» ثبت می‌کنه که ادمین باید تأیید یا ردش کنه. این کامپوننت
@@ -108,8 +109,9 @@ export function CancelRequestButton({
         <button
           onClick={handleSubmit}
           disabled={loading}
-          className="text-sm bg-red-600 text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
+          className="text-sm inline-flex items-center justify-center gap-1.5 bg-red-600 text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
         >
+          {loading && <Spinner className="w-3.5 h-3.5" />}
           {loading ? "در حال ثبت..." : "ثبت درخواست لغو"}
         </button>
         <button

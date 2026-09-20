@@ -8,6 +8,7 @@ import { useColorSync } from "@/components/ColorSyncProvider";
 import { WishlistButton } from "@/components/WishlistButton";
 import { SizeGuideButton } from "@/components/SizeGuideButton";
 import { AdminAddToOrderButton } from "@/components/AdminAddToOrderButton";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 import { trackAddToCart } from "@/lib/analytics";
 
 type VariantOption = {
@@ -18,6 +19,9 @@ type VariantOption = {
   stock: number | null;
   priceDiff: number;
   values: { attribute: string; value: string }[];
+  // اندازه‌ی واقعیِ فیزیکیِ همین ترکیب (اختیاری -- فقط مزون، فقط اگه ادمین
+  // پر کرده باشه) -- مثلاً برای سایز XL: [{label:"دور کمر",cm:78}, ...]
+  measurements?: { label: string; cm: number }[];
 };
 
 type SelectedSlot = { attribute: string; value: string };
@@ -61,6 +65,9 @@ export function AddToCartForm({
   image,
   basePrice,
   originalPrice,
+  priceTL,
+  originalPriceTL,
+  isAdmin = false,
   discount = 0,
   variants,
   flashSaleId,
@@ -73,6 +80,8 @@ export function AddToCartForm({
   initialAttrs,
   fixedVariantLabel,
   siteLabel,
+  merchantId,
+  merchantName,
 }: {
   productId: string;
   slugOrId: string;
@@ -81,6 +90,12 @@ export function AddToCartForm({
   image: string;
   basePrice: number; // قیمت نهایی محصول بعد از تخفیف عادی/فلش (بدون احتساب اختلاف قیمت وارینت)
   originalPrice?: number; // قیمت پایه قبل از تخفیف -- برای خط‌خورده نشون دادن
+  // فقط ترندیول -- همون basePrice/originalPrice به لیر، بدونِ تبدیل. برای
+  // تولتیقِ ادمین (هاورِ موس روی قیمت) که نرخِ تبدیل سریع قابلِ‌تأیید باشه --
+  // دقیقاً همون امکانی که توی کارتِ لیستِ محصولات (TrendyolLiveGrid) هست
+  priceTL?: number | null;
+  originalPriceTL?: number | null;
+  isAdmin?: boolean;
   discount?: number; // درصد تخفیف -- فقط برای تصمیم به نمایش خط‌خورده
   variants?: VariantOption[];
   flashSaleId?: string;
@@ -103,8 +118,15 @@ export function AddToCartForm({
   // ازش اومده؛ روی خودِ قلمِ سبد ذخیره می‌شه تا وقتی سبد هم‌زمان از هر دو سایت
   // قلم داشت، بشه فرقشون رو نشون داد (هردو source="TRENDYOL" دارن)
   siteLabel?: string;
+  // وقتی این صفحه با ?merchantId=... باز شده (یعنی مشتری از لیستِ «فروشنده‌های
+  // دیگر» وارد شده)، basePrice/originalPrice بالا از قبل قیمتِ همین فروشنده‌ست --
+  // فقط باید merchantId/merchantName هم روی خودِ قلمِ سبد ذخیره بشه تا سرور
+  // موقعِ ثبتِ سفارش (api/orders/route.ts) از روی همین شناسه دوباره اعتبارسنجی کنه
+  merchantId?: number;
+  merchantName?: string;
 }) {
   const { addItem, items } = useCart();
+  const { paused: salesPaused, message: salesPausedMessage } = useSalesPaused();
   const { setSelectedColor } = useColorSync();
   const router = useRouter();
   // کلید هر اسلات، گروه واقعی ویژگیه (یا خود نام ویژگی اگه عضو هیچ گروهی نباشه)
@@ -307,7 +329,7 @@ export function AddToCartForm({
   }
 
   const needsVariant = attributeGroups.length > 0;
-  const cartId = `${productId}${matchedVariant ? "-" + matchedVariant.id : ""}`;
+  const cartId = `${productId}${matchedVariant ? "-" + matchedVariant.id : ""}${merchantId ? "-m" + merchantId : ""}`;
   const alreadyInCart = items.find((i) => i.id === cartId)?.quantity ?? 0;
   const remainingStock =
     matchedVariant && matchedVariant.stock !== null ? Math.max(0, matchedVariant.stock - alreadyInCart) : null;
@@ -349,6 +371,8 @@ export function AddToCartForm({
       maxStock: matchedVariant?.stock ?? undefined,
       fastShipping,
       siteLabel,
+      merchantId,
+      merchantName,
     };
   }
 
@@ -369,15 +393,35 @@ export function AddToCartForm({
     router.push("/checkout");
   }
 
+  // فقط برای ادمین -- تولتیقِ عدد خامِ لیرِ همون قیمت، برای تأییدِ سریعِ نرخِ
+  // تبدیل بدونِ رفتن به لاگِ نرخِ ارز -- دقیقاً همون چیزی که TrendyolLiveGrid
+  // برای کارتِ لیستِ محصولات داره
+  const liraTitle = (lira: number | null | undefined) =>
+    isAdmin && lira != null ? `${lira.toLocaleString("en-US", { maximumFractionDigits: 2 })} TL` : undefined;
+
+  // اگه ادمین هنوز نرخِ لیر رو توی تنظیمات ثبت نکرده باشه، تبدیل به تومان صفر
+  // برمی‌گرده (طبقِ طراحیِ عمدیِ exchangeRate.ts) -- قبلاً این یعنی مشتری «۰
+  // تومان» می‌دید که کاملاً گمراه‌کننده و بی‌فایده‌ست. حالا در این حالت، همون
+  // قیمتِ خامِ لیر رو به‌جاش نشون می‌دیم (برای همه، نه فقط تولتیقِ ادمین) تا
+  // مشتری حداقل یه عددِ معتبر ببینه، نه صفر
+  const rateNotSet = finalPrice <= 0 && priceTL != null && priceTL > 0;
+  const formattedFinalPrice = rateNotSet
+    ? `${Math.round(priceTL).toLocaleString("fa-IR")} لیر`
+    : `${finalPrice.toLocaleString("fa-IR")} تومان`;
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3">
-        <span className="text-2xl font-bold text-[var(--color-wine)]">
-          {finalPrice.toLocaleString("fa-IR")} تومان
+        <span className="text-2xl font-bold text-[var(--color-wine)]" title={rateNotSet ? undefined : liraTitle(priceTL)}>
+          {formattedFinalPrice}
         </span>
         {discount > 0 && originalPrice !== undefined && (
-          <span className="text-sm text-[var(--color-muted)] line-through">
-            {(originalPrice + (matchedVariant?.priceDiff ?? 0)).toLocaleString("fa-IR")}
+          // وقتی نرخِ ارز ثبت نشده، originalPrice (تومان) صفره و گمراه‌کننده‌ست --
+          // همون رفتارِ قیمتِ نهایی بالا، اینجا هم قیمتِ خامِ لیرِ قبل‌از‌تخفیف نشون داده می‌شه
+          <span className="text-sm text-[var(--color-muted)] line-through" title={rateNotSet ? undefined : liraTitle(originalPriceTL)}>
+            {rateNotSet && originalPriceTL != null
+              ? `${Math.round(originalPriceTL).toLocaleString("fa-IR")} لیر`
+              : (originalPrice + (matchedVariant?.priceDiff ?? 0)).toLocaleString("fa-IR")}
           </span>
         )}
         {matchedVariant && matchedVariant.priceDiff !== 0 && (
@@ -388,14 +432,17 @@ export function AddToCartForm({
         )}
       </div>
       {clusters.map(([groupKey, members]) => {
-        // گروه‌های تک‌مقداری (مثلا جنسیتی که فقط یه مقدار داره) از قبل توی state
-        // انتخاب شدن (برای این‌که matchedVariant درست کار کنه)، ولی چون کاربر هیچ
-        // انتخابی نداره که انجام بده، اصلاً نیازی به نمایش این بخش نیست
-        if (singleValueGroups.has(groupKey)) return null;
-
         const isGroup = members.length > 1;
         const isColorGroup = groupKey.includes("رنگ") || members.some((m) => m.attribute.includes("رنگ"));
         const isSizeGroup = groupKey.includes("سایز") || members.some((m) => m.attribute.includes("سایز"));
+
+        // گروه‌های تک‌مقداری (مثلا جنسیتی که فقط یه مقدار داره) از قبل توی state
+        // انتخاب شدن (برای این‌که matchedVariant درست کار کنه)، ولی چون کاربر هیچ
+        // انتخابی نداره که انجام بده، معمولاً نیازی به نمایش این بخش نیست --
+        // بجز سایز: خودِ ترندیول برای محصولاتِ تک‌سایز هم «Beden: ۳۶-۴۱» رو
+        // به‌عنوانِ اطلاعات نشون می‌ده (مشتری باید بدونه این کالا چه سایزیه)
+        if (singleValueGroups.has(groupKey) && !isSizeGroup) return null;
+
         const currentSelection = selected[groupKey]?.value;
 
         return (
@@ -573,7 +620,23 @@ export function AddToCartForm({
         );
       })}
 
-      {(!needsVariant || matchedVariant) && !atStockLimit && (matchedVariant?.stock ?? 1) > 0 && (
+      {/* اندازه‌ی واقعیِ همین ترکیبِ انتخابی -- فقط اگه ادمین برای این سایزِ
+          خاص وارد کرده باشه؛ برخلافِ راهنمای سایزِ عمومی (بالا)، این دقیقاً
+          مالِ خودِ همین محصوله، نه یه چارتِ مشترکِ همه‌ی محصولاتِ این دسته/برند */}
+      {matchedVariant?.measurements && matchedVariant.measurements.length > 0 && (
+        <div className="border cut-line rounded-lg p-3 bg-[var(--color-linen-dim)]">
+          <p className="text-xs font-medium mb-2">📏 اندازه‌ی این سایز (سانتی‌متر)</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {matchedVariant.measurements.map((m) => (
+              <span key={m.label} className="text-xs text-[var(--color-muted)]">
+                {m.label}: <span className="font-medium text-[var(--color-ink)]">{m.cm.toLocaleString("fa-IR")}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!salesPaused && (!needsVariant || matchedVariant) && !atStockLimit && (matchedVariant?.stock ?? 1) > 0 && (
         <div>
           <p className="text-sm font-medium mb-2">تعداد</p>
           <div className="flex items-center gap-3">
@@ -616,34 +679,40 @@ export function AddToCartForm({
         </p>
       )}
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={handleBuyNow}
-          disabled={!canAdd}
-          className="flex-1 border-2 border-[var(--color-wine)] text-[var(--color-wine)] py-3 rounded-full font-medium disabled:opacity-40 hover:bg-[var(--color-linen-dim)] transition-colors"
-        >
-          همین الان بخر
-        </button>
-        <div className="relative flex-1">
+      {salesPaused ? (
+        <p className="border cut-line rounded-full px-4 py-3 text-sm text-center text-[var(--color-muted)] bg-[var(--color-linen-dim)]">
+          ⏸️ {salesPausedMessage}
+        </p>
+      ) : (
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleAdd}
+            onClick={handleBuyNow}
             disabled={!canAdd}
-            className="w-full bg-[var(--color-wine)] text-white py-3 rounded-full font-medium disabled:opacity-40 hover:bg-[var(--color-wine-dark)] transition-colors"
+            className="flex-1 border-2 border-[var(--color-wine)] text-[var(--color-wine)] py-3 rounded-full font-medium disabled:opacity-40 hover:bg-[var(--color-linen-dim)] transition-colors"
           >
-            {added ? "به سبد اضافه شد ✓" : "افزودن به سبد خرید"}
+            همین الان بخر
           </button>
-          {fastShipping && (
-            <span className="absolute -top-3.5 -right-2 z-10 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg ring-2 ring-white whitespace-nowrap">
-              🚚 ارسال فوری
-            </span>
+          <div className="relative flex-1">
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!canAdd}
+              className="w-full bg-[var(--color-wine)] text-white py-3 rounded-full font-medium disabled:opacity-40 hover:bg-[var(--color-wine-dark)] transition-colors"
+            >
+              {added ? "به سبد اضافه شد ✓" : "افزودن به سبد خرید"}
+            </button>
+            {fastShipping && (
+              <span className="absolute -top-3.5 -right-2 z-10 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg ring-2 ring-white whitespace-nowrap">
+                🚚 ارسال فوری
+              </span>
+            )}
+          </div>
+          {source === "MAZON" && (
+            <WishlistButton productId={productId} initialWishlisted={isWishlisted} variant="icon" />
           )}
         </div>
-        {source === "MAZON" && (
-          <WishlistButton productId={productId} initialWishlisted={isWishlisted} variant="icon" />
-        )}
-      </div>
+      )}
 
       <AdminAddToOrderButton
         source={source}

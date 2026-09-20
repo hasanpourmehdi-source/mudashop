@@ -12,6 +12,8 @@ type StaffMember = {
   scopes: AdminScope[];
 };
 
+type UserCandidate = { id: string; name: string | null; email: string };
+
 function ScopeCheckboxes({
   selected,
   onChange,
@@ -52,6 +54,65 @@ export default function AdminStaffPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editScopes, setEditScopes] = useState<AdminScope[]>([]);
   const [editSaving, setEditSaving] = useState(false);
+
+  // ارتقاءِ یه کاربرِ مشتریِ موجود به کارمند -- بدونِ ساختنِ حسابِ جدید
+  const [promoteQuery, setPromoteQuery] = useState("");
+  const [promoteResults, setPromoteResults] = useState<UserCandidate[]>([]);
+  const [promoteSearching, setPromoteSearching] = useState(false);
+  const [selectedCandidate, setSelectedCandidate] = useState<UserCandidate | null>(null);
+  const [promoteScopes, setPromoteScopes] = useState<AdminScope[]>([]);
+  const [promoteError, setPromoteError] = useState("");
+  const [promoteSaving, setPromoteSaving] = useState(false);
+
+  // جست‌وجوی زنده با یه تأخیرِ کوتاه (debounce) -- تا با هر حرف تایپ‌شده
+  // درخواست نفرستیم
+  useEffect(() => {
+    if (selectedCandidate || promoteQuery.trim().length < 2) {
+      setPromoteResults([]);
+      return;
+    }
+    setPromoteSearching(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/admin/staff/search-users?q=${encodeURIComponent(promoteQuery.trim())}`)
+        .then((res) => (res.ok ? res.json() : { results: [] }))
+        .then((data) => setPromoteResults(data.results ?? []))
+        .finally(() => setPromoteSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [promoteQuery, selectedCandidate]);
+
+  function pickCandidate(c: UserCandidate) {
+    setSelectedCandidate(c);
+    setPromoteQuery("");
+    setPromoteResults([]);
+    setPromoteScopes([]);
+    setPromoteError("");
+  }
+
+  function cancelPromote() {
+    setSelectedCandidate(null);
+    setPromoteScopes([]);
+    setPromoteError("");
+  }
+
+  async function handlePromote() {
+    if (!selectedCandidate) return;
+    setPromoteSaving(true);
+    setPromoteError("");
+    const res = await fetch("/api/admin/staff/promote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: selectedCandidate.id, scopes: promoteScopes }),
+    });
+    const data = await res.json();
+    setPromoteSaving(false);
+    if (!res.ok) {
+      setPromoteError(data.error ?? "خطا در ارتقاء کاربر");
+      return;
+    }
+    cancelPromote();
+    load();
+  }
 
   function load() {
     fetch("/api/admin/staff")
@@ -156,6 +217,73 @@ export default function AdminStaffPage() {
           {saving ? "..." : "افزودن کارمند"}
         </button>
       </form>
+
+      <div className="border cut-line rounded-lg p-4 bg-white space-y-3">
+        <div>
+          <h2 className="font-bold text-sm">ارتقاءِ کاربرِ موجود به کارمند</h2>
+          <p className="text-xs text-[var(--color-muted)] mt-1">
+            اگه کسی از قبل حساب مشتری داره (سفارش/کیف‌پول داره)، به‌جای ساختنِ حسابِ جدید، همون حسابش رو
+            کارمند کن -- رمز/سفارش‌هاش دست‌نخورده می‌مونه.
+          </p>
+        </div>
+
+        {!selectedCandidate ? (
+          <div className="relative">
+            <input
+              value={promoteQuery}
+              onChange={(e) => setPromoteQuery(e.target.value)}
+              placeholder="جست‌وجو با اسم یا ایمیلِ مشتری..."
+              className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+            />
+            {promoteSearching && (
+              <p className="text-xs text-[var(--color-muted)] mt-1">در حال جست‌وجو...</p>
+            )}
+            {promoteResults.length > 0 && (
+              <div className="absolute z-10 top-full right-0 left-0 mt-1 border cut-line rounded-lg bg-white shadow-lg overflow-hidden">
+                {promoteResults.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => pickCandidate(c)}
+                    className="w-full text-right px-3 py-2 text-sm hover:bg-[var(--color-linen-dim)] border-b cut-line last:border-b-0"
+                  >
+                    <span className="font-medium">{c.name ?? "(بدون نام)"}</span>{" "}
+                    <span className="text-[var(--color-muted)]">({c.email})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!promoteSearching && promoteQuery.trim().length >= 2 && promoteResults.length === 0 && (
+              <p className="text-xs text-[var(--color-muted)] mt-1">مشتری‌ای پیدا نشد.</p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
+              <p className="text-sm">
+                <span className="font-medium">{selectedCandidate.name ?? "(بدون نام)"}</span>{" "}
+                <span className="text-[var(--color-muted)]">({selectedCandidate.email})</span>
+              </p>
+              <button type="button" onClick={cancelPromote} className="text-xs text-[var(--color-muted)]">
+                تغییرِ انتخاب
+              </button>
+            </div>
+            <div>
+              <p className="text-xs font-medium mb-1.5">حیطه‌های دسترسی</p>
+              <ScopeCheckboxes selected={promoteScopes} onChange={setPromoteScopes} />
+            </div>
+            {promoteError && <p className="text-sm text-red-600">{promoteError}</p>}
+            <button
+              type="button"
+              onClick={handlePromote}
+              disabled={promoteSaving}
+              className="bg-[var(--color-wine)] text-white px-5 py-2 rounded-full text-sm font-medium disabled:opacity-50"
+            >
+              {promoteSaving ? "..." : "ارتقاء به کارمند"}
+            </button>
+          </div>
+        )}
+      </div>
 
       <div>
         <h2 className="text-lg font-bold mb-4">کارمندان فعلی ({loading ? "..." : staff.length})</h2>

@@ -5,6 +5,10 @@ import type { Prisma } from "@prisma/client";
 import { foldTurkish } from "@/lib/turkishText";
 import { siteSlugToKind } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // این روت دیگه هر بار زنده از ترندیول فچ نمی‌کنه -- روی جدول محلی
 // TrendyolCategoryCache سرچ می‌کنه (که با «به‌روزرسانی همه» -- روت sync کنار
 // همین فایل -- پر/به‌روز می‌شه). سرچ روی nameFa (ترجمه‌ی فارسی)، nameTr

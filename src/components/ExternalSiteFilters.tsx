@@ -4,6 +4,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useState, useCallback, useEffect, useTransition } from "react";
 import { FilterSection, FilterCheckbox } from "@/components/ProductFilters";
 import { TRENDYOL_TOP_SECTIONS, isGenderTurkishSection, turkishSectionForFa } from "@/lib/trendyolTopSections";
+import { useMobileFilterSheet } from "@/components/MobileFilterSheetContext";
 
 // باید دقیقاً با TRENDYOL_RAW_CATEGORY_SENTINEL/COLOR/BRAND توی src/lib/externalSites.ts
 // یکی باشن -- اینجا کپی شدن چون externalSites.ts سمت سرور prisma رو ایمپورت
@@ -108,6 +109,17 @@ export function ExternalSiteFilters({
   const [isPending, startTransition] = useTransition();
   const [isChecking, setIsChecking] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
+  const { open: mobileOpen, setOpen: setMobileOpen } = useMobileFilterSheet();
+
+  // آکاردئونی -- طبقِ درخواستِ صریح، فقط یه بخشِ فیلتر هم‌زمان باز می‌مونه (نه
+  // اینکه هرکدوم مستقل باز/بسته بشه) تا صفحه‌ی نتیجه جای کمتری بگیره. کلیک
+  // روی یه بخشِ دیگه، بخشِ قبلی رو خودکار می‌بنده؛ کلیک روی همون بخشِ بازِ
+  // فعلی، می‌بنددش (toggle). چک‌زدنِ آیتم‌های *داخلِ* یه بخش این state رو
+  // دست‌نمی‌زنه، پس همون‌طور که خواسته شده، باز می‌مونه
+  const [openFilterKey, setOpenFilterKey] = useState<string | null>(null);
+  function toggleFilterSection(key: string) {
+    setOpenFilterKey((prev) => (prev === key ? null : key));
+  }
 
   const selectedCategory = searchParams.get("category") ?? "";
   const selectedAttrs = searchParams.get("attrs")?.split(",").filter(Boolean) ?? [];
@@ -513,15 +525,19 @@ export function ExternalSiteFilters({
     validateAndCommit(selectedCategory || null, nextAttrs);
   }
 
-  // یه گروه فیلتر پویا (رنگ/برند/فیات/امتیاز/...) رو رندر می‌کنه -- defaultOpen
-  // کنترل می‌کنه که اول باز باشه یا بسته (دقیقاً مثل خودِ ترندیول: چیزهایی که
-  // جا نمی‌شن بسته‌ان تا کاربر خودش بازشون کنه)
-  function renderDynamicGroup(g: DynamicFilterGroup, defaultOpen: boolean) {
+  // یه گروه فیلتر پویا (رنگ/برند/فیات/امتیاز/...) رو رندر می‌کنه -- باز/بسته‌بودنش
+  // آکاردئونیه (openFilterKey/toggleFilterSection بالا)، نه مستقل
+  function renderDynamicGroup(g: DynamicFilterGroup) {
     // فیات ثابت نیست (بازه‌های پیش‌فرض بین دسته‌های ارزون و گرون فرق می‌کنه)، پس
     // به‌جای چک‌باکس‌های آماده، خودِ کاربر عدد از/تا رو تایپ می‌کنه
     if (g.paramKey === "prc") {
       return (
-        <FilterSection key={g.key} title={g.title} defaultOpen={defaultOpen}>
+        <FilterSection
+          key={g.key}
+          title={g.title}
+          open={openFilterKey === g.key}
+          onToggle={() => toggleFilterSection(g.key)}
+        >
           <div className="flex items-center gap-2">
             <input
               type="number"
@@ -591,7 +607,12 @@ export function ExternalSiteFilters({
       .sort((a, b) => Number(isSelected(b.id)) - Number(isSelected(a.id)));
 
     return (
-      <FilterSection key={g.key} title={g.title} defaultOpen={defaultOpen}>
+      <FilterSection
+        key={g.key}
+        title={g.title}
+        open={openFilterKey === g.key}
+        onToggle={() => toggleFilterSection(g.key)}
+      >
         {filtered.length === 0 ? (
           <p className="text-xs text-[var(--color-muted)] py-1">موردی پیدا نشد.</p>
         ) : (
@@ -668,16 +689,40 @@ export function ExternalSiteFilters({
           پشت‌سرهم باعث چندتا درخواست هم‌زمان به ترندیول نشه */}
       {busy && <div className="fixed inset-0 z-50 cursor-wait" aria-hidden="true" />}
 
+      {/* پایین‌تر از md، خودِ سایدبار به‌جای این‌که همیشه توی جریانِ صفحه (بالای
+          نتایج) باشه، یه شیتِ تمام‌صفحه‌ی جداگانه می‌شه -- فقط با دکمه‌ی
+          «فیلترها»ی نوارِ ابزار (MobileFilterTriggerButton) باز می‌شه، دقیقاً
+          مثلِ اپِ ترندیول. بک‌دراپ فقط موبایله (md:hidden) چون توی وب اصلاً
+          مودالی در کار نیست -- سایدبار همیشه نمایانه */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-[60] bg-black/40"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* sticky+محدودیت‌ارتفاع فقط توی چیدمان دوستونه (md به بالا) معنی داره --
           پایین‌تر از md که فیلترها و نتیجه‌ها زیر هم قرار می‌گیرن (نه کنار هم)،
           sticky باعث می‌شد این باکس تا نزدیک ارتفاع کامل صفحه بچسبه و کاربر
           حس کنه لیست محصولات اصلاً وجود نداره (باید کلی اسکرول داخلیِ خودِ
-          فیلتر رو رد می‌کرد تا به نتیجه‌ها برسه) */}
+          فیلتر رو رد می‌کرد تا به نتیجه‌ها برسه). توی موبایل، این باکس همون شیتِ
+          پایین‌بازشونده‌ست -- پیش‌فرض hidden، فقط وقتی mobileOpen باز می‌شه؛
+          md:block همیشه (حالتِ وب) این hidden رو خنثی می‌کنه */}
       <aside
-        className={`space-y-4 text-sm transition-opacity md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto pl-1 pb-4 ${
+        className={`${mobileOpen ? "fixed inset-x-0 bottom-0 top-14 z-[61] bg-[var(--color-linen)] rounded-t-2xl overflow-y-auto" : "hidden"} md:z-auto md:bg-transparent md:rounded-none md:block space-y-4 text-sm transition-opacity md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto pl-1 pb-4 ${
           busy ? "opacity-60 pointer-events-none cursor-wait" : "opacity-100"
         }`}
       >
+      {/* هدرِ ثابتِ شیتِ موبایل -- فقط پایین‌تر از md دیده می‌شه */}
+      <div className="md:hidden sticky top-0 z-10 -mx-1 px-4 py-3 bg-[var(--color-linen)] border-b cut-line flex items-center justify-between">
+        <button type="button" onClick={() => setMobileOpen(false)} className="text-lg leading-none px-1" aria-label="بستن">
+          ✕
+        </button>
+        <span className="font-bold">فیلترها</span>
+        <span className="w-6" aria-hidden="true" />
+      </div>
+      <div className="px-3 md:px-0">
       {showRejected && !isChecking && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800">
           مشکلی پیش اومد، لطفاً بعداً دوباره تلاش کنید.
@@ -693,7 +738,11 @@ export function ExternalSiteFilters({
           این‌جا اصلاً گزینه نیستن -- چون فیلتر «جنسیت» مستقل پایین‌تر از قبل
           هست، تیک‌زدن اون‌جا خودش effectiveTopSection رو ست می‌کنه و مستقیم
           می‌ره سراغ زیردرخت همون جنسیت، بدون تکرار جنسیت به‌عنوان یه دسته‌بندی */}
-      <FilterSection title="دسته‌بندی">
+      <FilterSection
+        title="دسته‌بندی"
+        open={openFilterKey === "category"}
+        onToggle={() => toggleFilterSection("category")}
+      >
         {(categoryStack.length > 0 || topSectionChipValue) && (
           <ul className="space-y-0.5 mb-1">
             {[...categoryStack].reverse().map((chip, reversedIndex) => (
@@ -772,9 +821,8 @@ export function ExternalSiteFilters({
       {/* همه‌ی فیلترهای پویا -- مستقیم از aggregations واقعی ترندیول (همون
           جنسیت + دسته‌بندی فعلی، اگه انتخاب شده باشه): رنگ، برند، ویژگی‌های
           خاص دسته (مثل نوع کیف)، فیات، امتیاز، برچسب‌های کمپینی، نوع فروشنده.
-          ترتیب و بازبودنشون دقیقاً مثل خودِ ترندیول -- برند قبل از جنسیت
-          (باز)، بقیه بعد از جنسیت (بسته، چون جا نمی‌شن و کاربر خودش بازشون
-          می‌کنه) */}
+          طبقِ درخواستِ صریح، کلِ قسمتِ فیلترها (نه فقط این‌ها) توی صفحه‌ی
+          نتیجه پیش‌فرض بسته میاد -- کاربر خودش هرکدوم رو خواست باز می‌کنه */}
       {hasDynamicFilterScope && (
         <>
           {dynamicGroupsError && (
@@ -788,7 +836,7 @@ export function ExternalSiteFilters({
                 برای دیدن فیلترهای بیشتر (رنگ، برند، سایز، ...)، اول یه دسته‌بندی از بالا انتخاب کن.
               </p>
             )}
-          {dynamicGroups.filter((g) => g.order <= 2).map((g) => renderDynamicGroup(g, true))}
+          {dynamicGroups.filter((g) => g.order <= 2).map((g) => renderDynamicGroup(g))}
         </>
       )}
 
@@ -803,7 +851,12 @@ export function ExternalSiteFilters({
             return Number(bSelected) - Number(aSelected);
           });
         return (
-          <FilterSection key={group.title} title={group.title}>
+          <FilterSection
+            key={group.title}
+            title={group.title}
+            open={openFilterKey === group.title}
+            onToggle={() => toggleFilterSection(group.title)}
+          >
             <input
               type="text"
               value={query}
@@ -830,7 +883,7 @@ export function ExternalSiteFilters({
         );
       })}
 
-      {hasDynamicFilterScope && dynamicGroups.filter((g) => g.order > 2).map((g) => renderDynamicGroup(g, false))}
+      {hasDynamicFilterScope && dynamicGroups.filter((g) => g.order > 2).map((g) => renderDynamicGroup(g))}
 
       {hasAnySelection && (
         <button
@@ -843,6 +896,19 @@ export function ExternalSiteFilters({
           پاک کردن همه فیلترها
         </button>
       )}
+      </div>
+
+      {/* دکمه‌ی ثابتِ پایینِ شیتِ موبایل -- فقط بستنِ شیت (فیلترها همون لحظه‌ی
+          تیک‌خوردن اعمال می‌شن، نیازی به دکمه‌ی جداگانه‌ی «اعمال» نیست) */}
+      <div className="md:hidden sticky bottom-0 -mx-1 px-4 py-3 bg-[var(--color-linen)] border-t cut-line">
+        <button
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          className="w-full rounded-lg bg-[var(--color-wine)] text-white font-bold py-2.5"
+        >
+          نمایشِ نتایج
+        </button>
+      </div>
     </aside>
     </>
   );

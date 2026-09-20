@@ -10,7 +10,15 @@ type BankCard = {
   label: string | null;
   isActive: boolean;
   isDefault: boolean;
+  isDefaultForCargo: boolean;
+  isDefaultForShipping: boolean;
 };
+
+const DEFAULT_PURPOSES: { flag: "isDefault" | "isDefaultForCargo" | "isDefaultForShipping"; label: string; hint: string }[] = [
+  { flag: "isDefault", label: "پیش‌فرضِ سفارش", hint: "وقتی «تأییدِ اولیه‌ی سفارش» خاموشه، سیستم این کارت رو برای هزینه‌ی سفارش خودکار تخصیص می‌ده" },
+  { flag: "isDefaultForCargo", label: "پیش‌فرضِ باربری", hint: "برای سفارش‌های حاویِ کالای خارجی، وقتی ادمین کارتی برای هزینه‌ی باربری انتخاب نکنه" },
+  { flag: "isDefaultForShipping", label: "پیش‌فرضِ ارسال", hint: "برای سفارش‌های فقط-مزون، وقتی ادمین کارتی برای هزینه‌ی ارسال انتخاب نکنه" },
+];
 
 // شماره کارت رو همیشه به فرمت گروه‌های ۴تایی جدا با خط‌تیره نگه می‌داره (مثلاً
 // 6037-9977-1234-5678)، حتی اگه کاربر فقط رقم پشت رقم تایپ کنه
@@ -97,13 +105,13 @@ export default function AdminBankCardsPage() {
     load();
   }
 
-  // فقط وقتی «تأییدِ اولیه‌ی سفارش» از تنظیمات خاموشه معنا داره -- سیستم
-  // خودش بدونِ دخالتِ ادمین این کارت رو برای مشتری‌های جدید تخصیص می‌ده
-  async function makeDefault(card: BankCard) {
+  // هر هدف (سفارش/باربری/ارسال) مستقله -- روشن‌کردنِ یکی روی این کارت فقط
+  // بقیه‌ی کارت‌های همون هدف رو خاموش می‌کنه
+  async function makeDefault(card: BankCard, flag: (typeof DEFAULT_PURPOSES)[number]["flag"]) {
     await fetch(`/api/admin/bank-cards/${card.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isDefault: true }),
+      body: JSON.stringify({ [flag]: true }),
     });
     load();
   }
@@ -279,20 +287,27 @@ export default function AdminBankCardsPage() {
                   >
                     {card.isActive ? "فعال" : "غیرفعال"}
                   </button>
-                  {card.isDefault ? (
-                    <span
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-ochre)] text-[var(--color-ink)]"
-                      title="وقتی «تأییدِ اولیه‌ی سفارش» خاموشه، سیستم این کارت رو خودکار تخصیص می‌ده"
-                    >
-                      کارتِ پیش‌فرض
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => makeDefault(card)}
-                      className="text-[10px] text-[var(--color-muted)] hover:underline"
-                    >
-                      پیش‌فرض کن
-                    </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  {DEFAULT_PURPOSES.map((p) =>
+                    card[p.flag] ? (
+                      <span
+                        key={p.flag}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-ochre)] text-[var(--color-ink)]"
+                        title={p.hint}
+                      >
+                        {p.label}
+                      </span>
+                    ) : (
+                      <button
+                        key={p.flag}
+                        onClick={() => makeDefault(card, p.flag)}
+                        className="text-[10px] text-[var(--color-muted)] hover:underline"
+                        title={p.hint}
+                      >
+                        {p.label} کن
+                      </button>
+                    )
                   )}
                 </div>
               </div>

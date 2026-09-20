@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { normalizeSlug } from "@/lib/slug";
+import { sanitizeProductDescription, stripHtmlToText } from "@/lib/sanitizeHtml";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
@@ -28,7 +29,15 @@ const specSchema = z.object({
 const productSchema = z.object({
   title: z.string().min(2, "عنوان باید حداقل ۲ حرف باشد"),
   slug: z.string().min(2, "اسلاگ باید حداقل ۲ حرف باشد"),
-  description: z.string().min(1, "توضیحات الزامی است"),
+  // ورودیِ ادمین می‌تونه HTML باشه (از RichTextEditor) -- پررنگ/مورب/لیست
+  // مجازن، بقیه (لینک/عکس/اسکریپت/attribute) قبل از ذخیره حذف می‌شن. چکِ
+  // خالی‌نبودن روی متنِ خام (بعد از حذفِ تگ‌ها) انجام می‌شه، نه طولِ HTML --
+  // وگرنه یه ادعای خالیِ contentEditable مثل "<br>" هم معتبر حساب می‌شد
+  description: z
+    .string()
+    .min(1, "توضیحات الزامی است")
+    .transform((val) => sanitizeProductDescription(val))
+    .refine((val) => stripHtmlToText(val).length > 0, { message: "توضیحات الزامی است" }),
   brandId: z.string().optional(),
   basePrice: z.number().int("قیمت باید عدد صحیح باشد").positive("قیمت باید مثبت باشد"),
   discount: z.number().int().min(0, "تخفیف نمی‌تواند منفی باشد").max(100, "تخفیف نمی‌تواند بیشتر از ۱۰۰٪ باشد").default(0),
@@ -36,6 +45,8 @@ const productSchema = z.object({
   colorImages: z.record(z.string(), z.array(z.string())).optional(),
   fastShipping: z.boolean().optional(),
   isReturnable: z.boolean().optional(),
+  defectNote: z.string().optional(),
+  defectImage: z.string().optional(),
   careInstructions: z.string().optional(),
   videoUrl: z.string().optional(),
   categoryId: z.string().min(1, "انتخاب دسته‌بندی الزامی است"),

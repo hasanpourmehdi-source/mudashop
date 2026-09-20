@@ -63,9 +63,17 @@ export async function matchSearchQueryToCategory(rawFaQuery: string, site: Exter
   if (!normalized) return null;
   const rows = await prisma.trendyolCategoryCache.findMany({
     where: { site, confirmedEmpty: false, nameFa: { not: null } },
-    select: { param: true, nameFa: true, path: true },
+    select: { param: true, nameFa: true, nameFaSynonyms: true, path: true },
   });
-  const exact = rows.filter((r) => r.nameFa && normalizeFaForMatch(r.nameFa) === normalized);
+  const exact = rows.filter((r) => {
+    if (r.nameFa && normalizeFaForMatch(r.nameFa) === normalized) return true;
+    if (!r.nameFaSynonyms) return false;
+    return r.nameFaSynonyms
+      .split(",")
+      .map((s) => normalizeFaForMatch(s.trim()))
+      .filter(Boolean)
+      .includes(normalized);
+  });
   return pickRepresentativeCategoryRow(exact)?.param ?? null;
 }
 
@@ -73,6 +81,13 @@ export type ParsedSearchQueryFilters = {
   categoryParam: string | null;
   gender: string | null;
   colorValueId: string | null;
+  // true یعنی بعد از جداکردنِ جنسیت/رنگ/دسته‌بندی، هنوز کلمه‌ای از عبارتِ سرچ
+  // باقی مونده که هیچ‌کدوم از این‌ها نبوده (مثلاً «فری‌سایز» که نه دسته‌بندیه نه
+  // رنگ/جنسیت). صدا‌زننده نباید این حالت رو نادیده بگیره و صرفاً فیلترهای پیدا‌
+  // شده رو اعمال کنه -- چون این یعنی بخشی از منظورِ کاربر (که شاید توی دیکشنریِ
+  // عادیِ ترجمه معنی داشته باشه) گم می‌شه؛ باید به سرچِ متنیِ کامل (که همه‌ی
+  // کلمات رو از دیکشنری رد می‌کنه) برگرده، نه میان‌بُرِ فیلترِ ناقص
+  hasLeftoverWords: boolean;
 };
 
 // عبارت‌های سرچِ ترکیبی («تیشرت دخترانه قرمز») هرکدوم از سه بعدِ متفاوت رو
@@ -91,7 +106,7 @@ export type ParsedSearchQueryFilters = {
 // همین سایت دارن، به‌عنوان match پذیرفته می‌شن
 export async function parseSearchQueryToFilters(rawQuery: string, siteSlug: string): Promise<ParsedSearchQueryFilters> {
   const words = rawQuery.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return { categoryParam: null, gender: null, colorValueId: null };
+  if (words.length === 0) return { categoryParam: null, gender: null, colorValueId: null, hasLeftoverWords: false };
 
   const site = siteSlugToKind(siteSlug);
   const externalSite = await prisma.externalSite.findUnique({ where: { slug: siteSlug } });
@@ -143,8 +158,12 @@ export async function parseSearchQueryToFilters(rawQuery: string, siteSlug: stri
 
   const remainingText = remainingWords.join(" ");
   const categoryParam = remainingText ? await matchSearchQueryToCategory(remainingText, site) : null;
+  // اگه متنِ باقی‌مانده یه دسته‌بندیِ واقعی بود، یعنی کامل مصرف شد (چون match
+  // دسته‌بندی روی کلِ عبارتِ باقی‌مانده دقیقه، نه تکه‌تکه) -- فقط وقتی چیزی
+  // مونده و *هیچ* دسته‌بندی‌ای براش پیدا نشد، واقعاً leftover داریم
+  const hasLeftoverWords = remainingWords.length > 0 && !categoryParam;
 
-  return { categoryParam, gender, colorValueId };
+  return { categoryParam, gender, colorValueId, hasLeftoverWords };
 }
 
 // رنگ و برند هم مثل دسته‌بندی «خام»ان (مستقیم از aggregations واقعی ترندیول

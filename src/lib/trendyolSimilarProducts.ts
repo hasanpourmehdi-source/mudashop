@@ -5,9 +5,14 @@ import {
   requestTrendyolWithRetry,
   buildTrendyolFetchError,
 } from "@/lib/trendyol";
-import { translateTrendyolTitles } from "@/lib/trendyolTitleTranslation";
+import {
+  translateTrendyolTitles,
+  translateTurkishPhrase,
+  withCategoryPrefix,
+} from "@/lib/trendyolTitleTranslation";
 import { resolveTrendyolBrandId } from "@/lib/trendyolBrandLookup";
 import { getExchangeRateInfo, applyExchangeRate } from "@/lib/exchangeRate";
+import { toProxiedImageUrl } from "@/lib/imageProxy";
 
 // ============================================================================
 // «محصولات مشابه» صفحه‌ی جزئیات محصول ترندیول -- فاز ۲
@@ -44,6 +49,8 @@ export type TrendyolSimilarProduct = {
   nameFa: string;
   price: number | null;
   originalPrice: number | null;
+  priceLira: number | null;
+  originalPriceLira: number | null;
   image: string | null;
   images: string[];
   url: string | null;
@@ -53,14 +60,14 @@ export type TrendyolSimilarProduct = {
   reviewCount: number | null;
   isAd: boolean;
   freeCargo: boolean;
-  isRushDelivery: boolean;
   favoriteCount: number | null;
   hasOfficialSellerBadge: boolean;
 };
 
 function rawImageUrl(path: unknown): string | null {
   if (typeof path !== "string" || !path) return null;
-  return path.startsWith("http") ? path : `https://cdn.dsmcdn.com${path.startsWith("/") ? "" : "/"}${path}`;
+  const absolute = path.startsWith("http") ? path : `https://cdn.dsmcdn.com${path.startsWith("/") ? "" : "/"}${path}`;
+  return toProxiedImageUrl(absolute);
 }
 
 function normalizeSimilarProduct(p: Record<string, unknown>): TrendyolSimilarProduct {
@@ -86,6 +93,8 @@ function normalizeSimilarProduct(p: Record<string, unknown>): TrendyolSimilarPro
     nameFa: (p.name as string) ?? "", // با translateTrendyolTitles جایگزین می‌شه
     price: typeof discountedPrice?.value === "number" ? discountedPrice.value : null,
     originalPrice: typeof originalPrice?.value === "number" ? originalPrice.value : null,
+    priceLira: typeof discountedPrice?.value === "number" ? discountedPrice.value : null,
+    originalPriceLira: typeof originalPrice?.value === "number" ? originalPrice.value : null,
     image: images[0] ?? null,
     images,
     url: rawUrl ? `https://www.trendyol.com${rawUrl}` : null,
@@ -95,7 +104,6 @@ function normalizeSimilarProduct(p: Record<string, unknown>): TrendyolSimilarPro
     reviewCount: typeof ratingScore?.totalCount === "number" ? ratingScore.totalCount : null,
     isAd,
     freeCargo: Boolean(p.freeCargo),
-    isRushDelivery: Boolean(p.isRushDelivery),
     favoriteCount: typeof socialProof?.favoriteCount === "number" ? socialProof.favoriteCount : null,
     hasOfficialSellerBadge: Boolean(p.isVerifiedSeller),
   };
@@ -160,10 +168,17 @@ export async function fetchSimilarTrendyolProducts(
   }
 
   // ترجمه‌ی lazy عنوان‌ها -- دقیقاً مثل الگوی parseSearchPayload توی trendyol.ts
+  // (شاملِ اضافه‌کردنِ دسته‌بندی به اولِ عنوان)
   try {
     const titleMap = await translateTrendyolTitles(products.map((p) => ({ title: p.name, brand: p.brand })));
+    const rawCategories = Array.from(new Set(products.map((p) => p.category).filter((c): c is string => !!c)));
+    const categoryEntries = await Promise.all(
+      rawCategories.map(async (c) => [c, (await translateTurkishPhrase(c)).translated] as const)
+    );
+    const categoryMap = new Map(categoryEntries);
     for (const p of products) {
-      p.nameFa = titleMap.get(p.name) ?? p.name;
+      const nameFa = titleMap.get(p.name) ?? p.name;
+      p.nameFa = withCategoryPrefix(nameFa, p.category ? categoryMap.get(p.category) : null, p.name);
     }
   } catch (err) {
     // ترجمه‌ی عنوان صرفاً نمایشیه -- اگه شکست خورد، عنوان ترکی رو نگه دار و

@@ -11,16 +11,23 @@ import {
   recordProductView,
   recordPriceSnapshotIfNeeded,
   fetchViewCount24h,
+  fetchRecentViewersCount,
   fetchIsLowestPrice10d,
   fetchPriceHistory,
   fetchShowcasedCoupons,
-} from "@/lib/products";import { advanceExpiredReservationQueues } from "@/lib/stockNotify";
+} from "@/lib/products";
+import { parseVariantMeasurements } from "@/lib/productMeasurements";
+import { sanitizeProductDescription, stripHtmlToText } from "@/lib/sanitizeHtml";
+import { advanceExpiredReservationQueues } from "@/lib/stockNotify";
 import { checkPriceAlerts } from "@/lib/priceAlert";
 import { auth } from "@/lib/auth";
 import { fetchFixedAttributesForCategory } from "@/lib/facets";
 import { fetchWishlistedProductIds } from "@/lib/wishlist";
 import { parseAttrsQuery } from "@/lib/attrsQuery";
 import { AddToCartForm } from "@/components/AddToCartForm";
+import { LiveViewersBadge } from "@/components/LiveViewersBadge";
+import { TrustBadgesInline } from "@/components/TrustBadgesInline";
+import { ShippingInfoBox } from "@/components/ShippingInfoBox";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { ReviewsSection } from "@/components/ReviewsSection";
 import { QASection } from "@/components/QASection";
@@ -31,8 +38,10 @@ import { HorizontalProductCarousel } from "@/components/HorizontalProductCarouse
 import { RecentlyViewedRecorder } from "@/components/RecentlyViewedRecorder";
 import { CompareToggleButton } from "@/components/CompareToggleButton";
 import { PriceAlertWidget } from "@/components/PriceAlertWidget";
+import { PriceReportWidget } from "@/components/PriceReportWidget";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
-import { getSiteSetting, getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getSiteSetting, getSiteSettingBool, fetchTrustBadges, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getFeatureFlags } from "@/lib/featureFlags";
 import { fetchRelatedProducts } from "@/lib/recommend";
 import { ProductJsonLd } from "@/components/ProductJsonLd";
 import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
@@ -44,7 +53,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const product = await fetchMazonProductBySlug(slug);
   if (!product) return {};
 
-  const description = toMetaDescription(product.description);
+  const description = toMetaDescription(stripHtmlToText(product.description));
   const url = siteUrl(`/products/mazon/${product.slugOrId}`);
 
   return {
@@ -78,6 +87,7 @@ export default async function MazonProductPage({
   await advanceExpiredReservationQueues(product.id);
 
   const session = await auth();
+  const crossSellMaxItems = Number(await getSiteSetting(SITE_SETTING_KEYS.CROSS_SELL_MAX_ITEMS)) || 4;
 
   const [
     relatedProducts,
@@ -95,8 +105,10 @@ export default async function MazonProductPage({
     isLowestPrice10d,
     priceHistory,
     showcasedCoupons,
+    socialProofWindowMinutesRaw,
+    socialProofMinCountRaw,
   ] = await Promise.all([
-    fetchFrequentlyBoughtTogether(product.id),
+    fetchFrequentlyBoughtTogether(product.id, crossSellMaxItems),
     fetchRelatedProducts(product.id),
     product.categorySlug ? fetchCategoryBreadcrumb(product.categorySlug) : Promise.resolve([]),
     fetchProductRatingSummary(product.id),
@@ -111,9 +123,18 @@ export default async function MazonProductPage({
     fetchIsLowestPrice10d(product.id, product.price),
     fetchPriceHistory(product.id, product.price),
     fetchShowcasedCoupons(),
+    getSiteSetting(SITE_SETTING_KEYS.SOCIAL_PROOF_WINDOW_MINUTES),
+    getSiteSetting(SITE_SETTING_KEYS.SOCIAL_PROOF_MIN_COUNT),
   ]);
 
   const isNonReturnable = nonReturnableProductsEnabled && product.isReturnable === false;
+  const flags = await getFeatureFlags();
+
+  // نشانه‌ی اجتماعیِ لحظه‌ای -- شمارش *قبلِ* ثبتِ همین بازدید (تا خودِ همین
+  // لودِ صفحه توی عددش حساب نشه)
+  const socialProofWindowMinutes = Number(socialProofWindowMinutesRaw) || 10;
+  const socialProofMinCount = Number(socialProofMinCountRaw) || 2;
+  const recentViewersCount = await fetchRecentViewersCount(product.id, socialProofWindowMinutes);
 
   // ثبت این بازدید و عکس قیمت امروز -- بدون بلاک کردن رندر صفحه
   recordProductView(product.id);
@@ -121,11 +142,17 @@ export default async function MazonProductPage({
   // چک اخطارهای کاهش قیمت با قیمتِ فعلی -- lazy روی بازدید صفحه (مثل صف موجودی)
   checkPriceAlerts(product.id, product.price);
 
+  const trustBadges = await fetchTrustBadges();
+  const shippingInfoEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.SHIPPING_INFO_ENABLED);
+
   const variantOptions = product.variants.map((v) => ({
     id: v.id,
     stock: v.stock,
     priceDiff: v.priceDiff,
     values: v.values.map((val) => ({ attribute: val.attribute, value: val.value })),
+    measurements: flags[SITE_SETTING_KEYS.FEATURE_SIZE_MEASUREMENTS]
+      ? parseVariantMeasurements(v.measurements)
+      : [],
   }));
 
   // جنسیت محصول (اگه داشته باشه) از روی مقادیر واقعی variant ها -- نه fixedValue دسته‌بندی،
@@ -153,7 +180,7 @@ export default async function MazonProductPage({
         product={{
           id: product.id,
           title: product.title,
-          description: product.description,
+          description: stripHtmlToText(product.description),
           images: product.images,
           brand: product.brand,
           price: product.price,
@@ -188,8 +215,12 @@ export default async function MazonProductPage({
 
       <ColorSyncProvider>
       {/* گالری خودش max-w-[440px] دارد -- با grid-cols-2 (۱fr ۱fr) یه فضای
-          خالی بی‌معنی بین عکس و توضیحات می‌افتاد؛ عرض ستون دقیقاً همون‌قدره */}
-      <div className="grid md:grid-cols-[440px_1fr] gap-8">
+          خالی بی‌معنی بین عکس و توضیحات می‌افتاد؛ عرض ستون دقیقاً همون‌قدره.
+          grid-cols-1 صریح توی موبایل لازمه (نه فقط تکیه به رفتارِ پیش‌فرضِ
+          grid): بدونش، تراکِ تکِ ضمنی min-width:auto می‌گیره و گالری می‌تونه
+          کلِ گرید/صفحه رو تا ۴۴۰px بکشه و توی موبایلِ باریک‌تر افقی اسکرول
+          بشه -- دقیقاً همون باگی که توی products/trendyol/[slug] پیدا و رفع شد */}
+      <div className="grid grid-cols-1 md:grid-cols-[440px_1fr] gap-8">
       <ProductGallery images={product.images} title={product.title} colorImages={product.colorImages} videoUrl={product.videoUrl} />
 
       <div>
@@ -251,6 +282,12 @@ export default async function MazonProductPage({
           </p>
         )}
 
+        <LiveViewersBadge
+          count={recentViewersCount}
+          minCount={socialProofMinCount}
+          windowMinutes={socialProofWindowMinutes}
+        />
+
         {showcasedCoupons.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {showcasedCoupons.map((c) => (
@@ -290,6 +327,12 @@ export default async function MazonProductPage({
           initialAttrs={initialAttrs}
         />
 
+        <ShippingInfoBox variant="mazon" enabled={shippingInfoEnabled} />
+
+        <div className="mt-3">
+          <TrustBadgesInline badges={trustBadges} />
+        </div>
+
         <div className="mt-3">
           <CompareToggleButton
             product={{
@@ -315,6 +358,10 @@ export default async function MazonProductPage({
 
         <PriceAlertWidget productId={product.id} currentPrice={product.price} />
 
+        {flags[SITE_SETTING_KEYS.FEATURE_CHEAPER_PRICE_REPORT] && (
+          <PriceReportWidget productId={product.id} currentPrice={product.price} />
+        )}
+
         <p className="mt-4 text-xs leading-relaxed border-t cut-line pt-4">
           {isNonReturnable ? (
             <span className="text-red-600 font-medium">این محصول قابل مرجوع نیست.</span>
@@ -326,11 +373,34 @@ export default async function MazonProductPage({
           )}
         </p>
 
+        {flags[SITE_SETTING_KEYS.FEATURE_DEFECTIVE_ITEMS] && product.defectNote && (
+          <div className="mt-4 border-2 border-[var(--color-ochre)] rounded-lg p-4 bg-[var(--color-ochre)]/10">
+            <p className="font-bold text-sm mb-1 flex items-center gap-1.5">
+              <span aria-hidden>⚠️</span> این محصول ایراد دار است
+            </p>
+            <p className="text-xs text-[var(--color-muted)] leading-relaxed whitespace-pre-line">
+              {product.defectNote}
+            </p>
+            {product.defectImage && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={product.defectImage}
+                alt="نمونه‌ی ایراد این محصول"
+                className="mt-3 w-32 h-32 object-cover rounded-lg border cut-line"
+              />
+            )}
+          </div>
+        )}
+
         <div className="mt-8 pt-6 border-t cut-line">
           <h2 className="font-bold mb-2">توضیحات محصول</h2>
-          <p className="text-sm text-[var(--color-muted)] leading-relaxed whitespace-pre-line">
-            {product.description}
-          </p>
+          {/* توضیحاتِ محصول از RichTextEditorِ ادمین میاد، از سمتِ سرور موقعِ
+              ذخیره هم پاک‌سازی شده (sanitizeProductDescription) -- اینجا دوباره
+              پاک‌سازی می‌کنیم (دفاع در عمق + سازگاری با توضیحاتِ قدیمی‌ترِ متنِ خام) */}
+          <div
+            className="text-sm text-[var(--color-muted)] leading-relaxed whitespace-pre-line [&_ul]:list-disc [&_ul]:pr-5 [&_ol]:list-decimal [&_ol]:pr-5 [&_p]:mb-2"
+            dangerouslySetInnerHTML={{ __html: sanitizeProductDescription(product.description) }}
+          />
         </div>
 
         {product.careInstructions && (
@@ -383,8 +453,13 @@ export default async function MazonProductPage({
             </p>
           </div>
           <div className="grid md:grid-cols-[1fr_180px] gap-6 items-start">
-            <PriceHistoryChart history={priceHistory} />
-            <div className="grid grid-cols-2 md:grid-cols-1 gap-2 text-sm">
+            {/* min-w-0 پیشگیرانه -- طبقِ همون باگِ سبدخرید/چک‌اوت: پایینِ md
+                که این گرید تک‌ستونیِ ضمنی می‌شه، بدونِ min-w-0 هر فرزندی که
+                محتوای غیرِ-جمع‌شونده داشته باشه می‌تونه عرضِ صفحه رو بترکونه */}
+            <div className="min-w-0">
+              <PriceHistoryChart history={priceHistory} />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-1 gap-2 text-sm min-w-0">
               <div className="bg-[var(--color-linen-dim)] rounded-lg px-3 py-2">
                 <p className="text-[11px] text-[var(--color-muted)]">کمترین</p>
                 <p className="font-bold">{priceHistory.min.toLocaleString("fa-IR")} تومان</p>
@@ -409,10 +484,12 @@ export default async function MazonProductPage({
         </section>
       )}
 
-      <ReviewsSection productId={product.id} productTitle={product.title} productImage={product.image} />
-      <QASection productId={product.id} />
+      {flags[SITE_SETTING_KEYS.FEATURE_PRODUCT_REVIEWS] && (
+        <ReviewsSection productId={product.id} productTitle={product.title} productImage={product.image} />
+      )}
+      {flags[SITE_SETTING_KEYS.FEATURE_PRODUCT_QA] && <QASection productId={product.id} />}
 
-      {relatedProducts.length > 0 && (
+      {flags[SITE_SETTING_KEYS.FEATURE_FREQUENTLY_BOUGHT_TOGETHER] && relatedProducts.length > 0 && (
         <section className="mt-10 pt-8 border-t cut-line">
           <h2 className="font-bold text-lg mb-6">این محصول رو خریدن، این‌ها رو هم خریدن</h2>
           <HorizontalProductCarousel products={relatedProducts} wishlistedIds={wishlistedIds} />

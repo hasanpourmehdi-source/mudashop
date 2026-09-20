@@ -25,3 +25,19 @@ const PERSIAN_DIGITS = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "�
 export function toPersianDigits(text: string): string {
   return text.replace(/[0-9]/g, (d) => PERSIAN_DIGITS[Number(d)]);
 }
+
+// معکوسِ بالا -- لازم چون بعضی جاها (مثلاً placeholderِ {n} توی فرمول‌های
+// اسمِ کمپین که ادمین دستی تایپ می‌کنه) ممکنه با کیبورد/IMEِ فارسی رقمِ فارسی
+// بشه («{۲}» به‌جای «{2}»)، ولی خودِ منطق باید رقمِ لاتین رو برای اندیس/محاسبه بخونه
+export function toEnglishDigits(text: string): string {
+  return text.replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d)));
+}
+
+// تشخیصِ متنی که هنوز حروفِ لاتین/ترکیِ ترجمه‌نشده داره -- برای جاهایی که
+// می‌خوایم متنِ کاملاً ترجمه‌نشده (یا فقط رقمش فارسی شده، نه خودِ کلمات) رو
+// کنار بذاریم. فقط چک‌کردنِ nameFa !== name کافی نیست، چون toPersianDigits
+// همیشه رقم‌ها رو عوض می‌کنه و رشته رو با اصلش فرق می‌ده حتی اگه هیچ کلمه‌ای
+// واقعاً ترجمه نشده باشه
+export function hasUntranslatedLatin(text: string): boolean {
+  return /[A-Za-zÇŞĞİÖÜçşğıöü]/.test(text);
+}

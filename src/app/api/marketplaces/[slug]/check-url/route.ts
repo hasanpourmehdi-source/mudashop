@@ -3,6 +3,10 @@ import { buildExternalSiteUrl, resolveEffectiveFilters, type SelectedAttributeFi
 import { fetchTrendyolProductsFromUrl } from "@/lib/trendyol";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // این روت برای اعتبارسنجی «قبل از اعمال» فیلترهای سایت‌های خارجیه: کامپوننت
 // فیلتر (سمت کلاینت) قبل از اینکه واقعا URL صفحه رو عوض کنه، اینجا می‌پرسه
 // «اگه این فیلتر رو اضافه کنم، سایت مقصد جواب می‌ده یا 404؟». چون این یه

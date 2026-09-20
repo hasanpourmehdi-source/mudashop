@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Spinner } from "@/components/Spinner";
 
 type Alert = { targetPrice: number; notifiedAt: string | null } | null;
 
@@ -104,8 +105,9 @@ export function PriceAlertWidget({
             <button
               onClick={remove}
               disabled={saving}
-              className="text-red-600 text-xs px-2 disabled:opacity-50"
+              className="text-red-600 text-xs inline-flex items-center gap-1 px-2 disabled:opacity-50"
             >
+              {saving && <Spinner className="w-3 h-3" />}
               حذف
             </button>
           </div>
@@ -126,9 +128,10 @@ export function PriceAlertWidget({
             <button
               onClick={save}
               disabled={saving}
-              className="bg-[var(--color-wine)] text-white rounded-full px-4 py-1.5 text-xs font-medium disabled:opacity-50"
+              className="bg-[var(--color-wine)] text-white inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium disabled:opacity-50"
             >
-              {saving ? "..." : "ثبت اخطار"}
+              {saving && <Spinner className="w-3.5 h-3.5" />}
+              {saving ? "" : "ثبت اخطار"}
             </button>
             {alert && (
               <button

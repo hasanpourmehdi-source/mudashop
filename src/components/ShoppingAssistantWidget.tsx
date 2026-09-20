@@ -6,9 +6,10 @@ import Link from "next/link";
 
 type ChatEntry =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; products: AssistantProduct[] };
+  | { role: "assistant"; text: string; products: AssistantProduct[]; orders: AssistantOrderLink[] };
 
 type AssistantProduct = { slug: string; title: string; basePrice: number; discount: number; image: string };
+type AssistantOrderLink = { id: string; label: string; href: string };
 
 // دستیارِ خریدِ هوش‌مصنوعی -- دکمه‌ی شناور پایین-راست (چت پشتیبانی پایین-چپه).
 // بدون نیاز به لاگین. کاتالوگِ مزون رو بر اساسِ پیامِ مشتری جست‌وجو می‌کند.
@@ -33,19 +34,28 @@ export function ShoppingAssistantWidget() {
       });
       const data = await res.json();
       if (res.ok) {
-        setEntries((prev) => [...prev, { role: "assistant", text: data.reply, products: data.products ?? [] }]);
+        setEntries((prev) => [
+          ...prev,
+          { role: "assistant", text: data.reply, products: data.products ?? [], orders: data.orders ?? [] },
+        ]);
       } else {
-        setEntries((prev) => [...prev, { role: "assistant", text: "مشکلی پیش آمد، دوباره تلاش کن.", products: [] }]);
+        setEntries((prev) => [
+          ...prev,
+          { role: "assistant", text: "مشکلی پیش آمد، دوباره تلاش کن.", products: [], orders: [] },
+        ]);
       }
     } catch {
-      setEntries((prev) => [...prev, { role: "assistant", text: "مشکلی پیش آمد، دوباره تلاش کن.", products: [] }]);
+      setEntries((prev) => [
+        ...prev,
+        { role: "assistant", text: "مشکلی پیش آمد، دوباره تلاش کن.", products: [], orders: [] },
+      ]);
     }
     setSending(false);
     setTimeout(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }), 50);
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3">
+    <div className="fixed bottom-20 md:bottom-4 right-4 z-50 flex flex-col items-end gap-3">
       {open && (
         <div className="w-80 max-w-[90vw] h-96 bg-white rounded-2xl border cut-line shadow-xl flex flex-col overflow-hidden">
           <div className="bg-[var(--color-wine)] text-white px-4 py-3 flex items-center justify-between">
@@ -63,12 +73,25 @@ export function ShoppingAssistantWidget() {
             {entries.map((e, idx) => (
               <div key={idx} className={e.role === "user" ? "text-left" : ""}>
                 <p
-                  className={`text-sm inline-block rounded-lg px-3 py-2 max-w-[85%] ${
+                  className={`text-sm inline-block rounded-lg px-3 py-2 max-w-[85%] whitespace-pre-line ${
                     e.role === "user" ? "bg-[var(--color-wine)] text-white" : "bg-[var(--color-linen-dim)]"
                   }`}
                 >
                   {e.text}
                 </p>
+                {e.role === "assistant" && e.orders.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {e.orders.map((o) => (
+                      <Link
+                        key={o.id}
+                        href={o.href}
+                        className="text-xs border cut-line rounded-full px-3 py-1.5 bg-white hover:border-[var(--color-wine)]"
+                      >
+                        مشاهده‌ی سفارش {o.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
                 {e.role === "assistant" && e.products.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {e.products.map((p) => (

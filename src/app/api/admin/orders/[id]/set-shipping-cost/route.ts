@@ -128,15 +128,26 @@ export async function POST(
 
   let assignedCard: { cardNumber: string; shebaNumber: string | null; holderName: string } | null = null;
   if (remainder > 0 && !isCashOnDelivery) {
-    if (!bankCardId) {
-      return NextResponse.json(
-        { error: "چون مبلغی باید دریافت شود، یک کارت بانکی انتخاب کنید" },
-        { status: 400 }
-      );
-    }
-    assignedCard = await prisma.bankCard.findUnique({ where: { id: bankCardId } });
-    if (!assignedCard) {
-      return NextResponse.json({ error: "کارت بانکی یافت نشد" }, { status: 404 });
+    if (bankCardId) {
+      assignedCard = await prisma.bankCard.findUnique({ where: { id: bankCardId } });
+      if (!assignedCard) {
+        return NextResponse.json({ error: "کارت بانکی یافت نشد" }, { status: 404 });
+      }
+    } else {
+      // ادمین کارتی انتخاب نکرده -- بر اساسِ ترکیبِ سفارش، خودکار کارتِ
+      // پیش‌فرضِ همون هدف (باربریِ کالای خارجی، یا ارسالِ سفارشِ فقط-مزون)
+      // انتخاب می‌شه؛ اگه هیچ‌کدوم پیش‌فرض نداشتن، مثلِ دورِ اول فالبک به
+      // قدیمی‌ترین کارتِ فعال
+      const defaultFlag = hasExternalItems ? "isDefaultForCargo" : "isDefaultForShipping";
+      assignedCard =
+        (await prisma.bankCard.findFirst({ where: { isActive: true, [defaultFlag]: true } })) ??
+        (await prisma.bankCard.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } }));
+      if (!assignedCard) {
+        return NextResponse.json(
+          { error: "چون مبلغی باید دریافت شود، یک کارت بانکی انتخاب کنید (هیچ کارتِ فعالی هم ثبت نشده)" },
+          { status: 400 }
+        );
+      }
     }
   }
 
@@ -159,6 +170,13 @@ export async function POST(
   }
 
   await prisma.$transaction(async (tx) => {
+    // گاردِ همزمانی: wallet و shippingPayment را داخل تراکنش دوباره بخوان --
+    // دو درخواستِ همزمان هر دو بیرونِ تراکنش یک balance یکسان دیده بودند
+    const freshWallet = await getOrCreateWallet(order.userId, tx);
+    const freshAvailable = freshWallet.balance + previousWalletOffset;
+    if (totalCost > 0 && freshAvailable < walletOffset) {
+      throw new Error("موجودی کیف پول کافی نیست -- لطفاً دوباره تلاش کنید");
+    }
     // ریز وزن/هزینه‌ی باربری هر قلم -- فقط برای ثبت و نمایش (اعتماد مشتری)،
     // مبلغ نهایی از cargoCost بالا حساب می‌شه، نه از جمع این‌ها
     for (const entry of itemBreakdown ?? []) {

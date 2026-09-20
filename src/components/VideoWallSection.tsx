@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { HorizontalScroller } from "@/components/HorizontalScroller";
 import type { VideoWallItem } from "@/lib/videoWall";
 
 // یه ردیفِ افقی از همه‌ی ویدیوهای محصولات (رسمیِ مزون + ویدیوهایی که مشتری‌ها
@@ -15,8 +16,8 @@ export function VideoWallSection({ items }: { items: VideoWallItem[] }) {
 
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8">
-      <h2 className="font-bold text-lg mb-4">🎬 ویدیوهای محصولات</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <h2 className="font-bold text-lg mb-4">🎬 فیلم محصولات</h2>
+      <HorizontalScroller>
         {items.map((item) => (
           <button
             key={item.id}
@@ -31,7 +32,7 @@ export function VideoWallSection({ items }: { items: VideoWallItem[] }) {
             </span>
           </button>
         ))}
-      </div>
+      </HorizontalScroller>
 
       {open && (
         <div

@@ -142,7 +142,7 @@ describe("cart store", () => {
       expect(store.getState().items).toHaveLength(0);
     });
 
-    it("clear کردنِ سبد، savedForLater را دست‌نخورده می‌گذارد", () => {
+    it("clear فقط سبدِ فعال را پاک می‌کند، savedForLater دست‌نخورده می‌ماند (دکمه‌ی «خالی کردن سبد»)", () => {
       const store = getCartStore(`t${keyCounter++}`);
       store.getState().addItem(makeItem({ id: "a" }));
       store.getState().addItem(makeItem({ id: "b" }));
@@ -150,6 +150,16 @@ describe("cart store", () => {
       store.getState().clear();
       expect(store.getState().items).toHaveLength(0);
       expect(store.getState().savedForLater).toHaveLength(1);
+    });
+
+    it("clearAll هر دو لیست را پاک می‌کند (بازنشستگیِ سبدِ مهمان بعد از ادغام)", () => {
+      const store = getCartStore(`t${keyCounter++}`);
+      store.getState().addItem(makeItem({ id: "a" }));
+      store.getState().addItem(makeItem({ id: "b" }));
+      store.getState().saveForLater("a");
+      store.getState().clearAll();
+      expect(store.getState().items).toHaveLength(0);
+      expect(store.getState().savedForLater).toHaveLength(0);
     });
   });
 

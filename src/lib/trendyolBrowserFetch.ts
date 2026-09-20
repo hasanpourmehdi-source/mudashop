@@ -1,57 +1,36 @@
-import { execFile } from "node:child_process";
-import path from "node:path";
-import { promisify } from "node:util";
+import { siteUrl } from "@/lib/seo";
 
-const execFileAsync = promisify(execFile);
-
-// وقتی got-scraping (توی trendyol.ts) شکست بخوره -- یعنی کلادفلر یه چالش
-// جاوااسکریپتی («Just a moment...») برگردونده که فقط یه مرورگر واقعی می‌تونه
-// حلش کنه -- این ماژول به‌عنوان آخرین راه، منطق Playwright+stealth رو (که توی
-// scripts/trendyolBrowserFetchWorker.cjs هست) به‌صورت یه پروسه‌ی Node جدا اجرا
-// می‌کنه. عمداً import مستقیم نشده چون playwright-extra + پلاگین stealth زیر
-// باندلر Turbopack نکست‌جی‌اس می‌شکنن (خطای `utils.typeOf is not a function`)؛
-// اجرا در یه پروسه‌ی جدا (بدون باندل شدن) این مشکل رو کامل دور می‌زنه.
-const WORKER_SCRIPT = path.join(process.cwd(), "scripts", "trendyolBrowserFetchWorker.cjs");
-const WORKER_TIMEOUT_MS = 40000;
-const MAX_BUFFER_BYTES = 20 * 1024 * 1024; // صفحات HTML ترندیول می‌تونن چند صد کیلوبایت باشن
-
-// محدودکننده‌ی همزمانی ساده (بدون پکیج جدید) -- اگه چند درخواست هم‌زمان به
-// fallback نیاز داشته باشن، حداکثر ۲ تا پروسه/مرورگر هم‌زمان بازه تا منابع
-// سرور منفجر نشه
-const MAX_CONCURRENT = 2;
-let activeCount = 0;
-const waitQueue: Array<() => void> = [];
-
-async function acquireSlot(): Promise<void> {
-  if (activeCount < MAX_CONCURRENT) {
-    activeCount++;
-    return;
-  }
-  await new Promise<void>((resolve) => waitQueue.push(resolve));
-  activeCount++;
-}
-
-function releaseSlot(): void {
-  activeCount--;
-  const next = waitQueue.shift();
-  if (next) next();
-}
-
-// یه صفحه رو با مرورگر واقعی (توی پروسه‌ی جدا) باز می‌کنه و HTML نهایی رو
-// برمی‌گردونه -- هر فراخوانی یه Chromium تازه لانچ می‌کنه (سریع نیست، ولی طبق
-// تصمیم مهدی کندی مهم نیست) و بعدش کامل بسته می‌شه، پس نیازی به مدیریت عمر
-// مرورگر بین درخواست‌ها نیست
+// قبلاً این فایل مستقیم منطقِ Playwright+stealth رو (توی یه پروسه‌ی Node جدا، با
+// execFile) اجرا می‌کرد. مشکل: چون این فایل import مستقیم نداشت (execFile با
+// مسیرِ رشته‌ای)، ردیابیِ خودکارِ Next.js نمی‌دیدش، پس next.config.ts صریحاً
+// مجبور بود این باندلِ ~۸۶ مگابایتی (Playwright+@sparticuz/chromium) رو به
+// هر روتی که (مستقیم/غیرمستقیم) این فایل رو import می‌کرد اضافه کنه -- که
+// می‌شد ۶۶ روتِ مختلف، هرکدوم با کپیِ خودشون از همون باندل. با ۵ دیپلویِ
+// نگه‌داشته‌شده، این یعنی ۶۶×۸۶مگ×۵ ≈ ده‌ها گیگ -- دقیقاً همون چیزی که سهمیه‌ی
+// Function Storage ورسل (۱۰ گیگ) رو دوباره پُر کرد (۲۰۲۶/۰۹/۰۹، با اینکه یه
+// روز قبلش از ۲۷۹ روت به ۶۶ روت کم شده بود).
+//
+// فیکس: خودِ اجرای Playwright به یه روتِ داخلیِ تنها منتقل شد
+// (src/app/api/internal/trendyol-browser-fetch) که تنها جاییه که این باندل رو
+// حمل می‌کنه. این فایل الان فقط یه فچِ ساده‌ی سرور-به-سرور به همون روته --
+// امضا/رفتار برای فراخوان‌ها (trendyol.ts، trendyolProductDetail.ts) دقیقاً
+// همون قبلیه، هیچ تغییری لازم نداشتن
 export async function fetchTrendyolPageViaBrowser(
-  url: string
+  url: string,
 ): Promise<{ statusCode: number; body: string }> {
-  await acquireSlot();
-  try {
-    const { stdout } = await execFileAsync(process.execPath, [WORKER_SCRIPT, url], {
-      timeout: WORKER_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER_BYTES,
-    });
-    return JSON.parse(stdout) as { statusCode: number; body: string };
-  } finally {
-    releaseSlot();
+  const secret = process.env.TRENDYOL_BROWSER_FETCH_SECRET;
+  if (!secret) {
+    throw new Error("TRENDYOL_BROWSER_FETCH_SECRET تنظیم نشده");
   }
+  const res = await fetch(siteUrl("/api/internal/trendyol-browser-fetch"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-internal-secret": secret },
+    body: JSON.stringify({ url }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`fetchTrendyolPageViaBrowser ناموفق (${res.status}): ${detail}`);
+  }
+  return (await res.json()) as { statusCode: number; body: string };
 }

@@ -1,11 +1,17 @@
 import { UnifiedProduct } from "@/types/product";
+import { prisma } from "@/lib/prisma";
 import type { ExternalSiteKind } from "@prisma/client";
 import { gotScraping, Response } from "got-scraping";
 import { CookieJar } from "tough-cookie";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
-import { translateTrendyolTitles } from "@/lib/trendyolTitleTranslation";
+import {
+  translateTrendyolTitles,
+  translateTurkishPhrase,
+  withCategoryPrefix,
+} from "@/lib/trendyolTitleTranslation";
 import { getExchangeRateInfo, applyExchangeRate } from "@/lib/exchangeRate";
 import { fetchTrendyolPageViaBrowser } from "@/lib/trendyolBrowserFetch";
+import { toProxiedImageUrl } from "@/lib/imageProxy";
 
 const FAKE_STORE_BASE = "https://fakestoreapi.com";
 
@@ -81,111 +87,6 @@ function normalizeTrendyolProduct(
 }
 
 // ============================================================================
-// جستجوی زنده‌ی واقعی روی ترندیول -- آزمایشی
-// ============================================================================
-// این بخش جدا از شبیه‌سازی بالاست (که از Fake Store API میاد). اینجا مستقیم به
-// همون اندپوینت غیررسمی discovery-web-searchgw-service که توی docs/trendyol-api-notes.md
-// مستند کردیم وصل می‌شیم، فقط برای تست دستی -- هنوز به بقیه‌ی سایت وصل نشده و
-// لایه‌ی ترجمه‌ی فارسی→ترکی روش اعمال نشده (قدم بعدی).
-//
-// ⚠️ این اندپوینت رسمی نیست، مستند نشده، و ممکنه بدون اطلاع قبلی تغییر کنه یا قطع
-// بشه. فقط برای تست/کاوش استفاده کن، نه اتکای پروداکشن بدون کش و بدون محدودیت نرخ.
-//
-// مسیر و شکل داده بر اساس docs/trendyol-api-notes.md بخش ۲.۸ (زمین حقیقت واقعی --
-// از رو یه پاسخ خام واقعی ذخیره‌شده، نه حدس از رو کد پروژه‌های دیگه):
-//   - مسیر: discovery-web-searchgw-service/v2/api/filter/sr?q=...  («Search API of TY»)
-//   - price = { buyingPrice, discountedPrice, originalPrice, sellingPrice } -- همه عدد خام، بدون .value
-//   - categoryHierarchy از خاص به عام مرتبه (برگ اول، ریشه آخر) -- categoryName همون سطح برگه
-
-type TrendyolRawProduct = Record<string, unknown>;
-
-export type TrendyolSearchResult = {
-  id: string | number;
-  name: string;
-  price: number | null;
-  originalPrice: number | null;
-  image: string | null;
-  url: string | null;
-  category: string | null;
-  rating: number | null;
-  reviewCount: number | null;
-  merchantId: number | null;
-  campaignId: number | null;
-  badges: string[]; // فقط عنوان‌های badges[] -- برای نمایش اطلاعاتی، نه چیزی که خودمون بسازیم
-};
-
-function firstImageUrl(images: unknown): string | null {
-  if (!Array.isArray(images) || typeof images[0] !== "string") return null;
-  const path = images[0] as string;
-  return path.startsWith("http") ? path : `https://cdn.dsmcdn.com/${path.replace(/^\//, "")}`;
-}
-
-function normalizeTrendyolSearchProduct(p: TrendyolRawProduct): TrendyolSearchResult {
-  const price = p.price as Record<string, unknown> | undefined;
-  const ratingScore = p.ratingScore as Record<string, unknown> | undefined;
-  const rawUrl = (p.url as string | undefined) ?? null;
-  const badges = Array.isArray(p.badges)
-    ? (p.badges as Record<string, unknown>[])
-        .map((b) => b.title)
-        .filter((t): t is string => typeof t === "string")
-    : [];
-
-  return {
-    id: (p.id as string | number) ?? "",
-    name: (p.name as string) ?? "",
-    price: typeof price?.sellingPrice === "number" ? price.sellingPrice : null,
-    originalPrice: typeof price?.originalPrice === "number" ? price.originalPrice : null,
-    image: firstImageUrl(p.images),
-    url: rawUrl ? `https://www.trendyol.com${rawUrl}` : null,
-    // categoryName سطح برگه‌ست (خاص‌ترین سطح) -- برای نمایش ساده کافیه
-    category: (p.categoryName as string) ?? (p.categoryHierarchy as string) ?? null,
-    rating: (ratingScore?.averageRating as number) ?? null,
-    reviewCount: (ratingScore?.totalCount as number) ?? null,
-    merchantId: typeof p.merchantId === "number" ? p.merchantId : null,
-    campaignId: typeof p.campaignId === "number" ? p.campaignId : null,
-    badges,
-  };
-}
-
-// جستجوی آزاد با کلمه‌کلیدی (فرض بر اینه که query از قبل به ترکی ترجمه شده)
-export async function searchTrendyolLive(
-  query: string,
-  page = 1
-): Promise<{ products: TrendyolSearchResult[]; raw: TrendyolRawProduct[]; totalCount: number | null }> {
-  const url = `https://public.trendyol.com/discovery-web-searchgw-service/v2/api/filter/sr?q=${encodeURIComponent(
-    query
-  )}&pi=${page}`;
-
-  const { res, retried } = await requestTrendyolWithRetry(() =>
-    gotScraping({
-      url,
-      headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
-      cookieJar: trendyolCookieJar,
-      headers: {
-        origin: "https://www.trendyol.com",
-        referer: "https://www.trendyol.com/",
-      },
-      throwHttpErrors: false,
-      responseType: "json",
-    })
-  );
-
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw buildTrendyolFetchError("جستجوی ترندیول", res, retried);
-  }
-
-  const data = res.body as { result?: { products?: TrendyolRawProduct[]; totalCount?: number } };
-  const rawProducts: TrendyolRawProduct[] = data?.result?.products ?? [];
-  const totalCount: number | null = data?.result?.totalCount ?? null;
-
-  return {
-    products: rawProducts.map(normalizeTrendyolSearchProduct),
-    raw: rawProducts.slice(0, 3), // فقط ۳ تای اول خام، برای اینکه واقعاً ساختار پاسخ رو ببینیم
-    totalCount,
-  };
-}
-
-// ============================================================================
 // واکشی محصولات واقعی ترندیول از روی لینک ذخیره‌شده‌ی هر دسته (Category.trendyolUrl)
 // ============================================================================
 // طبق docs/trendyol-api-notes.md بخش ۲.۱۰: صفحه‌ی سرچ ترندیول (مثل
@@ -227,8 +128,13 @@ export type TrendyolLiveProduct = {
   id: string | number;
   name: string; // عنوان اصلی ترکی -- برای لینک/دیباگ نگه داشته می‌شه
   nameFa: string; // عنوان ترجمه‌شده به فارسی -- چیزی که باید توی UI نشون داده بشه
-  price: number | null; // قیمت فعلی (با تخفیف اگه باشه)
+  price: number | null; // قیمت فعلی (با تخفیف اگه باشه) -- به تومان
   originalPrice: number | null;
+  // نسخه‌ی خامِ لیر همین دو فیلد -- فقط برای تولتیپِ ادمین (تأییدِ سریعِ نرخِ
+  // تبدیل، بدون رفتن به صفحه‌ی جزئیات). withTomanPrices پرش می‌کنه، قبل از
+  // اینکه price/originalPrice بالا به تومان تبدیل بشن
+  priceLira: number | null;
+  originalPriceLira: number | null;
   discountPercentText: string | null; // رشته‌ی آماده مثل "-%14"
   image: string | null;
   images: string[]; // همه‌ی عکس‌های محصول -- برای اسکراب با موس مثل مزون
@@ -248,6 +154,11 @@ export type TrendyolLiveProduct = {
   lowestPriceDurationDays: number | null; // مثلاً ۱۰ -- برای بج «کمترین قیمت ۱۰ روز اخیر»
   socialProofFavoriteCount: string | null; // مثلاً "31K"
   socialProofOrderCount: string | null; // مثلاً "100+"
+  // درصدِ کمپینِ سبدخرید (مثلاً «۲. Ürün %۴۰» -- کالای دوم ۴۰٪ تخفیف)؛ برخلافِ
+  // discountPercentText (که تخفیفِ همیشگیِ روی خودِ قیمت رو نشون می‌ده)، این یکی
+  // شرطیه (وابسته به رفتار توی سبدخرید) و مستقیماً از دیتای خامِ گرید/سرچ
+  // (بدون نیاز به fetch جداگانه‌ی هر محصول) قابل‌استخراجه -- ر.ک. parseBasketCampaign
+  basketCampaignPercent: number | null;
 };
 
 type TrendyolLiveFetchResult = {
@@ -427,15 +338,15 @@ export async function requestTrendyolWithRetry<T extends { statusCode: number }>
   return { res: retriedRes, retried: true };
 }
 
-// کش خیلی ساده‌ی حافظه‌ای -- چون این اندپوینت غیررسمیه، نباید به‌ازای هر بازدید
-// کاربر لایو صداش بزنیم. برای پروداکشن واقعی بهتره این کش رو به دیتابیس/Redis
-// منتقل کنیم (چون این نسخه با ری‌استارت سرور یا چند instance پاک/ناهماهنگ می‌شه)
-const liveCache = new Map<string, { data: TrendyolLiveFetchResult; expiresAt: number }>();
+// کشِ لایو -- روی جدولِ TrendyolLiveCache (نه حافظه‌ی پروسه) تا بینِ همه‌ی
+// instance های سرورلسِ Vercel مشترک بمونه؛ قبلاً یه Map حافظه‌ای بود که عملاً
+// اغلبِ درخواست‌ها رو miss می‌کرد (هر درخواست ممکنه سرورلسِ متفاوتی اجرا بشه)
 const CACHE_TTL_MS = 60 * 60 * 1000; // ۱ ساعت
 
 function rawImageUrl(path: unknown): string | null {
   if (typeof path !== "string" || !path) return null;
-  return path.startsWith("http") ? path : `https://cdn.dsmcdn.com/${path.replace(/^\//, "")}`;
+  const absolute = path.startsWith("http") ? path : `https://cdn.dsmcdn.com/${path.replace(/^\//, "")}`;
+  return toProxiedImageUrl(absolute);
 }
 
 // تبدیل آرایه‌ی خام badges (unknownBadge, ...) به لیست تایپ‌شده -- ترندیول اسم
@@ -448,10 +359,11 @@ function parseSimplifiedBadges(raw: unknown): TrendyolSimplifiedBadge[] {
     const type = badge.type as string | undefined;
     const title = badge.title as string | undefined;
     if (!type || !title) continue;
+    const icon = badge.icon as string | undefined;
     result.push({
       type,
       title,
-      icon: (badge.icon as string) ?? null,
+      icon: icon ? toProxiedImageUrl(icon) : null,
       color: (badge.color as string) ?? null,
     });
   }
@@ -465,7 +377,8 @@ function parseStripBadge(raw: unknown): TrendyolStripBadge | null {
   const title = badge.title as string | undefined;
   const color = badge.color as string | undefined;
   if (!type || !title || !color) return null;
-  return { type, title, color, icon: (badge.icon as string) ?? null };
+  const icon = badge.icon as string | undefined;
+  return { type, title, color, icon: icon ? toProxiedImageUrl(icon) : null };
 }
 
 function parseSocialProof(raw: unknown, key: string): string | null {
@@ -498,6 +411,41 @@ function parseCampaignSeal(tagDetailsRaw: unknown): TrendyolCampaignSeal | null 
   for (const t of tagDetailsRaw as Record<string, unknown>[]) {
     const tag = t.tag as string | undefined;
     if (tag && CAMPAIGN_SEAL_LABELS[tag]) return CAMPAIGN_SEAL_LABELS[tag];
+  }
+  return null;
+}
+
+// درصدِ کمپینِ سبدخرید («چندتا بخر کمتر بده» -- مثلِ badges.unknownBadge با
+// type=TAKE_MORE_PAY_LESS و promotions[].shortName مثلِ «۲. Ürün %۴۰») -- تأیید
+// شده با بررسیِ دیتای خامِ واقعیِ سرچ که این عدد همون‌جا هست، بدونِ نیاز به
+// fetchِ جداگانه‌ی صفحه‌ی هر محصول. اگه promotions خالی بود ولی badge بازم
+// TAKE_MORE_PAY_LESS بود (یا برعکس)، هرکدوم که عدد داشت کافیه
+function parseBasketCampaignPercent(p: Record<string, unknown>): number | null {
+  // نوعِ دوم (و ظاهراً واقعی‌ترین): «Sepette %XX İndirim» -- singlePrice.componentType
+  // می‌شه BASKET_PROMO، و discountPercentage (رشته‌ی «-%25») همون درصده. توجه:
+  // برای این نوع، price.originalPrice خامِ ترندیول از price.current *کمتره*
+  // (برعکسِ معنایِ معمولش) چون همون قیمتِ بعدِ تخفیفِ سبده -- به همین دلیل
+  // hasNormalDiscount (که originalPrice > price می‌خواد) خودش‌به‌خود false
+  // می‌مونه و این دو نوع تخفیف با هم تداخل نمی‌کنن
+  const singlePrice = p.singlePrice as Record<string, unknown> | undefined;
+  if (singlePrice?.componentType === "BASKET_PROMO") {
+    const match = (singlePrice.discountPercentage as string | undefined)?.match(/%\s*(\d+)/);
+    if (match) return Number(match[1]);
+  }
+  // نوعِ اول: «چندتا بخر کمتر بده» (مثلِ «۲. Ürün %۴۰») -- badges.unknownBadge
+  // با type=TAKE_MORE_PAY_LESS و promotions[].shortName/name
+  const badges = p.badges as Record<string, Record<string, unknown>> | undefined;
+  const unknownBadge = badges?.unknownBadge;
+  const isBasketType = unknownBadge?.type === "TAKE_MORE_PAY_LESS";
+  const promotions = Array.isArray(p.promotions) ? (p.promotions as Record<string, unknown>[]) : [];
+  const texts = [
+    isBasketType ? (unknownBadge?.title as string | undefined) : undefined,
+    ...promotions.map((pr) => pr.shortName as string | undefined),
+    ...promotions.map((pr) => pr.name as string | undefined),
+  ].filter((t): t is string => !!t);
+  for (const text of texts) {
+    const match = text.match(/%\s*(\d+)/);
+    if (match) return Number(match[1]);
   }
   return null;
 }
@@ -542,8 +490,12 @@ function normalizeLiveProduct(p: Record<string, unknown>, baseOrigin: string): T
     id: (p.id as string | number) ?? "",
     name: (p.name as string) ?? "",
     nameFa: (p.name as string) ?? "", // موقتاً همون عنوان اصلی -- در parseSearchPayload با ترجمه‌ی واقعی جایگزین می‌شه
+    // این‌جا هنوز خامِ لیره -- withTomanPrices بعداً price/originalPrice رو به
+    // تومان تبدیل می‌کنه ولی priceLira/originalPriceLira دست‌نخورده می‌مونن
     price: typeof price?.current === "number" ? price.current : null,
     originalPrice: typeof price?.originalPrice === "number" ? price.originalPrice : null,
+    priceLira: typeof price?.current === "number" ? price.current : null,
+    originalPriceLira: typeof price?.originalPrice === "number" ? price.originalPrice : null,
     discountPercentText: (singlePrice?.discountPercentage as string) ?? null,
     image: firstImage,
     images: images.length > 0 ? images : firstImage ? [firstImage] : [],
@@ -566,6 +518,7 @@ function normalizeLiveProduct(p: Record<string, unknown>, baseOrigin: string): T
     lowestPriceDurationDays: lowestPriceLabel ? Number(lowestPriceLabel.value) || null : null,
     socialProofFavoriteCount: parseSocialProof(p.socialProof, "favoriteCount"),
     socialProofOrderCount: parseSocialProof(p.socialProof, "orderCount"),
+    basketCampaignPercent: parseBasketCampaignPercent(p),
   };
 }
 
@@ -611,8 +564,17 @@ async function parseSearchPayload(payloadData: Record<string, unknown>, baseOrig
   // ممکنه اولین بارش باشه که دیده می‌شه و نیاز به tokenize + ذخیره‌ی کش داره
   try {
     const titleMap = await translateTrendyolTitles(products.map((p) => ({ title: p.name, brand: p.brand })));
+    // دسته‌بندیِ خودِ ترندیول (category) خام/ترکیه -- برای اینکه موضوعِ اصلیِ
+    // محصول همیشه اولِ عنوانِ ترجمه‌شده بیاد. دیکشنری قبلاً توی translateTrendyolTitles
+    // بالا کش شده، پس این حلقه فقط CPU خالصه، نه رفت‌وبرگشتِ اضافه به دیتابیس
+    const rawCategories = Array.from(new Set(products.map((p) => p.category).filter((c): c is string => !!c)));
+    const categoryEntries = await Promise.all(
+      rawCategories.map(async (c) => [c, (await translateTurkishPhrase(c)).translated] as const)
+    );
+    const categoryMap = new Map(categoryEntries);
     for (const p of products) {
-      p.nameFa = titleMap.get(p.name) ?? p.name;
+      const nameFa = titleMap.get(p.name) ?? p.name;
+      p.nameFa = withCategoryPrefix(nameFa, p.category ? categoryMap.get(p.category) : null, p.name);
     }
   } catch (err) {
     // اگه ترجمه خطا داد (مثلاً دیتابیس در دسترس نبود)، حداقل عنوان اصلی رو نشون بده
@@ -854,26 +816,32 @@ async function fetchNextPageFromApi(apiUrl: string): Promise<TrendyolLiveFetchRe
 // نقطه‌ی ورود اصلی -- url می‌تونه لینک صفحه‌ی سرچ ترندیول باشه (Category.trendyolUrl)
 // یا لینک صفحه‌ی بعدی (از nextUrl همین تابع)
 export async function fetchTrendyolProductsFromUrl(url: string): Promise<TrendyolLiveFetchResult> {
-  const cached = liveCache.get(url);
+  const cached = await prisma.trendyolLiveCache.findUnique({ where: { key: url } }).catch(() => null);
   let result: TrendyolLiveFetchResult;
 
-  if (cached && cached.expiresAt > Date.now()) {
-    result = cached.data;
+  if (cached && cached.expiresAt.getTime() > Date.now()) {
+    result = JSON.parse(cached.data) as TrendyolLiveFetchResult;
   } else {
     // فرق صفحه‌ی HTML (اولین صفحه، از سایت اصلی مثل trendyol.com یا trendyol-milla.com)
     // با اندپوینت JSON صفحه‌های بعدی (که آدرسش شامل discovery-*-service هست) --
     // این‌طوری فقط به یه دامنه‌ی خاص (trendyol.com) قفل نیست
     const isHtmlPage = !url.includes("/discovery-");
     result = isHtmlPage ? await fetchFirstPageFromHtml(url) : await fetchNextPageFromApi(url);
-    liveCache.set(url, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
+    const expiresAt = new Date(Date.now() + CACHE_TTL_MS);
+    // نوشتنِ کش صرفاً یه بهینه‌سازیه -- اگه به هر دلیلی (مثلاً race روی همون
+    // key) شکست بخوره، نباید کلِ درخواست رو بترکونه؛ دفعه‌ی بعد دوباره زنده می‌گیره
+    await prisma.trendyolLiveCache
+      .upsert({
+        where: { key: url },
+        create: { key: url, data: JSON.stringify(result), expiresAt },
+        update: { data: JSON.stringify(result), expiresAt },
+      })
+      .catch((err) => console.error("[trendyol] ذخیره‌ی کشِ لایو شکست خورد (نادیده گرفته می‌شه):", err));
   }
 
   // تبدیل قیمت از لیر به تومان همیشه اینجا (بعد از خوندن از کش هم) انجام
-  // می‌شه، نه قبلش -- چون liveCache تا ۱ ساعت زنده می‌مونه ولی نرخ ارز ممکنه
-  // هر لحظه توی پنل ادمین عوض بشه. با map کردن یه آرایه‌ی *جدید*، خودِ
-  // آبجکت‌های داخل liveCache دست‌نخورده می‌مونن (وگرنه با mutate مستقیم،
-  // دفعه‌ی بعد که از کش خونده می‌شد، دوباره روی قیمتِ از قبل تبدیل‌شده اعمال
-  // می‌شد و قیمت چندبرابر غلط می‌شد)
+  // می‌شه، نه قبلش -- چون کش تا ۱ ساعت زنده می‌مونه ولی نرخ ارز ممکنه هر لحظه
+  // توی پنل ادمین عوض بشه؛ خودِ دیتای ذخیره‌شده توی کش همیشه قیمتِ لیرِ خام می‌مونه
   return await withTomanPrices(result);
 }
 

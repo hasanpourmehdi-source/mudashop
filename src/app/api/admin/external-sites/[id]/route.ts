@@ -12,6 +12,7 @@ const updateSchema = z.object({
     .optional(),
   isActive: z.boolean().optional(),
   isReturnable: z.boolean().optional(),
+  showOtherSellers: z.boolean().optional(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

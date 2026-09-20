@@ -19,6 +19,11 @@ export type CartItem = {
   // این قلم ازش اومده. چون هردو source="TRENDYOL" دارن، بدون این فیلد نمی‌شه
   // توی سبدی که همزمان از هر دو سایت قلم داره، فرقشون رو تشخیص داد
   siteLabel?: string;
+  // فقط وقتی مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ پیش‌فرض
+  // انتخاب کرده -- سرور موقعِ ثبتِ سفارش قیمت رو دوباره از روی همین merchantId
+  // اعتبارسنجی می‌کنه (نه از price بالا که فقط برای نمایش/UX سبده)
+  merchantId?: number;
+  merchantName?: string;
 };
 
 type CartState = {
@@ -38,7 +43,13 @@ type CartState = {
   // (که این ادغام رو دوباره صدا می‌زنه) تعداد رو تصاعدی زیاد می‌کرد
   mergeItems: (items: CartItem[]) => void;
   mergeSavedForLater: (items: CartItem[]) => void;
+  // فقط سبدِ فعال رو پاک می‌کنه -- برای دکمه‌ی «خالی کردن سبد» توی صفحه‌ی
+  // سبد، که عمداً savedForLater رو دست‌نخورده می‌ذاره (مثلِ آمازون، لیستِ
+  // «برای بعد» جدا از پاک‌کردنِ سبدِ فعاله)
   clear: () => void;
+  // هر دو لیست رو پاک می‌کنه -- فقط برای بازنشستگیِ کاملِ سبدِ مهمان بعد از
+  // ادغام با حسابِ کاربری (CartUserSync)، نه برای دکمه‌ی کاربر
+  clearAll: () => void;
   total: () => number;
 };
 
@@ -135,6 +146,7 @@ function buildCartStore(storageKey: string) {
             return { savedForLater: [...state.savedForLater, ...toAdd] };
           }),
         clear: () => set({ items: [] }),
+        clearAll: () => set({ items: [], savedForLater: [] }),
         total: () => get().items.reduce((sum, i) => sum + i.price * i.quantity, 0),
       }),
       {

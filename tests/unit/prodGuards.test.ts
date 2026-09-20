@@ -44,6 +44,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
 
   it("در production هیچ لینک بازیابی در پاسخ نیست", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.doMock("@/lib/captcha", () => ({ verifyCaptcha: vi.fn().mockReturnValue(true) }));
     vi.doMock("@/lib/prisma", () => ({
       prisma: {
         user: {
@@ -60,7 +61,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
     }));
 
     const { POST } = await importForgotPassword();
-    const req = { json: async () => ({ email: "x@y.com" }) };
+    const req = { json: async () => ({ email: "x@y.com", captchaId: "test-id", captchaAnswer: "72" }) };
     const res = await POST(req as Request);
     const body = await res.json();
 
@@ -70,6 +71,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
 
   it("در dev لینک بازیابی برای تست در اختیار است", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.doMock("@/lib/captcha", () => ({ verifyCaptcha: vi.fn().mockReturnValue(true) }));
     vi.doMock("@/lib/prisma", () => ({
       prisma: {
         user: {
@@ -86,7 +88,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
     }));
 
     const { POST } = await importForgotPassword();
-    const req = { json: async () => ({ email: "x@y.com" }) };
+    const req = { json: async () => ({ email: "x@y.com", captchaId: "test-id", captchaAnswer: "72" }) };
     const res = await POST(req as Request);
     const body = await res.json();
 
@@ -95,6 +97,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
 
   it("کاربر ناموجود در production هم پیام موفقیت بدون لینک می‌گیرد (نشت نشود)", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.doMock("@/lib/captcha", () => ({ verifyCaptcha: vi.fn().mockReturnValue(true) }));
     vi.doMock("@/lib/prisma", () => ({
       prisma: {
         user: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -103,7 +106,7 @@ describe("forgot-password -- لینک رمز فقط در dev برمی‌گردد
     }));
 
     const { POST } = await importForgotPassword();
-    const req = { json: async () => ({ email: "nobody@y.com" }) };
+    const req = { json: async () => ({ email: "nobody@y.com", captchaId: "test-id", captchaAnswer: "72" }) };
     const res = await POST(req as Request);
     const body = await res.json();
 

@@ -105,15 +105,24 @@ export async function POST(
     walletOffset = Math.min(wallet.balance, diff);
     const remainder = diff - walletOffset;
     if (remainder > 0) {
-      if (!parsed.data.bankCardId) {
-        return NextResponse.json(
-          { error: "چون مبلغ بیشتری باید دریافت بشه، یک کارت بانکی انتخاب کن" },
-          { status: 400 }
-        );
-      }
-      assignedCard = await prisma.bankCard.findUnique({ where: { id: parsed.data.bankCardId } });
-      if (!assignedCard) {
-        return NextResponse.json({ error: "کارت بانکی یافت نشد" }, { status: 404 });
+      if (parsed.data.bankCardId) {
+        assignedCard = await prisma.bankCard.findUnique({ where: { id: parsed.data.bankCardId } });
+        if (!assignedCard) {
+          return NextResponse.json({ error: "کارت بانکی یافت نشد" }, { status: 404 });
+        }
+      } else {
+        // مثلِ set-shipping-cost -- بر اساسِ ترکیبِ سفارش، خودکار کارتِ
+        // پیش‌فرضِ همون هدف انتخاب می‌شه (فالبک به قدیمی‌ترین کارتِ فعال)
+        const defaultFlag = hasExternalItems ? "isDefaultForCargo" : "isDefaultForShipping";
+        assignedCard =
+          (await prisma.bankCard.findFirst({ where: { isActive: true, [defaultFlag]: true } })) ??
+          (await prisma.bankCard.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } }));
+        if (!assignedCard) {
+          return NextResponse.json(
+            { error: "چون مبلغ بیشتری باید دریافت بشه، یک کارت بانکی انتخاب کن (هیچ کارتِ فعالی هم ثبت نشده)" },
+            { status: 400 }
+          );
+        }
       }
     }
   }
@@ -136,6 +145,13 @@ export async function POST(
       : undefined;
 
     await prisma.$transaction(async (tx) => {
+      // گارد همزمانی: کیف پول داخل تراکنش دوباره خوانده می‌شه
+      if (diff > 0) {
+        const freshWallet = await getOrCreateWallet(order.userId, tx);
+        if (freshWallet.balance + (order.shippingPayment?.walletOffset ?? 0) < walletOffset) {
+          throw new Error("موجودی کیف پول کافی نیست -- لطفاً دوباره تلاش کنید");
+        }
+      }
       await tx.order.update({
         where: { id },
         data: {

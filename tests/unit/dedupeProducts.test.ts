@@ -12,6 +12,8 @@ function m(id: string): TrendyolLiveProduct {
     nameFa: `محصول ${id}`,
     price: 1000,
     originalPrice: null,
+    priceLira: null,
+    originalPriceLira: null,
     discountPercentText: null,
     image: null,
     images: [],
@@ -31,6 +33,7 @@ function m(id: string): TrendyolLiveProduct {
     lowestPriceDurationDays: null,
     socialProofFavoriteCount: null,
     socialProofOrderCount: null,
+    basketCampaignPercent: null,
   };
 }
 

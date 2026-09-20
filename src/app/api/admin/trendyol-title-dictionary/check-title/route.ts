@@ -9,7 +9,9 @@ export async function GET(req: Request) {
   const { ok } = await requireAdmin();
   if (!ok) return NextResponse.json({ error: "دسترسی غیرمجاز" }, { status: 403 });
 
-  const title = new URL(req.url).searchParams.get("title") ?? "";
-  const { unknownTerms } = await translateTurkishPhrase(title);
+  const { searchParams } = new URL(req.url);
+  const title = searchParams.get("title") ?? "";
+  const brand = searchParams.get("brand");
+  const { unknownTerms } = await translateTurkishPhrase(title, brand);
   return NextResponse.json({ unknownTerms });
 }

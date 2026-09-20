@@ -7,6 +7,7 @@ type CacheRow = {
   param: string;
   nameTr: string;
   nameFa: string | null;
+  nameFaSynonyms: string | null;
   nameFaSuggested: boolean;
   path: string;
 };
@@ -87,12 +88,16 @@ export default function TrendyolCategoriesAdminPage() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, nameFa: value } : r)));
   }
 
+  function updateLocalSynonyms(id: string, value: string) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, nameFaSynonyms: value } : r)));
+  }
+
   async function saveTranslation(row: CacheRow) {
     try {
       const res = await fetch(`/api/admin/external-sites/trendyol-categories/${row.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nameFa: row.nameFa }),
+        body: JSON.stringify({ nameFa: row.nameFa, nameFaSynonyms: row.nameFaSynonyms }),
       });
       const data = await res.json();
       // این ترجمه ممکنه روی چندتا ردیف دیگه هم (همون دسته‌ی واقعی، مسیر یا
@@ -154,7 +159,7 @@ export default function TrendyolCategoriesAdminPage() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">ترجمه‌ی دسته‌بندی‌های ترندیول</h1>
+          <h1 className="text-xl font-bold">ترجمه‌ی دسته‌بندی‌های سایت‌های خارجی</h1>
           <p className="text-xs text-[var(--color-muted)] mt-1">
             یه آدرس از ترندیول بده و «استخراج از این آدرس» رو بزن -- فقط موارد جدید اضافه
             می‌شن، ترجمه‌های قبلی دست‌نخورده می‌مونن. میلا این بخش رو ندارد -- سایت میلا
@@ -268,32 +273,42 @@ export default function TrendyolCategoriesAdminPage() {
           rows.map((row) => (
             <div
               key={row.id}
-              className="grid grid-cols-[1fr_1fr_90px] gap-2 items-center px-3 py-1.5 border-t cut-line text-sm"
+              className="grid grid-cols-[1fr_1fr_90px] gap-2 items-start px-3 py-1.5 border-t cut-line text-sm"
             >
-              <span className="text-xs text-[var(--color-muted)] truncate" title={row.path}>
+              <span className="text-xs text-[var(--color-muted)] truncate pt-1.5" title={row.path}>
                 {row.path}
               </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={row.nameFa ?? ""}
+                    onChange={(e) => updateLocalNameFa(row.id, e.target.value)}
+                    onBlur={() => saveTranslation(row)}
+                    placeholder="ترجمه فارسی..."
+                    className={`border cut-line rounded-lg px-2 py-1 text-sm flex-1 ${
+                      !row.nameFa ? "border-amber-400" : row.nameFaSuggested ? "border-dashed border-amber-400" : ""
+                    }`}
+                  />
+                  {row.nameFaSuggested && (
+                    <span
+                      title="این ترجمه پیشنهادیه (خودکار یا import)، هنوز دستی تأیید نشده"
+                      className="text-[10px] font-bold text-amber-700 bg-amber-100 rounded-full px-1.5 py-0.5 shrink-0"
+                    >
+                      پیشنهادی
+                    </span>
+                  )}
+                </div>
                 <input
                   type="text"
-                  value={row.nameFa ?? ""}
-                  onChange={(e) => updateLocalNameFa(row.id, e.target.value)}
+                  value={row.nameFaSynonyms ?? ""}
+                  onChange={(e) => updateLocalSynonyms(row.id, e.target.value)}
                   onBlur={() => saveTranslation(row)}
-                  placeholder="ترجمه فارسی..."
-                  className={`border cut-line rounded-lg px-2 py-1 text-sm flex-1 ${
-                    !row.nameFa ? "border-amber-400" : row.nameFaSuggested ? "border-dashed border-amber-400" : ""
-                  }`}
+                  placeholder="معادل‌های دیگه (با کاما جدا، مثلاً «شومیز, تاپ»)..."
+                  className="border cut-line rounded-lg px-2 py-1 text-xs flex-1 text-[var(--color-muted)]"
                 />
-                {row.nameFaSuggested && (
-                  <span
-                    title="این ترجمه پیشنهادیه (خودکار یا import)، هنوز دستی تأیید نشده"
-                    className="text-[10px] font-bold text-amber-700 bg-amber-100 rounded-full px-1.5 py-0.5 shrink-0"
-                  >
-                    پیشنهادی
-                  </span>
-                )}
               </div>
-              <span className="text-xs font-mono text-[var(--color-muted)]" dir="ltr">
+              <span className="text-xs font-mono text-[var(--color-muted)] pt-1.5" dir="ltr">
                 {row.param}
               </span>
             </div>

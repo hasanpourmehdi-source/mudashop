@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 
 type CategoryOption = { id: string; name: string; slug: string };
-type AttributeOption = { id: string; name: string; values: { id: string; value: string }[] };
+type AttributeOption = {
+  id: string;
+  name: string;
+  values: { id: string; value: string }[];
+  group: { name: string } | null;
+};
 
 type CategoryParam = {
   id: string;
@@ -28,6 +33,7 @@ type ExternalSite = {
   baseUrl: string;
   isActive: boolean;
   isReturnable: boolean;
+  showOtherSellers: boolean;
   categoryParams: CategoryParam[];
   attributeParams: AttributeParam[];
 };
@@ -90,7 +96,7 @@ export default function ExternalSitesAdminPage() {
 
   async function handleUpdateSite(
     id: string,
-    patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable">>
+    patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable" | "showOtherSellers">>
   ) {
     const res = await fetch(`/api/admin/external-sites/${id}`, {
       method: "PATCH",
@@ -316,7 +322,7 @@ function SiteCard({
   categories: CategoryOption[];
   attributes: AttributeOption[];
   onDeleteSite: () => void;
-  onUpdateSite: (patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable">>) => void;
+  onUpdateSite: (patch: Partial<Pick<ExternalSite, "name" | "baseUrl" | "isActive" | "isReturnable" | "showOtherSellers">>) => void;
   onChanged: () => void;
 }) {
   const [isEditingSite, setIsEditingSite] = useState(false);
@@ -331,6 +337,14 @@ function SiteCard({
   const [openPickerFor, setOpenPickerFor] = useState<string | null>(null);
   const [attrForm, setAttrForm] = useState({ attributeId: "", value: "", paramTemplate: "", sharedKey: "" });
   const selectedAttribute = attributes.find((a) => a.id === attrForm.attributeId);
+  // «رنگ» و همه‌ی زیرمجموعه‌های سرگروهِ «سایز» رو این‌جا نگاشت نمی‌کنیم -- این
+  // دوتا اصلاً از این مکانیزم (ExternalSiteAttributeParam) رد نمی‌شن؛ رنگ و
+  // سایز (دقیقاً مثل برند/دسته‌بندی) به‌صورت زنده از فیلترهای واقعیِ خودِ سایتِ
+  // خارجی (TrendyolFilterCache، همون «ترجمه‌ی فیلترهای سایت‌های خارجی») میان --
+  // برای هر دو سایت (ترندیول و میلا). فقط «جنسیت» واقعاً از این مکانیزم استفاده
+  // می‌کنه (چون جنسیت روی ترندیول یه فیلترِ زنده‌ی مجزا نیست). نگاشتِ اینجا
+  // برای رنگ/سایز هیچ اثری روی فیلترِ واقعیِ مشتری نداره -- فقط گیج‌کننده‌ست
+  const assignableAttributes = attributes.filter((a) => a.name !== "رنگ" && a.group?.name !== "سایز");
 
   function startEdit() {
     setNameDraft(site.name);
@@ -558,6 +572,14 @@ function SiteCard({
               >
                 {site.isReturnable ? "قابل مرجوع" : "غیرقابل مرجوع"}
               </span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
+                  site.showOtherSellers ? "bg-purple-100 text-purple-700" : "bg-gray-200 text-gray-500"
+                }`}
+                title="مقایسه‌ی فروشنده‌ی فعلی با فروشنده‌های دیگرِ همین محصول، روی صفحه‌ی محصولِ این سایت"
+              >
+                {site.showOtherSellers ? "فروشنده‌های دیگر: روشن" : "فروشنده‌های دیگر: خاموش"}
+              </span>
             </div>
             <p className="text-xs text-[var(--color-muted)]" dir="ltr">
               {site.slug} — {site.baseUrl}
@@ -777,7 +799,7 @@ function SiteCard({
                 required
               >
                 <option value="">ویژگی را انتخاب کنید</option>
-                {attributes.map((a) => (
+                {assignableAttributes.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
                   </option>
@@ -824,6 +846,9 @@ function SiteCard({
               اگه چندتا ویژگی (مثلاً چندتا نوع سایز) باید زیر یه پارامتر مشترک ترکیب بشن، برای همه‌شون
               یه «کلید مشترک» یکسان بذار (مثلاً <code dir="ltr">vr=size|</code>) -- مقدار پارامتر هرکدوم
               فقط بخش تبدیل مقداره (مثلاً <code dir="ltr">group-{"{value}"}</code>).
+              <br />
+              «رنگ» و «سایز» این‌جا نیستن چون از فیلترِ زنده‌ی خودِ سایت (نه این نگاشتِ دستی) میان -- برای
+              ترجمه/مدیریتِ مقادیرشون به «ترجمه‌ی فیلترهای سایت‌های خارجی» برو.
         </p>
           </>
         )}
@@ -867,6 +892,12 @@ function SiteCard({
               className="text-xs border cut-line rounded-full px-3 py-1 hover:border-[var(--color-wine)]"
             >
               {site.isReturnable ? "غیرقابل مرجوع کن" : "قابل مرجوع کن"}
+            </button>
+            <button
+              onClick={() => onUpdateSite({ showOtherSellers: !site.showOtherSellers })}
+              className="text-xs border cut-line rounded-full px-3 py-1 hover:border-[var(--color-wine)]"
+            >
+              {site.showOtherSellers ? "فروشنده‌های دیگر رو خاموش کن" : "فروشنده‌های دیگر رو روشن کن"}
             </button>
             <button onClick={onDeleteSite} className="text-xs text-red-600 hover:underline">
               حذف سایت

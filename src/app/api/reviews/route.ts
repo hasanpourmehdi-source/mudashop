@@ -182,8 +182,11 @@ try {
       // (شاملِ review.create) رول‌بک می‌شه
       const review = await prisma.$transaction(async (tx) => {
         try {
+          const claimKey = productId
+            ? `mazon:${productId}`
+            : `trendyol:${orderItem?.externalSiteId ?? externalSiteId ?? "null"}:${externalId}`;
           await tx.unlinkedReviewClaim.create({
-            data: { userId: session.user.id, productKey: productId ? `mazon:${productId}` : `trendyol:${externalId}` },
+            data: { userId: session.user.id, productKey: claimKey },
           });
         } catch (err) {
           if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {

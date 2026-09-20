@@ -73,6 +73,7 @@ export default async function OrderDetailPage({
   }
 
   const nonReturnableProductsEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED);
+  const selfServiceReturnEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.SELF_SERVICE_RETURN_ENABLED);
   // فقط وقتی فلگِ سراسری روشنه معنی داره -- وگرنه (رفتار قبلی) همه‌چیز قابل‌مرجوعه.
   // دو سطحِ جدا: اقلامِ مزون فلگِ خودِ محصول رو چک می‌کنن، اقلامِ ترندیول فلگِ
   // سطحِ سایتِ خارجی‌شون رو (چون یه محصولِ خارجیِ جداگانه توی DB نداریم -- ممکنه
@@ -228,10 +229,12 @@ export default async function OrderDetailPage({
           quantity: item.quantity,
           price: item.price,
           isReturnable: isItemReturnable(item),
+          source: item.source,
         }))}
         isDelivered={order.status === "DELIVERED"}
         withinReturnWindow={withinReturnWindow}
         returnWindowDays={RETURN_WINDOW_DAYS}
+        selfServiceEnabled={selfServiceReturnEnabled}
         existingReturn={
           order.returnRequest
             ? {

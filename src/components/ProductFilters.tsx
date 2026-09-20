@@ -17,33 +17,47 @@ const SORT_OPTIONS = [
   { value: "most_reviewed", label: "پربازدیدترین نظرات" },
 ];
 
-// بازه‌های پیشنهادی قیمت -- مثل فیلتر «Fiyat» ترندیول: چند بازه‌ی آماده که کل محدوده رو پوشش می‌دن
-function buildPriceBuckets(min: number, max: number, count = 6) {
-  const range = Math.max(max - min, 1);
-  const step = range / count;
-  const points = Array.from({ length: count + 1 }, (_, i) => Math.round(min + step * i));
-  return Array.from({ length: count }, (_, i) => ({
-    min: points[i],
-    max: i === count - 1 ? max : points[i + 1],
-  }));
-}
+// بازه‌های ثابت قیمت مثل تگموند: ۰-۱، ۱-۳، ۳-۵، ۵+ میلیون تومان
+const PRICE_RANGES: { label: string; min: number; max: number | null }[] = [
+  { label: "کمتر از ۱ میلیون", min: 0, max: 1_000_000 },
+  { label: "۱ تا ۳ میلیون", min: 1_000_000, max: 3_000_000 },
+  { label: "۳ تا ۵ میلیون", min: 3_000_000, max: 5_000_000 },
+  { label: "بالای ۵ میلیون", min: 5_000_000, max: null },
+];
 
 // بخش جمع‌شونده با فلش -- دقیقاً مثل هر بخش فیلتر توی سایدبار ترندیول (Kategori ⌃، Marka ⌃، ...)
+// به‌صورتِ پیش‌فرض state باز/بسته‌بودن رو خودش نگه می‌داره (uncontrolled، هر
+// بخش مستقل از بقیه) -- ولی اگه open/onToggle از بیرون داده بشه (controlled)،
+// اون‌ها حاکم می‌شن. طبقِ درخواستِ صریح، ExternalSiteFilters از حالتِ
+// controlled استفاده می‌کنه تا فقط یه بخش هم‌زمان باز بمونه (آکاردئونی) --
+// وگرنه چندتا بخشِ بازِ هم‌زمان جای زیادی از صفحه‌ی نتیجه رو می‌گیرن
 export function FilterSection({
   title,
   defaultOpen = true,
+  open: controlledOpen,
+  onToggle,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  open?: boolean;
+  onToggle?: () => void;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
+  function handleClick() {
+    if (onToggle) {
+      onToggle();
+    } else {
+      setUncontrolledOpen((o) => !o);
+    }
+  }
   return (
     <div className="border-b cut-line pb-4">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={handleClick}
         className="w-full flex items-center justify-between font-bold mb-2 text-right"
       >
         {title}
@@ -200,11 +214,13 @@ export function ProductFilters({
   brands,
   priceBounds,
   availableFacets = {},
+  defectiveItemsEnabled = true,
 }: {
   categories: CategoryNode[];
   brands: string[];
   priceBounds: { min: number; max: number };
   availableFacets?: Record<string, string[]>;
+  defectiveItemsEnabled?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -218,6 +234,7 @@ export function ProductFilters({
   const minRating = Number(searchParams.get("minRating")) || 0;
   const fastShipping = searchParams.get("fastShipping") === "true";
   const flashSaleOnly = searchParams.get("flashSaleOnly") === "true";
+  const defectiveOnly = searchParams.get("defectiveOnly") === "true";
 
   const [brandQuery, setBrandQuery] = useState("");
   const [categoryQuery, setCategoryQuery] = useState("");
@@ -314,6 +331,13 @@ export function ProductFilters({
           onChange={() => updateParams({ flashSaleOnly: flashSaleOnly ? null : "true" })}
           label="⚡ فقط حراج فلش"
         />
+        {defectiveItemsEnabled && (
+          <ToggleSwitch
+            checked={defectiveOnly}
+            onChange={() => updateParams({ defectiveOnly: defectiveOnly ? null : "true" })}
+            label="⚠️ فقط ایراد دار (تخفیف‌خورده)"
+          />
+        )}
       </FilterSection>
 
       {/* قیمت */}
@@ -348,36 +372,62 @@ export function ProductFilters({
           {(() => {
             const currentMin = Number(searchParams.get("minPrice")) || priceBounds.min;
             const currentMax = Number(searchParams.get("maxPrice")) || priceBounds.max;
-            return buildPriceBuckets(priceBounds.min, priceBounds.max).map((bucket, i) => {
-              const isSelected = currentMin === bucket.min && currentMax === bucket.max;
-              return (
-                <li key={i}>
+            const isCustomActive = !PRICE_RANGES.some(
+              (r) =>
+                currentMin === r.min &&
+                (r.max === null ? currentMax === priceBounds.max : currentMax === r.max)
+            );
+            return (
+              <>
+                {PRICE_RANGES.map((range, i) => {
+                  const isSelected =
+                    currentMin === range.min &&
+                    (range.max === null ? currentMax === priceBounds.max : currentMax === range.max);
+                  return (
+                    <li key={i}>
+                      <label className="flex items-center gap-2.5 cursor-pointer py-0.5">
+                        <span className="relative w-[18px] h-[18px] shrink-0">
+                          <input
+                            type="radio"
+                            name="priceBucket"
+                            checked={isSelected}
+                            onChange={() => {
+                              setMinPrice(range.min);
+                              const maxVal = range.max ?? priceBounds.max;
+                              setMaxPrice(maxVal);
+                              updateParams({
+                                minPrice: range.min > priceBounds.min ? String(range.min) : null,
+                                maxPrice: range.max !== null && range.max < priceBounds.max ? String(range.max) : null,
+                              });
+                            }}
+                            className="peer absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                          <span className="block w-full h-full rounded-full border-2 border-[var(--color-line)] peer-checked:border-[var(--color-wine)] transition-colors" />
+                          <span className="absolute inset-[4px] rounded-full bg-[var(--color-wine)] scale-0 peer-checked:scale-100 transition-transform" />
+                        </span>
+                        <span>{range.label}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+                <li>
                   <label className="flex items-center gap-2.5 cursor-pointer py-0.5">
                     <span className="relative w-[18px] h-[18px] shrink-0">
                       <input
                         type="radio"
                         name="priceBucket"
-                        checked={isSelected}
-                        onChange={() => {
-                          setMinPrice(bucket.min);
-                          setMaxPrice(bucket.max);
-                          updateParams({
-                            minPrice: bucket.min > priceBounds.min ? String(bucket.min) : null,
-                            maxPrice: bucket.max < priceBounds.max ? String(bucket.max) : null,
-                          });
-                        }}
+                        checked={isCustomActive}
+                        onChange={() => {}}
                         className="peer absolute inset-0 opacity-0 cursor-pointer"
                       />
                       <span className="block w-full h-full rounded-full border-2 border-[var(--color-line)] peer-checked:border-[var(--color-wine)] transition-colors" />
                       <span className="absolute inset-[4px] rounded-full bg-[var(--color-wine)] scale-0 peer-checked:scale-100 transition-transform" />
                     </span>
-                    <span>
-                      {bucket.min.toLocaleString("fa-IR")} - {bucket.max.toLocaleString("fa-IR")} تومان
-                    </span>
+                    <span className="text-[var(--color-muted)]">محدوده دلخواه</span>
                   </label>
                 </li>
-              );
-            });
+              </>
+            );
           })()}
         </ul>
       </FilterSection>
@@ -531,6 +581,7 @@ export function ProductFilters({
         minRating > 0 ||
         fastShipping ||
         flashSaleOnly ||
+        defectiveOnly ||
         minPrice > priceBounds.min ||
         maxPrice < priceBounds.max) && (
         <button

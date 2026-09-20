@@ -8,12 +8,17 @@ export function ActiveFilterChipsBar({
   categoryParam,
   sstParam,
   slug,
+  basePath,
 }: {
   chips: { token: string; label: string }[];
   attrsParam?: string;
   categoryParam?: string;
   sstParam?: string;
   slug: string;
+  // پیش‌فرض صفحه‌ی اصلیِ مارکت‌پلیسه؛ صفحه‌ی «محصولاتِ این کمپین» (که همین
+  // کامپوننت رو هم داره) باید موقعِ حذفِ یه چیپ همینجا (روی /campaign/[id])
+  // بمونه، نه پرش به صفحه‌ی اصلی -- پس مسیرِ پایه رو صریح می‌ده
+  basePath?: string;
 }) {
   const router = useRouter();
 
@@ -26,7 +31,7 @@ export function ActiveFilterChipsBar({
     if (categoryParam) params.set("category", categoryParam);
     if (nextTokens.length > 0) params.set("attrs", nextTokens.join(","));
     if (sstParam) params.set("sst", sstParam);
-    router.push(`/marketplaces/${slug}?${params.toString()}`);
+    router.push(`${basePath ?? `/marketplaces/${slug}`}?${params.toString()}`);
   }
 
   return (

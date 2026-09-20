@@ -6,8 +6,10 @@ type Wallet = { id: string; userId: string; balance: number };
 type ClientMock = {
   wallet: {
     findUnique: ReturnType<typeof vi.fn>;
+    findUniqueOrThrow: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
   };
   walletTransaction: { create: ReturnType<typeof vi.fn> };
 };
@@ -17,6 +19,10 @@ function makeClient(wallet: Wallet | null): ClientMock {
   return {
     wallet: {
       findUnique: vi.fn().mockImplementation(async () => current),
+      findUniqueOrThrow: vi.fn().mockImplementation(async () => {
+        if (!current) throw new Error("NotFound");
+        return current;
+      }),
       create: vi
         .fn()
         .mockImplementation(async (args: { data: { userId: string; balance: number } }) => {
@@ -28,9 +34,16 @@ function makeClient(wallet: Wallet | null): ClientMock {
         current = { ...current!, balance: current!.balance + delta };
         return current;
       }),
+      updateMany: vi.fn().mockImplementation(async (args: { where: { id: string; balance?: { gte: number } }; data: { balance: { decrement: number } } }) => {
+        if (args.where.balance?.gte != null && current!.balance < args.where.balance.gte) {
+          return { count: 0 };
+        }
+        current = { ...current!, balance: current!.balance - args.data.balance.decrement };
+        return { count: 1 };
+      }),
     },
     walletTransaction: { create: vi.fn().mockResolvedValue({}) },
-  };
+  } as unknown as ClientMock;
 }
 
 describe("applyWalletTransaction", () => {
@@ -69,8 +82,8 @@ describe("applyWalletTransaction", () => {
       description: "خرید",
     });
 
-    expect(client.wallet.update).toHaveBeenCalledWith({
-      where: { id: "w1" },
+    expect(client.wallet.updateMany).toHaveBeenCalledWith({
+      where: { id: "w1", balance: { gte: 300 } },
       data: { balance: { decrement: 300 } },
     });
     expect(result.balance).toBe(700);
@@ -103,7 +116,10 @@ describe("applyWalletTransaction", () => {
       })
     ).rejects.toThrow("موجودی کیف پول کافی نیست");
 
-    expect(client.wallet.update).not.toHaveBeenCalled();
+    expect(client.wallet.updateMany).toHaveBeenCalledWith({
+      where: { id: "w1", balance: { gte: 150 } },
+      data: { balance: { decrement: 150 } },
+    });
     expect(client.walletTransaction.create).not.toHaveBeenCalled();
   });
 

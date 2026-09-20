@@ -4,6 +4,10 @@ import { TRENDYOL_TOP_SECTIONS } from "@/lib/trendyolTopSections";
 import { siteSlugToKind } from "@/lib/trendyol";
 import { pickRepresentativeCategoryRow } from "@/lib/externalSites";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // این روت عمومیه (نه ادمین) -- مشتری‌ها موقع مرور صفحه‌ی سایت خارجی صداش
 // می‌زنن. کار سلسله‌مراتبیه: بدون parentPath، فقط زیرشاخه‌ی مستقیمِ خودِ بخش
 // اصلی رو می‌ده (مثلاً «Giyim»، «Ayakkabı»)؛ با parentPath (مثلاً
@@ -89,7 +93,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
   // فقط زیرشاخه‌ی مستقیم (یه سطح بعد از پیشوند، نه عمیق‌تر)
   const directChildren = rows.filter((r) => !r.path.slice(prefix.length).includes(" > "));
 
-  const mapped = directChildren.map((r) => ({
+  // همون param می‌تونه زیر چندتا مسیرِ متفاوت (کراس‌لیستِ خودِ ترندیول) تکرار
+  // شده باشه -- دقیقاً همون پدیده‌ای که resolveParam بالاتر با
+  // pickRepresentativeCategoryRow براش چاره می‌اندیشه؛ اینجا هم اگه دوتا مسیرِ
+  // مختلف به یه param یکسان ختم بشن، فقط اولین occurrence رو نگه می‌داریم --
+  // وگرنه همون دسته دوبار توی چک‌باکس‌ها ظاهر می‌شه و کلیدِ React هم تکراری می‌شه
+  const seenParams = new Set<string>();
+  const uniqueDirectChildren = directChildren.filter((r) => {
+    if (seenParams.has(r.param)) return false;
+    seenParams.add(r.param);
+    return true;
+  });
+
+  const mapped = uniqueDirectChildren.map((r) => ({
     param: r.param,
     label: r.nameFa ?? r.nameTr,
     nameTr: r.nameTr,

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { parseTrackingCodes } from "@/lib/trackingCodes";
 
 // ================= دستیارِ خریدِ هوش‌مصنوعی =================
 // جست‌وجوی ساده‌ی محصولاتِ کاتالوگِ مزون بر اساسِ کلیدواژه‌های پیامِ مشتری، به‌
@@ -98,9 +99,87 @@ async function callClaude(message: string, products: AssistantProduct[]): Promis
   }
 }
 
+// ================= پیگیریِ سفارش از توی چت =================
+// کاملاً قاعده‌محور و بدونِ عبور از مدلِ زبانی -- این یه دادهٔ دقیقِ حساب‌داریِ
+// مشتریه (وضعیت/کدِ رهگیری)، نه یه پیشنهادِ محصول؛ نباید دستِ یه مدلِ زبانی
+// بیفته که ممکنه در بازنویسی چیزی رو اشتباه بگه یا قاطی کنه
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  PENDING: "در انتظار پردازش",
+  PROCESSING: "در حال پردازش",
+  SHIPPED: "ارسال شده",
+  DELIVERED: "تحویل داده شده",
+  CANCELLED: "لغو شده",
+  RETURNED: "مرجوع شده",
+};
+
+const ORDER_STATUS_SUBJECT_WORDS = ["سفارش", "خریدم", "بسته"];
+const ORDER_STATUS_TRIGGER_WORDS = [
+  "کجاست",
+  "کجاس",
+  "وضعیت",
+  "پیگیری",
+  "رسیده",
+  "میرسه",
+  "می‌رسه",
+  "می رسه",
+];
+
+// تشخیصِ سبکِ کلیدواژه‌ای (همون سطحِ سادگیِ جست‌وجوی محصول بالا) -- نیازی به
+// مدلِ زبانی یا لیستِ intent پیچیده نیست
+export function isOrderStatusQuery(message: string): boolean {
+  const normalized = message.normalize("NFKC");
+  const hasSubject = ORDER_STATUS_SUBJECT_WORDS.some((w) => normalized.includes(w));
+  const hasTrigger = ORDER_STATUS_TRIGGER_WORDS.some((w) => normalized.includes(w));
+  return hasSubject && hasTrigger;
+}
+
+export type AssistantOrderLink = { id: string; label: string; href: string };
+
+// سه سفارشِ اخیرِ کاربر رو با وضعیت/کدِ رهگیری خلاصه می‌کنه -- برای پاسخِ سریع
+// توی چت، بدونِ نیاز به باز کردنِ صفحه‌ی سفارش‌ها
+export async function fetchRecentOrdersSummary(
+  userId: string
+): Promise<{ text: string; orders: AssistantOrderLink[] }> {
+  const orders = await prisma.order.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: 3,
+    select: { id: true, status: true, trackingCode: true },
+  });
+
+  if (orders.length === 0) {
+    return { text: "هنوز سفارشی از این حساب ثبت نشده.", orders: [] };
+  }
+
+  const lines = orders.map((o) => {
+    const label = ORDER_STATUS_LABELS[o.status] ?? o.status;
+    const codes = parseTrackingCodes(o.trackingCode);
+    const trackingText = codes.length > 0 ? ` -- کدِ رهگیری: ${codes[0]}` : "";
+    return `سفارش #${o.id.slice(-8)}: ${label}${trackingText}`;
+  });
+
+  return {
+    text: lines.join("\n"),
+    orders: orders.map((o) => ({ id: o.id, label: `#${o.id.slice(-8)}`, href: `/orders/${o.id}` })),
+  };
+}
+
 export async function buildAssistantResponse(
-  message: string
-): Promise<{ reply: string; products: AssistantProduct[] }> {
+  message: string,
+  userId?: string
+): Promise<{ reply: string; products: AssistantProduct[]; orders?: AssistantOrderLink[] }> {
+  if (isOrderStatusQuery(message)) {
+    if (!userId) {
+      return {
+        reply: "برای پیگیریِ سفارش، اول باید وارد حسابت بشی.",
+        products: [],
+      };
+    }
+    const { text, orders } = await fetchRecentOrdersSummary(userId);
+    return { reply: text, products: [], orders };
+  }
+
   const products = await searchAssistantProducts(message);
   const aiReply = await callClaude(message, products);
   return { reply: aiReply ?? buildFallbackReply(products), products };

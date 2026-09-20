@@ -20,7 +20,17 @@ type BankCardOption = {
   cardNumber: string;
   holderName: string;
   label: string | null;
+  isDefault?: boolean;
+  isDefaultForCargo?: boolean;
+  isDefaultForShipping?: boolean;
 };
+
+// انتخابِ هوشمندِ کارتِ پیش‌فرض بر اساسِ هدف -- اگه کارتی برای همون فلگِ
+// مشخص‌شده پیش‌فرض بود همون، وگرنه اولین کارتِ لیست (که از قبل با isActive
+// فیلتر شده)؛ فقط پیش‌انتخابه، ادمین همچنان می‌تونه دستی عوض کنه
+function pickDefaultCardId(bankCards: BankCardOption[], flag: keyof BankCardOption): string {
+  return bankCards.find((c) => c[flag])?.id ?? bankCards[0]?.id ?? "";
+}
 
 type ShippingPaymentInfo = {
   status: string;
@@ -71,7 +81,7 @@ export function AdminOrderActions({
   cargoRatePerKgDefault?: string;
 }) {
   const router = useRouter();
-  const [selectedCardId, setSelectedCardId] = useState(bankCards[0]?.id ?? "");
+  const [selectedCardId, setSelectedCardId] = useState(pickDefaultCardId(bankCards, "isDefault"));
   const [shippingCostInput, setShippingCostInput] = useState("");
   // فقط برای fallback سفارش‌های قدیمی/بدون نحوه‌ی از پیش‌تعیین‌شده -- سفارش‌های
   // فقط-مزونِ جدید نحوه‌ی ارسالشون رو از قبل توی چک‌اوت انتخاب کردن (prop بالا)
@@ -109,7 +119,9 @@ export function AdminOrderActions({
   const [rejectShippingReason, setRejectShippingReason] = useState("");
 
   // دور دوم (هزینه ارسال نهایی سفارش خارجی، بعد از وزن‌کشی)
-  const [finalShippingCardId, setFinalShippingCardId] = useState(bankCards[0]?.id ?? "");
+  const [finalShippingCardId, setFinalShippingCardId] = useState(
+    pickDefaultCardId(bankCards, hasExternalItems ? "isDefaultForCargo" : "isDefaultForShipping")
+  );
   const [finalShippingCostInput, setFinalShippingCostInput] = useState("");
   // اگه از قبل (موقع ثبت نتیجه‌ی تگ) وزن/هزینه‌ی چندتا قلم ثبت شده باشه، جمع
   // کل رو همون اول محاسبه کن -- نه اینکه ادمین باید یه تغییر دستی بده تا

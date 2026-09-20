@@ -7,6 +7,10 @@ import { useRouter } from "next/navigation";
 import { UnifiedProduct } from "@/types/product";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { WishlistButton } from "@/components/WishlistButton";
+import { MazonQuickView } from "@/components/MazonQuickView";
+import { EyeIcon } from "@/components/TrendyolBadges";
+import { useFeatureFlags } from "@/components/FeatureFlagsProvider";
+import { SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
 const MAX_VISIBLE_COLORS = 4;
 const LOW_STOCK_THRESHOLD = 5; // زیر این تعداد، هشدارِ «فقط N عدد باقی مونده» نشون داده می‌شه
@@ -23,6 +27,9 @@ export function ProductCard({
   activeAttrsQuery?: string;
 }) {
   const router = useRouter();
+  const featureFlags = useFeatureFlags();
+  const quickViewEnabled = featureFlags[SITE_SETTING_KEYS.FEATURE_QUICK_VIEW] !== false;
+  const defectiveItemsEnabled = featureFlags[SITE_SETTING_KEYS.FEATURE_DEFECTIVE_ITEMS] !== false;
   const baseHref =
     product.source === "MAZON"
       ? `/products/mazon/${product.slugOrId}`
@@ -34,6 +41,10 @@ export function ProductCard({
   // عکس‌های واقعی این محصول (بدون تکراری خالی) -- برای اسکراب با موس مثل ترندیول
   const gallery = product.images && product.images.length > 0 ? product.images : [product.image];
   const [activeIndex, setActiveIndex] = useState(0);
+  // «نگاه سریع» فقط برای مزون معنی داره -- ترندیولِ زنده مسیرِ جدای خودشو داره
+  // (TrendyolLiveGrid/TrendyolQuickView)، این کارت فقط برای محصولاتِ دموی قدیمی
+  // هم استفاده می‌شه که اونجا هم داده‌ی کافی برای نگاه سریع نداریم
+  const [showQuickView, setShowQuickView] = useState(false);
 
   // رنگ‌های موجود این محصول (مقدار رنگ -> عکس‌های اختصاصی) -- ردیف رنگ‌ها همیشه بازه، نه پشت هاور
   const colorEntries = Object.entries(product.colorImages ?? {}).filter(([, imgs]) => imgs.length > 0);
@@ -67,9 +78,14 @@ export function ProductCard({
   const displayedImage = hoverColorImage ?? gallery[activeIndex];
 
   return (
+    <>
     <Link
       href={href}
-      className="group flex flex-col h-full border cut-line rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow"
+      // min-w-0 لازمه چون این کارت مستقیم فرزندِ گریده -- بدونش، اسپنِ
+      // whitespace-nowrapِ قیمت می‌تونه عریض‌تر از ستونِ گرید بشه و کلِ
+      // گرید/صفحه رو عرضی اسکرول‌پذیر کنه (overflow-hidden خودش این رو حل
+      // نمی‌کنه، چون مشکل توی محاسبه‌ی عرضِ خودِ گریده، نه فقط کلیپ‌شدنِ محتوا)
+      className="group flex flex-col h-full min-w-0 border cut-line rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow"
     >
       <div
         className="relative aspect-[3/4] shrink-0 bg-[var(--color-linen-dim)] overflow-hidden"
@@ -104,7 +120,7 @@ export function ProductCard({
         </span>
         {product.discount > 0 && (
           <span className="ribbon-tag absolute top-2 left-0 font-bold">
-            {product.discount}%-
+            {product.discount}%
           </span>
         )}
         {product.totalStock === 0 ? (
@@ -124,6 +140,25 @@ export function ProductCard({
               🚚 ارسال فوری
             </div>
           )
+        )}
+        {/* نگاه سریع -- فقط مزون (ترندیولِ زنده مسیرِ جدای خودشو داره). گوشه‌ی
+            مخالفِ ویشلیست تا با هم تداخل نکنن، همون منطقِ raised برای دوری از
+            نوارِ پایین (حراج فلش/ارسال فوری) */}
+        {product.source === "MAZON" && product.totalStock !== 0 && quickViewEnabled && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowQuickView(true);
+            }}
+            className={`absolute ${
+              product.flashSale || product.fastShipping ? "bottom-9" : "bottom-2"
+            } right-2 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-colors bg-white/95 hover:bg-[var(--color-wine)] text-[var(--color-ink)] hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow flex items-center gap-1.5 z-20 cursor-pointer`}
+          >
+            <EyeIcon className="w-3.5 h-3.5" />
+            نگاه سریع
+          </button>
         )}
         {/* علاقه‌مندی -- برای مزون با productId، برای ترندیول با snapshot (چون
             جدول محلی برای join نداریم) */}
@@ -187,6 +222,12 @@ export function ProductCard({
         )}
         <h3 className="text-sm font-medium line-clamp-2 mb-1.5 min-h-[2.5rem]">{product.title}</h3>
 
+        {defectiveItemsEnabled && product.defectNote && (
+          <p className="text-[11px] font-bold text-[var(--color-ochre)] mb-1 flex items-center gap-1">
+            <span aria-hidden>⚠️</span> ایراد دار
+          </p>
+        )}
+
         {typeof product.totalStock === "number" && product.totalStock > 0 && product.totalStock <= LOW_STOCK_THRESHOLD && (
           <p className="text-[11px] text-red-600 font-bold mb-1">
             فقط {product.totalStock.toLocaleString("fa-IR")} عدد باقی مونده!
@@ -220,17 +261,29 @@ export function ProductCard({
           <p className="text-[10px] font-bold text-emerald-700 mb-1">↘ کمترین قیمت ۱۰ روز اخیر</p>
         )}
 
-        <div className="flex items-baseline gap-2 mt-auto pt-1">
-          <span className="font-bold text-[var(--color-wine)]">
+        <div className="flex items-baseline gap-2 flex-wrap mt-auto pt-1">
+          {/* whitespace-nowrap لازمه چون توی کارتِ باریک (مثلاً گریدِ دوستونیِ
+              موبایل)، بدونش عددِ قیمت از خودِ کلمه‌ی «تومان» جدا می‌شه و به خط
+              بعد می‌ره -- اگه قیمتِ خط‌خورده هم جا نشه، خودش (کامل) می‌ره خط
+              بعد، نه این‌که وسطِ عددِ قیمتِ اصلی بشکنه */}
+          <span className="font-bold text-[var(--color-wine)] whitespace-nowrap">
             {product.price.toLocaleString("fa-IR")} تومان
           </span>
           {product.discount > 0 && (
-            <span className="text-xs text-[var(--color-muted)] line-through">
+            <span className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
               {product.originalPrice.toLocaleString("fa-IR")}
             </span>
           )}
         </div>
       </div>
     </Link>
+    {showQuickView && (
+      <MazonQuickView
+        initialProduct={product}
+        isWishlisted={isWishlisted}
+        onClose={() => setShowQuickView(false)}
+      />
+    )}
+    </>
   );
 }

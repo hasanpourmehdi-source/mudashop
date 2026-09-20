@@ -47,6 +47,9 @@
 | [12-stock-check-badge.feature](12-stock-check-badge.feature) | بج زنده‌ی موجودی اقلام خارجی قبل از تأیید فیش |
 | [13-tracking-code-edit.feature](13-tracking-code-edit.feature) | ویرایش کد رهگیری بعد از ثبت ارسال |
 | [14-cancellation-rules.feature](14-cancellation-rules.feature) | قانون لغو سفارش توسط مشتری (مزون در برابر خارجی) |
+| [15-wallet-withdrawal.feature](15-wallet-withdrawal.feature) | درخواست واریز موجودی کیف پول به حساب مشتری |
+| [16-invoice.feature](16-invoice.feature) | فاکتور/پیش‌فاکتور سفارش (چاپ‌پذیر) |
+| [17-alternate-seller-purchase.feature](17-alternate-seller-purchase.feature) | خرید از فروشنده‌ی دیگرِ همان محصولِ ترندیول |
 
 ## قرارداد
 

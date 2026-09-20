@@ -20,7 +20,14 @@ import { TrendyolLiveGrid } from "@/components/TrendyolLiveGrid";
 import { ExternalSiteFilters } from "@/components/ExternalSiteFilters";
 import { TrendyolSortDropdown } from "@/components/TrendyolSortDropdown";
 import { ActiveFilterChipsBar } from "@/components/ActiveFilterChipsBar";
+import { MobileFilterSheetProvider } from "@/components/MobileFilterSheetContext";
+import { MobileFilterTriggerButton } from "@/components/MobileFilterTriggerButton";
+import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import { notFound, redirect } from "next/navigation";
+
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
 
 // دقیقاً همون آیدی‌های واقعی مرتب‌سازی ترندیول (sst=) -- هر چیز دیگه‌ای رد می‌شه
 const VALID_SORT_IDS = new Set([
@@ -50,6 +57,8 @@ export default async function MarketplaceSitePage({
   // اگه کاربر لاگین نباشه، fetchWishlistedTrendyolIds خودش Set خالی برمی‌گردونه
   const session = await auth();
   const wishlistedTrendyolIds = await fetchWishlistedTrendyolIds(session?.user?.id);
+  const minDiscountPercentToShow =
+    Number(await getSiteSetting(SITE_SETTING_KEYS.MIN_DISCOUNT_PERCENT_TO_SHOW)) || 2;
 
   // ============================================================================
   // حالت جستجوی متنی -- وقتی q توی URL باشه، کلاً به‌جای فیلتر دسته/ویژگی، یه
@@ -66,7 +75,16 @@ export default async function MarketplaceSitePage({
     // سرچ متنیِ خام (که سایدبار/فیلترها رو نشون نمی‌ده)، دقیقاً مثل تیک‌زدنِ
     // دستیِ همون فیلترها از سایدبار عمل می‌کنیم
     const parsedFilters = await parseSearchQueryToFilters(rawQuery, slug);
-    if (parsedFilters.categoryParam || parsedFilters.gender || parsedFilters.colorValueId) {
+    // اگه بخشی از عبارتِ سرچ نه فیلتر (جنسیت/رنگ) بود نه اسمِ دقیقِ یه
+    // دسته‌بندی، نباید میان‌بُرِ فیلتر رو بزنیم -- وگرنه همون بخش (که شاید توی
+    // دیکشنریِ ترجمه معنی داشته باشه، مثلاً «فری‌سایز») کاملاً گم می‌شه و نتیجه
+    // فقط بر اساسِ فیلترهای ناقص (مثلاً فقط رنگِ سبز، بدون دسته‌بندی) میاد --
+    // در این حالت به سرچِ متنیِ کامل (پایین) برمی‌گردیم که همه‌ی کلمات رو از
+    // دیکشنری رد می‌کنه
+    if (
+      !parsedFilters.hasLeftoverWords &&
+      (parsedFilters.categoryParam || parsedFilters.gender || parsedFilters.colorValueId)
+    ) {
       const tokens: string[] = [];
       if (parsedFilters.categoryParam) {
         tokens.push(`${TRENDYOL_RAW_CATEGORY_SENTINEL}~${encodeTrendyolCategoryParam(parsedFilters.categoryParam)}`);
@@ -79,7 +97,7 @@ export default async function MarketplaceSitePage({
       redirect(`/marketplaces/${slug}?${redirectParams.toString()}`);
     }
 
-    const translatedQuery = await translateSearchQueryToTurkish(rawQuery);
+    const { translated: translatedQuery } = await translateSearchQueryToTurkish(rawQuery);
     const q = encodeURIComponent(translatedQuery);
     const sst = query.sst && VALID_SORT_IDS.has(query.sst) ? query.sst : null;
     // baseUrl همیشه با "?" تمام می‌شه (مثلاً "https://www.trendyol.com/sr?")
@@ -104,7 +122,7 @@ export default async function MarketplaceSitePage({
     }
 
     return (
-      <div className="max-w-[1600px] mx-auto px-4 py-8">
+      <div className="max-w-[1600px] mx-auto px-4 pt-3 pb-8 md:pt-8">
         {loadError ? (
           <p className="text-sm text-[var(--color-muted)]">
             مشکلی پیش اومد، لطفاً بعداً دوباره تلاش کنید.
@@ -121,7 +139,21 @@ export default async function MarketplaceSitePage({
               isAdmin={session?.user?.role === "ADMIN"}
             />
             <div>
-              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+              {/* طبقِ درخواستِ صریح، این ردیف (عنوان/تعداد + مرتب‌سازی) موقعِ
+                  اسکرول ثابت می‌مونه، درست زیرِ هدرِ سایت. دو مقدارِ متفاوت
+                  برای topِ چسبناک لازمه چون ارتفاعِ خودِ هدر بسته به breakpoint
+                  فرق می‌کنه: زیرِ lg، ردیفِ جستجو/دسته‌بندیِ موبایل (MobileMenu)
+                  هم جزوِ هدره و هیچ‌وقت جمع نمی‌شه (~۱۱۴px مجموعاً)؛ از lg به
+                  بالا اون ردیف اصلاً رندر نمی‌شه (lg:hidden) و هدر با اسکرول
+                  به همون ردیفِ اصلی (h-16=۶۴px) جمع می‌شه */}
+              {/* z-30 نه z-20 -- دکمه‌ی «نگاه سریع» روی کارتِ محصولات هم z-20
+                  داره و پایین‌تر از این نوار (توی DOM) میاد؛ چون sticky خودش
+                  یه stacking context جدید می‌سازه، z-40ِ منوی سورت داخلِ همین
+                  نوار محدود به همین context می‌مونه و اگه خودِ نوار z-20 باشه
+                  (مساوی با دکمه‌ی نگاه‌سریع)، دکمه چون بعداً توی DOM میاد
+                  می‌شینه روش. z-30 (هم‌سطحِ خودِ هدر، که هم‌پوشانیِ فضایی
+                  نداره) این مشکل رو حل می‌کنه */}
+              <div className="sticky top-[114px] lg:top-16 z-30 bg-[var(--color-linen)]/95 backdrop-blur flex items-center justify-between gap-3 py-2 mb-3 flex-wrap">
                 <h2 className="text-lg font-bold">
                   نتایج جستجو برای «{rawQuery}»
                   {initialTotal !== null && (
@@ -135,7 +167,7 @@ export default async function MarketplaceSitePage({
               {initialProducts.length === 0 ? (
                 <p className="text-sm text-[var(--color-muted)]">محصولی با این جستجو پیدا نشد.</p>
               ) : (
-                <TrendyolLiveGrid key={searchUrl} initialProducts={initialProducts} initialNextUrl={initialNextUrl} initialWishlistedIds={Array.from(wishlistedTrendyolIds)} />
+                <TrendyolLiveGrid key={searchUrl} initialProducts={initialProducts} initialNextUrl={initialNextUrl} initialWishlistedIds={Array.from(wishlistedTrendyolIds)} minDiscountPercentToShow={minDiscountPercentToShow} />
               )}
             </div>
           </div>
@@ -297,7 +329,12 @@ export default async function MarketplaceSitePage({
   const filtersResetKey = `${query.section ?? ""}::${categoryTokenValue}`;
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 py-8">
+    <div className="max-w-[1600px] mx-auto px-4 pt-3 pb-8 md:pt-8">
+      {/* پایین‌تر از md، سایدبارِ فیلتر و دکمه‌ی محرکش (توی نوارِ ابزار) هردو
+          state بازبودنِ شیت رو از همین Provider می‌گیرن -- طبقِ درخواستِ صریح
+          که چیدمانِ موبایل مثلِ اپِ ترندیول (دکمه‌ی «فیلترها»ی جداگانه) باشه،
+          نه سایدبارِ همیشه‌-بازِ وب */}
+      <MobileFilterSheetProvider>
       <div className="grid md:grid-cols-[240px_1fr] gap-8">
         {/* فیلترها -- فقط دسته‌بندی‌ها و ویژگی‌هایی که واقعاً برای همین سایت نگاشت
             ثبت شده (نه کل فیلترهای مزون)، چون واکشی زنده‌ست. ظاهر و رفتار دقیقاً
@@ -324,8 +361,19 @@ export default async function MarketplaceSitePage({
           ) : (
             <>
               {/* فیلترهای فعال، جلوی عنوان لیست، همه توی یه ردیف کم‌ارتفاع --
-                  به‌جای دو بلوکِ جدا (عنوان+مرتب‌سازی، بعد چیپ‌ها زیرش) */}
-              <div className="flex items-center gap-3 mb-3">
+                  به‌جای دو بلوکِ جدا (عنوان+مرتب‌سازی، بعد چیپ‌ها زیرش). طبقِ
+                  درخواستِ صریح، موقعِ اسکرول ثابت می‌مونه درست زیرِ هدرِ سایت.
+                  دو مقدارِ topِ چسبناک لازمه چون ارتفاعِ هدر بسته به breakpoint
+                  فرق می‌کنه (توضیحِ کامل بالاتر، کنارِ حالتِ سرچِ متنی) */}
+              {/* z-30 نه z-20 -- همون دلیلِ حالتِ سرچِ متنی (بالاتر): دکمه‌ی
+                  «نگاه سریع» روی کارت‌ها هم z-20 داره و بعداً توی DOM میاد */}
+              <div className="sticky top-[114px] lg:top-16 z-30 bg-[var(--color-linen)]/95 backdrop-blur flex items-center gap-3 py-2 mb-3 flex-wrap">
+                {/* برخلافِ کامنتِ قبلی («چیپ‌ها رو مخفی کردیم کافیه»)، وقتی اسمِ
+                    سایت/دسته‌بندی + شمارشِ محصول (مثلاً «ترندیول میلا۳٬۱۵۹+
+                    محصول») به‌تنهایی هم طولانی باشه، همون + دکمه‌های فیلتر/سورت
+                    هنوز جا نمی‌شن و کلِ صفحه عرضی اسکرول می‌خوره. flex-wrap
+                    (مثلِ حالتِ سرچِ متنی، بالاتر) باعث می‌شه دکمه‌های فیلتر/سورت
+                    به‌جای فشاردادنِ عرض، خودشون برن خطِ بعد */}
                 <h2 className="text-base font-bold shrink-0 whitespace-nowrap">
                   {categoryChip?.label ?? options.site.name}
                   {initialTotal !== null && (
@@ -334,14 +382,21 @@ export default async function MarketplaceSitePage({
                     </span>
                   )}
                 </h2>
-                <ActiveFilterChipsBar
-                  chips={otherChips}
-                  attrsParam={query.attrs}
-                  categoryParam={query.category}
-                  sstParam={query.sst}
-                  slug={slug}
-                />
-                <div className="shrink-0 ms-auto">
+                {/* توی موبایل جا کم میاد و باعثِ اسکرولِ افقیِ کل صفحه می‌شه -- چون
+                    تعدادِ فیلترهای فعال از قبل رویِ خودِ دکمه‌ی «فیلترها» (پایین)
+                    به‌عنوان بج نشون داده می‌شه، این چیپ‌ها روی موبایل زائدن؛ فقط
+                    توی وب (که اون دکمه اصلاً نیست) نشون داده می‌شن */}
+                <div className="hidden md:contents">
+                  <ActiveFilterChipsBar
+                    chips={otherChips}
+                    attrsParam={query.attrs}
+                    categoryParam={query.category}
+                    sstParam={query.sst}
+                    slug={slug}
+                  />
+                </div>
+                <div className="shrink-0 ms-auto flex items-center gap-2">
+                  <MobileFilterTriggerButton activeCount={otherChips.length} />
                   <TrendyolSortDropdown />
                 </div>
               </div>
@@ -351,11 +406,13 @@ export default async function MarketplaceSitePage({
                 initialNextUrl={initialNextUrl}
                 initialWishlistedIds={Array.from(wishlistedTrendyolIds)}
                 activeAttrsQuery={activeSizeAttrsQuery}
+                minDiscountPercentToShow={minDiscountPercentToShow}
               />
             </>
           )}
         </div>
       </div>
+      </MobileFilterSheetProvider>
     </div>
   );
 }

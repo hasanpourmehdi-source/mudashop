@@ -68,9 +68,9 @@ export default function TrendyolFetchLogsPage() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">لاگ خطاهای ترندیول</h1>
+          <h1 className="text-xl font-bold">لاگ خطاهای سایت‌های خارجی</h1>
           <p className="text-xs text-[var(--color-muted)] mt-1">
-            هر URLای که با ترندیول به خطا خورده (و به کاربر پیام «بعداً دوباره تلاش کنید» نشون داده
+            هر URLای که با سایتِ خارجی به خطا خورده (و به کاربر پیام «بعداً دوباره تلاش کنید» نشون داده
             شده) این‌جا با جزئیات کامل ثبت می‌شه تا بشه بعداً همون شرایط رو شبیه‌سازی کرد.
           </p>
         </div>

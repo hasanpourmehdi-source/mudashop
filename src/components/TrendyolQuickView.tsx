@@ -9,6 +9,7 @@ import { internalTrendyolProductHref } from "@/components/TrendyolProductLink";
 import { StarRating, VerifiedBadge, getStripBadgeLabel } from "@/components/TrendyolBadges";
 import { WishlistButton } from "@/components/WishlistButton";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 
 // «نگاه سریع» -- مثل Hızlı Bakış ترندیول: بدون رفتن به صفحه‌ی جدا، جزئیات کامل
 // (رنگ‌ها، سایزها، قیمت دقیق) رو توی یه مودال نشون می‌ده و امکان افزودن به
@@ -18,12 +19,15 @@ export function TrendyolQuickView({
   initialProduct,
   isWishlisted = false,
   onClose,
+  minDiscountPercentToShow = 2,
 }: {
   initialProduct: TrendyolLiveProduct;
   isWishlisted?: boolean;
   onClose: () => void;
+  minDiscountPercentToShow?: number;
 }) {
   const { addItem } = useCart();
+  const { paused: salesPaused, message: salesPausedMessage } = useSalesPaused();
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === "ADMIN";
   const [activeUrl, setActiveUrl] = useState(initialProduct.url);
@@ -208,7 +212,7 @@ export function TrendyolQuickView({
                 </p>
               )}
               <h2 className="text-lg font-bold mb-2">{detail.nameFa}</h2>
-              <AdminOriginalTitleCopy originalTitle={detail.name} isAdmin={isAdmin} alwaysVisible />
+              <AdminOriginalTitleCopy originalTitle={detail.name} isAdmin={isAdmin} alwaysVisible brand={detail.brand} />
 
               {!!initialProduct.reviewCount && initialProduct.reviewCount > 0 && (
                 <p className="text-[13px] text-[var(--color-muted)] mb-1.5 flex items-center gap-1.5">
@@ -294,24 +298,57 @@ export function TrendyolQuickView({
               )}
 
               <div className="flex items-baseline gap-2 mb-4">
-                {discountPercent > 0 && (
+                {discountPercent >= minDiscountPercentToShow && (
                   <span
                     dir="ltr"
                     className="text-[11px] font-bold text-white bg-[var(--color-wine)] rounded px-1.5 py-0.5"
                   >
-                    ٪-{discountPercent.toLocaleString("fa-IR")}
+                    ٪{discountPercent.toLocaleString("fa-IR")}
                   </span>
                 )}
-                {detail.price != null && (
-                  <span className="text-xl font-bold text-[var(--color-wine)]">
-                    {detail.price.toLocaleString("fa-IR")} تومان
-                  </span>
-                )}
-                {detail.originalPrice != null && detail.price != null && detail.originalPrice > detail.price && (
-                  <span className="text-xs text-[var(--color-muted)] line-through">
-                    {detail.originalPrice.toLocaleString("fa-IR")}
-                  </span>
-                )}
+                {(() => {
+                  // اگه نرخِ لیر توی تنظیمات ثبت نشده باشه، تبدیل به تومان صفر
+                  // برمی‌گرده -- به‌جایِ «۰ تومان»ِ گمراه‌کننده، قیمتِ خامِ لیر
+                  // رو مستقیم نشون می‌دیم (برای همه، نه فقط تولتیقِ ادمین)
+                  const priceTL = detail.priceTL;
+                  const rateNotSet = !detail.price && priceTL != null && priceTL > 0;
+                  if (rateNotSet) {
+                    return (
+                      <>
+                        <span className="text-xl font-bold text-[var(--color-wine)]">
+                          {Math.round(priceTL).toLocaleString("fa-IR")} لیر
+                        </span>
+                        {detail.originalPriceTL != null &&
+                          priceTL != null &&
+                          detail.originalPriceTL > priceTL && (
+                            <span className="text-xs text-[var(--color-muted)] line-through">
+                              {Math.round(detail.originalPriceTL).toLocaleString("fa-IR")} لیر
+                            </span>
+                          )}
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      {detail.price != null && (
+                        <span
+                          className="text-xl font-bold text-[var(--color-wine)]"
+                          title={isAdmin && detail.priceTL != null ? `${detail.priceTL.toLocaleString("en-US", { maximumFractionDigits: 2 })} TL` : undefined}
+                        >
+                          {detail.price.toLocaleString("fa-IR")} تومان
+                        </span>
+                      )}
+                      {detail.originalPrice != null && detail.price != null && detail.originalPrice > detail.price && (
+                        <span
+                          className="text-xs text-[var(--color-muted)] line-through"
+                          title={isAdmin && detail.originalPriceTL != null ? `${detail.originalPriceTL.toLocaleString("en-US", { maximumFractionDigits: 2 })} TL` : undefined}
+                        >
+                          {detail.originalPrice.toLocaleString("fa-IR")}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {!detail.inStock && (
@@ -321,27 +358,33 @@ export function TrendyolQuickView({
                 <p className="text-xs text-[var(--color-muted)] mb-3">اول سایز رو انتخاب کن</p>
               )}
 
-              <div className="mt-auto flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleAdd}
-                  disabled={!canAdd}
-                  className="flex-1 bg-[var(--color-wine)] text-white rounded-full py-2.5 font-medium disabled:opacity-50 hover:bg-[var(--color-wine-dark)] transition-colors"
-                >
-                  {added ? "افزوده شد ✓" : "افزودن به سبد"}
-                </button>
-                <WishlistButton
-                  trendyol={{
-                    externalId: String(initialProduct.id),
-                    title: detail.nameFa,
-                    image: detail.images[0] ?? "",
-                    url: activeUrl ?? "",
-                    price: detail.price ?? 0,
-                  }}
-                  initialWishlisted={isWishlisted}
-                  variant="icon"
-                />
-              </div>
+              {salesPaused ? (
+                <p className="text-sm text-center text-[var(--color-muted)] bg-[var(--color-linen-dim)] border cut-line rounded-full py-2.5">
+                  ⏸️ {salesPausedMessage}
+                </p>
+              ) : (
+                <div className="mt-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAdd}
+                    disabled={!canAdd}
+                    className="flex-1 bg-[var(--color-wine)] text-white rounded-full py-2.5 font-medium disabled:opacity-50 hover:bg-[var(--color-wine-dark)] transition-colors"
+                  >
+                    {added ? "افزوده شد ✓" : "افزودن به سبد"}
+                  </button>
+                  <WishlistButton
+                    trendyol={{
+                      externalId: String(initialProduct.id),
+                      title: detail.nameFa,
+                      image: detail.images[0] ?? "",
+                      url: activeUrl ?? "",
+                      price: detail.price ?? 0,
+                    }}
+                    initialWishlisted={isWishlisted}
+                    variant="icon"
+                  />
+                </div>
+              )}
 
               {detailHref && (
                 <a href={detailHref} className="text-xs text-center text-[var(--color-muted)] hover:underline mt-3">

@@ -23,7 +23,7 @@ export function DiscountTierBanners({ products }: { products: UnifiedProduct[] }
 
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
-      <h2 className="text-xl font-bold mb-6">کشف تخفیف‌ها بر اساس درصد</h2>
+      <h2 className="text-xl font-bold mb-6">بهترین تخفیف‌ها</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {tiers.map((tier) => (
           <Link

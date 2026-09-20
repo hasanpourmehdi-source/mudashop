@@ -19,7 +19,14 @@ const STATUS_LABELS: Record<string, string> = {
   REFUNDED: "وجه به کیف پول بازگشت داده شد",
 };
 
-type OrderItemInfo = { id: string; title: string; quantity: number; price: number; isReturnable: boolean };
+type OrderItemInfo = {
+  id: string;
+  title: string;
+  quantity: number;
+  price: number;
+  isReturnable: boolean;
+  source: "MAZON" | "TRENDYOL";
+};
 
 type ExistingReturn = {
   status: string;
@@ -37,6 +44,7 @@ export function ReturnRequestSection({
   withinReturnWindow,
   existingReturn,
   returnWindowDays,
+  selfServiceEnabled,
 }: {
   orderId: string;
   orderItems: OrderItemInfo[];
@@ -44,6 +52,10 @@ export function ReturnRequestSection({
   withinReturnWindow: boolean;
   existingReturn: ExistingReturn;
   returnWindowDays: number;
+  // وقتی ادمین این رو خاموش کرده باشه، به‌جای دکمه/فرمِ ثبتِ درخواستِ *تازه*،
+  // پیامِ تماس‌با‌پشتیبانی نشون داده می‌شه -- ولی وضعیتِ یه درخواستِ از قبل
+  // ثبت‌شده (بالاتر) همچنان دیده می‌شه، چون اون فقط نمایشه، نه ثبتِ تازه
+  selfServiceEnabled: boolean;
 }) {
   const router = useRouter();
   const [showForm, setShowForm] = useState(false);
@@ -126,6 +138,16 @@ export function ReturnRequestSection({
   // معنی نداره؛ فقط بعد از تحویل واقعاً می‌شه گفت مهلتش گذشته یا نه
   if (!isDelivered) return null;
 
+  if (!selfServiceEnabled) {
+    return (
+      <div className="mb-8">
+        <p className="text-xs text-[var(--color-muted)]">
+          برای مرجوعیِ این سفارش، لطفاً با پشتیبانی تماس بگیرید.
+        </p>
+      </div>
+    );
+  }
+
   if (!withinReturnWindow) {
     return (
       <div className="mb-8 space-y-2">
@@ -182,6 +204,11 @@ export function ReturnRequestSection({
                   {!item.isReturnable && (
                     <p className="text-[11px] text-red-600 mt-1 pr-6">این کالا قابل مرجوع نیست.</p>
                   )}
+                  {item.source === "TRENDYOL" && (
+                    <p className="text-[11px] text-[var(--color-muted)] mt-1 pr-6">
+                      کالای خارجی فقط در صورتِ خرابی، ارسالِ اشتباه یا نامناسب‌بودنِ سایز/رنگ قابلِ مرجوعه.
+                    </p>
+                  )}
                   {sel.checked && (
                     <div className="mt-2 space-y-2 pr-6">
                       <select
@@ -189,11 +216,13 @@ export function ReturnRequestSection({
                         onChange={(e) => updateSelection(item.id, { reason: e.target.value })}
                         className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
                       >
-                        {Object.entries(REASON_LABELS).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
+                        {Object.entries(REASON_LABELS)
+                          .filter(([value]) => !(item.source === "TRENDYOL" && value === "CHANGED_MIND"))
+                          .map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
                       </select>
                       <textarea
                         value={sel.description}

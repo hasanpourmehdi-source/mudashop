@@ -3,6 +3,7 @@ import { UnifiedProduct } from "@/types/product";
 import { fetchTrendyolProducts } from "@/lib/trendyol";
 import { normalizeSlug } from "@/lib/slug";
 import { buildPriceHistory } from "@/lib/priceHistory";
+import { extractSeoSlugFromUrl } from "@/lib/trendyolProductLink";
 import type { Product, Prisma } from "@prisma/client";
 
 type ProductWithVariants = Prisma.ProductGetPayload<{
@@ -83,6 +84,8 @@ export function normalizeMazonProduct(
     createdAt: p.createdAt.toISOString(),
     fastShipping: p.fastShipping,
     isReturnable: p.isReturnable,
+    defectNote: p.defectNote,
+    defectImage: p.defectImage,
     careInstructions: p.careInstructions,
     videoUrl: p.videoUrl,
     colorImages: parseColorImages(p.colorImages),
@@ -213,6 +216,17 @@ export async function fetchMazonProducts(): Promise<UnifiedProduct[]> {
 // نسخه‌ی تک‌محصولی (برای صفحه‌ی جزئیات، نه لیست) -- بدون نیاز به batch
 export async function fetchViewCount24h(productId: string): Promise<number> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return prisma.productView.count({ where: { productId, createdAt: { gte: since } } });
+}
+
+// تعدادِ بازدیدهای همین محصول توی N دقیقه‌ی اخیر -- برای «نشانه‌ی اجتماعیِ
+// لحظه‌ای» روی صفحه‌ی محصول (جدا از fetchViewCount24h که بازه‌ش ۲۴ساعته و
+// برای حسِ «همین الان» گسترده‌ست)
+export async function fetchRecentViewersCount(
+  productId: string,
+  windowMinutes: number,
+): Promise<number> {
+  const since = new Date(Date.now() - windowMinutes * 60 * 1000);
   return prisma.productView.count({ where: { productId, createdAt: { gte: since } } });
 }
 
@@ -398,52 +412,154 @@ const RECOMMENDABLE_ORDER_FILTER: Prisma.OrderWhereInput = {
   status: { notIn: ["CANCELLED", "RETURNED"] },
 };
 
-// "این محصولات هم با هم خریده می‌شن" -- بر اساس اینکه چه محصولات دیگه‌ای
-// (فقط محصولات مزون) توی همون سفارش‌های پرداخت‌شده‌ای بودن که این محصول توشون
-// بوده، با وزن‌دهی به تازگی خرید
-export async function fetchFrequentlyBoughtTogether(
-  productId: string,
-  limit = 4
-): Promise<UnifiedProduct[]> {
+// نگاشتِ contentId های ترندیول/میلا به کارتِ قابل‌نمایش -- عین همون منطقِ
+// resolveTrendyolSnapshots که قبلاً فقط توی recommend.ts بود؛ چون
+// fetchFrequentlyBoughtTogether (پایین) هم به همین نیاز داره، اینجا (لایه‌ی
+// پایین‌تر) منتقل و export شده تا recommend.ts از همینجا دوباره استفاده کنه
+// (recommend.ts از قبل fetchMazonProducts رو از همین فایل import می‌کنه، پس
+// جهتِ وابستگی همینه -- برعکسش import چرخه‌ای می‌ساخت)
+export async function resolveTrendyolProductSnapshots(externalIds: string[]): Promise<Map<string, UnifiedProduct>> {
+  const result = new Map<string, UnifiedProduct>();
+  if (externalIds.length === 0) return result;
+
+  const [cachedUrls, wishlistRows, orderRows] = await Promise.all([
+    prisma.trendyolProductUrlCache.findMany({
+      where: { contentId: { in: externalIds } },
+      select: { contentId: true, url: true },
+    }),
+    prisma.wishlistItem.findMany({
+      where: { externalId: { in: externalIds } },
+      select: { externalId: true, externalTitle: true, externalImage: true, externalPrice: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.orderItem.findMany({
+      where: { externalId: { in: externalIds } },
+      select: { externalId: true, title: true, image: true, price: true },
+    }),
+  ]);
+
+  const urlByContentId = new Map(cachedUrls.map((c) => [c.contentId, c.url]));
+
+  const snapshotByExternalId = new Map<string, { title: string; image: string | null; price: number }>();
+  for (const row of wishlistRows) {
+    if (row.externalId && row.externalTitle && !snapshotByExternalId.has(row.externalId)) {
+      snapshotByExternalId.set(row.externalId, {
+        title: row.externalTitle,
+        image: row.externalImage,
+        price: row.externalPrice ?? 0,
+      });
+    }
+  }
+  for (const row of orderRows) {
+    if (row.externalId && !snapshotByExternalId.has(row.externalId)) {
+      snapshotByExternalId.set(row.externalId, { title: row.title, image: row.image, price: row.price });
+    }
+  }
+
+  for (const externalId of externalIds) {
+    const url = urlByContentId.get(externalId);
+    const snapshot = snapshotByExternalId.get(externalId);
+    if (!url || !snapshot) continue;
+
+    // اگه اسلاگِ سئو از URL درنیومد، به‌جای برگشتن به contentId خالی (که با
+    // یه رجکسِ "فقط رقم" توی صفحه‌ی مقصد به‌اشتباه محصولِ دموی قدیمی تشخیص داده
+    // می‌شه) یه پیشوندِ بی‌معنی بعد از "-" اضافه می‌کنیم تا همیشه مسیر واقعی برود
+    const seoSlug = extractSeoSlugFromUrl(url);
+    const slugOrId = seoSlug ? `${externalId}-${seoSlug}` : `${externalId}-x`;
+
+    result.set(`ext:${externalId}`, {
+      id: `ext:${externalId}`,
+      source: "TRENDYOL",
+      slugOrId,
+      externalId,
+      sourceUrl: url,
+      title: snapshot.title,
+      price: snapshot.price,
+      originalPrice: snapshot.price,
+      discount: 0,
+      image: snapshot.image ?? "",
+      images: snapshot.image ? [snapshot.image] : [],
+      createdAt: new Date(0).toISOString(),
+    });
+  }
+  return result;
+}
+
+// "این محصولات هم با هم خریده می‌شن" -- بر اساس اینکه چه محصولات دیگه‌ای توی
+// همون سفارش‌های پرداخت‌شده‌ای بودن که این محصول توشون بوده، با وزن‌دهی به
+// تازگی خرید. هم محصولاتِ مزون هم ترندیول/میلا رو (چه به‌عنوانِ seed، چه
+// به‌عنوانِ پیشنهاد) پوشش می‌ده -- قبلاً فقط مزون بود که چون فعلاً هیچ محصولِ
+// مزونی روی سایت نیست، عملاً این فیچر برای کل کاتالوگِ واقعی (ترندیول) مرده بود
+export async function fetchFrequentlyBoughtTogether(seed: string, limit = 4): Promise<UnifiedProduct[]> {
+  // seed می‌تونه cuid یا اسلاگِ یه محصولِ مزون باشه (صفحه‌ی محصول cuid می‌فرسته،
+  // ولی سبدِ خرید فقط اسلاگ رو نگه می‌داره -- store/cart.ts) یا contentId یه
+  // محصولِ ترندیول/میلا؛ اول ببینیم seed به کدوم محصولِ مزون می‌خوره (اگه اصلاً بخوره)
+  const mazonProduct = await prisma.product.findFirst({
+    where: { OR: [{ id: seed }, { slug: seed }] },
+    select: { id: true },
+  });
+  const mazonSeedId = mazonProduct?.id ?? null;
+  const seedFilter = [...(mazonSeedId ? [{ productId: mazonSeedId }] : []), { externalId: seed }];
+
   // سفارش‌های پرداخت‌شده‌ای که این محصول توشونه
   const ordersWithProduct = await prisma.orderItem.findMany({
-    where: { productId, order: RECOMMENDABLE_ORDER_FILTER },
+    where: { OR: seedFilter, order: RECOMMENDABLE_ORDER_FILTER },
     select: { orderId: true },
   });
   const orderIds = Array.from(new Set(ordersWithProduct.map((o) => o.orderId)));
   if (orderIds.length === 0) return [];
 
-  // سایر آیتم‌های مزون همون سفارش‌ها (به‌جز خود این محصول) -- به‌همراه تاریخ
-  // سفارش برای وزن تازگی
+  // سایر آیتم‌های همون سفارش‌ها (به‌جز خود این محصول) -- به‌همراه تاریخ سفارش
+  // برای وزن تازگی. عمداً فیلترِ حذفِ خودِ seed رو توی SQL (با NOT) انجام
+  // نمی‌دیم -- چون productId/externalId هرکدوم برای نصفِ ردیف‌ها NULL هستن
+  // (یکی مزونه یکی ترندیول)، و "NOT {field: value}"ِ پرایزما روی فیلدِ NULL
+  // طبقِ سه‌مقداریِ SQL نتیجه‌ی نامعلوم می‌ده و کلِ ردیف رو (حتی وقتی واقعاً
+  // seed نیست) از خروجی می‌ندازه -- قبلاً دقیقاً همین باعث می‌شد این بخش برای
+  // محصولاتِ مزون همیشه خالی برگرده. برای همین همه‌ی آیتم‌ها رو می‌گیریم و
+  // خودِ seed رو توی جاوااسکریپت فیلتر می‌کنیم
+  const isSeedItem = (i: { productId: string | null; externalId: string | null }) =>
+    (mazonSeedId !== null && i.productId === mazonSeedId) || i.externalId === seed;
+
   const coItems = await prisma.orderItem.findMany({
     where: {
       orderId: { in: orderIds },
-      productId: { not: null, notIn: [productId] },
       order: RECOMMENDABLE_ORDER_FILTER,
     },
-    select: { productId: true, order: { select: { createdAt: true } } },
+    select: { productId: true, externalId: true, order: { select: { createdAt: true } } },
   });
 
+  // شناسه‌ی یکپارچه: مزون همون productId، ترندیول/میلا با پیشوند "ext:" (تا
+  // هیچ‌وقت با cuid های مزون تصادفی برابر نشه)
   const occurrences: CoPurchaseOccurrence[] = coItems
-    .filter((i): i is typeof i & { productId: string } => !!i.productId)
-    .map((i) => ({ productId: i.productId as string, createdAt: i.order.createdAt }));
+    .filter((i) => !isSeedItem(i))
+    .map((i) => ({
+      productId: i.productId ?? (i.externalId ? `ext:${i.externalId}` : null),
+      createdAt: i.order.createdAt,
+    }))
+    .filter((o): o is CoPurchaseOccurrence => !!o.productId);
 
-  const topProductIds = rankFrequentlyBoughtTogether(occurrences, limit).map((r) => r.productId);
+  const topIds = rankFrequentlyBoughtTogether(occurrences, limit).map((r) => r.productId);
+  if (topIds.length === 0) return [];
 
-  if (topProductIds.length === 0) return [];
+  const mazonIds = topIds.filter((id) => !id.startsWith("ext:"));
+  const externalIds = topIds.filter((id) => id.startsWith("ext:")).map((id) => id.slice(4));
 
-  const products = await prisma.product.findMany({
-    where: { id: { in: topProductIds }, isActive: true },
-    include: { category: true, brand: true },
-  });
-  const activeFlashSales = await fetchActiveFlashSales();
+  const [mazonProducts, activeFlashSales, trendyolByKey] = await Promise.all([
+    mazonIds.length > 0
+      ? prisma.product.findMany({ where: { id: { in: mazonIds }, isActive: true }, include: { category: true, brand: true } })
+      : Promise.resolve([]),
+    fetchActiveFlashSales(),
+    resolveTrendyolProductSnapshots(externalIds),
+  ]);
   const flashByProductId = new Map(activeFlashSales.map((f) => [f.productId, f]));
+  const mazonByKey = new Map(
+    mazonProducts.map((p) => [p.id, normalizeMazonProduct(p, flashByProductId.get(p.id))])
+  );
 
   // ترتیب رو طبق فراوانی هم‌خریدی حفظ می‌کنیم
-  const unified = topProductIds
-    .map((id) => products.find((p) => p.id === id))
-    .filter((p): p is NonNullable<typeof p> => !!p)
-    .map((p) => normalizeMazonProduct(p, flashByProductId.get(p.id)));
+  const unified = topIds
+    .map((id) => (id.startsWith("ext:") ? trendyolByKey.get(id) : mazonByKey.get(id)))
+    .filter((p): p is UnifiedProduct => !!p);
   return attachInsightStats(await attachSocialStats(unified));
 }
 

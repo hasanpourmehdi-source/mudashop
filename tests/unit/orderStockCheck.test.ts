@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { checkTrendyolItemsStock } from "@/lib/orderStockCheck";
+import { checkTrendyolItemsStock, _resetStockCheckCacheForTests } from "@/lib/orderStockCheck";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 import { fetchTrendyolProductDetail, type TrendyolProductDetail } from "@/lib/trendyolProductDetail";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
@@ -14,6 +14,9 @@ const mockLogFailure = vi.mocked(logTrendyolFetchFailure);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // کشِ کوتاه‌مدتِ ماژول‌سطح -- بینِ تست‌ها که یه URLِ نمونه‌ی مشترک رو تکرار
+  // می‌کنن، نتیجه‌ی یه تستِ قبلی نباید به تستِ بعدی نشت کنه
+  _resetStockCheckCacheForTests();
 });
 
 describe("checkTrendyolItemsStock -- موجودی اقلام خارجی سفارش", () => {

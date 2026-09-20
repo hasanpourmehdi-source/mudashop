@@ -8,6 +8,7 @@ import { HorizontalProductCarousel } from "@/components/HorizontalProductCarouse
 import { CartProforma } from "@/components/CartProforma";
 import { setAppliedCouponCode } from "@/lib/appliedCoupon";
 import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 import type { UnifiedProduct } from "@/types/product";
 import type { CartItem } from "@/store/cart";
 
@@ -39,6 +40,7 @@ function TrashIcon({ className }: { className?: string }) {
 export default function CartPage() {
   const { items, removeItem, updateQuantity, total, clear, savedForLater, saveForLater, moveToCart, removeSaved } =
     useCart();
+  const { paused: salesPaused, message: salesPausedMessage } = useSalesPaused();
 
   const [couponInput, setCouponInput] = useState("");
   const [cachedTrendyolUrls, setCachedTrendyolUrls] = useState<Record<string, string>>({});
@@ -146,6 +148,21 @@ export default function CartPage() {
     setAppliedCouponCode(data.code);
   }
 
+  if (salesPaused) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center">
+        <h1 className="text-xl font-bold mb-2">⏸️ فروش سایت موقتاً متوقف شده است</h1>
+        <p className="text-[var(--color-muted)] mb-6">{salesPausedMessage}</p>
+        <Link
+          href="/products"
+          className="inline-block bg-[var(--color-wine)] text-white px-6 py-3 rounded-full font-medium"
+        >
+          مشاهده محصولات
+        </Link>
+      </div>
+    );
+  }
+
   if (items.length === 0 && savedForLater.length === 0) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-20 text-center">
@@ -165,7 +182,11 @@ export default function CartPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 grid md:grid-cols-[1fr_320px] gap-8">
-      <div>
+      {/* min-w-0 لازمه چون این ستون مستقیم فرزندِ گریده -- پایینِ md که فقط
+          یه ستونِ ضمنی داره، بدونِ این، ردیف‌های فلکسِ داخلش (عکس+جزئیات+قیمت)
+          می‌تونن عرضِ کلِ صفحه رو به بیرون بزنن (به‌جای اینکه truncate/min-w-0
+          داخلی‌شون درست کار کنه) و باعثِ اسکرولِ افقیِ کل صفحه بشن */}
+      <div className="min-w-0">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold">سبد خرید</h1>
           {/* پاک‌کردنِ یکجای اقلامِ فعالِ سبد -- جدا از حذفِ تک‌تک اقلام. عمداً
@@ -239,19 +260,25 @@ export default function CartPage() {
                   {item.variantLabel && (
                     <p className="text-xs text-[var(--color-muted)]">{item.variantLabel}</p>
                   )}
-                  <div className="flex items-baseline gap-2 mt-1">
-                    <p className="text-sm text-[var(--color-wine)] font-bold">
+                  <div className="flex items-baseline gap-2 flex-wrap mt-1">
+                    {/* whitespace-nowrap لازمه چون بدونش، توی ستونِ باریک (بعدِ
+                        فیکسِ min-w-0)، عددِ قیمت از خودِ «تومان» جدا می‌شه و
+                        به خط بعد می‌ره */}
+                    <p className="text-sm text-[var(--color-wine)] font-bold whitespace-nowrap">
                       {item.price.toLocaleString("fa-IR")} تومان
                     </p>
                     {item.originalPrice !== undefined && item.originalPrice > item.price && (
-                      <p className="text-xs text-[var(--color-muted)] line-through">
+                      <p className="text-xs text-[var(--color-muted)] line-through whitespace-nowrap">
                         {item.originalPrice.toLocaleString("fa-IR")}
                       </p>
                     )}
                   </div>
                   {savingPerItem > 0 && (
                     <p className="text-[11px] text-green-700 mt-0.5">
-                      سود شما: {(savingPerItem * item.quantity).toLocaleString("fa-IR")} تومان
+                      سود شما:{" "}
+                      <span className="whitespace-nowrap">
+                        {(savingPerItem * item.quantity).toLocaleString("fa-IR")} تومان
+                      </span>
                     </p>
                   )}
                 </div>
@@ -320,7 +347,7 @@ export default function CartPage() {
                     {item.variantLabel && (
                       <p className="text-xs text-[var(--color-muted)]">{item.variantLabel}</p>
                     )}
-                    <p className="text-sm text-[var(--color-wine)] font-bold mt-1">
+                    <p className="text-sm text-[var(--color-wine)] font-bold mt-1 whitespace-nowrap">
                       {item.price.toLocaleString("fa-IR")} تومان
                       {item.quantity > 1 && ` × ${item.quantity.toLocaleString("fa-IR")}`}
                     </p>
@@ -356,7 +383,7 @@ export default function CartPage() {
       </div>
 
       {/* خلاصه سبد */}
-      <aside className="border cut-line rounded-lg p-5 bg-white h-fit space-y-3 text-sm">
+      <aside className="border cut-line rounded-lg p-5 bg-white h-fit min-w-0 space-y-3 text-sm">
         <h2 className="font-bold mb-2">خلاصه سبد</h2>
         <div className="flex justify-between">
           <span className="text-[var(--color-muted)]">جمع اقلام</span>

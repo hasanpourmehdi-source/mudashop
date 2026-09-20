@@ -8,7 +8,7 @@ export default async function MarketplacesPage() {
   });
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 py-8">
+    <div className="max-w-[1600px] mx-auto px-4 pt-3 pb-8 md:pt-8">
       <h1 className="text-xl font-bold mb-1">فروشگاه‌های دیگر</h1>
       <p className="text-sm text-[var(--color-muted)] mb-6">
         این فروشگاه‌ها مستقل از انبار مُداشاپ هستند؛ محصولاتشان مستقیم و زنده از سایت خودشان

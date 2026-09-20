@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import { siteSlugToKind } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // برخلاف حالت صفر-محصول (که خودکار توی marketplaces/[slug]/page.tsx تشخیص
 // داده می‌شه)، بعضی دسته‌های میلا نتیجه‌ی غیرصفر ولی کاملاً بی‌ربط برمی‌گردونن
 // (مثلاً «اتو» یه مشت روتختی می‌ده) -- این فقط با چشمِ ادمین قابل‌تشخیصه، برای

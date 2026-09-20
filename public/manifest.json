@@ -1,5 +1,5 @@
 {
-  "id": "mudashop-pwa",
+  "id": "mudashop-pwa-v2",
   "name": "مُداشاپ - فروشگاه پوشاک و مد ایرانی",
   "short_name": "مُداشاپ",
   "description": "فروشگاه آنلاین پوشاک با محصولات اختصاصی مزون و کاتالوگ متنوع ترندیول",
@@ -15,6 +15,15 @@
   "categories": ["shopping", "fashion"],
   "launch_handler": {
     "client_mode": ["navigate-existing"]
+  },
+  "share_target": {
+    "action": "/admin/poster-generator",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
   },
   "icons": [
     {

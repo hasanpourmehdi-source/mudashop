@@ -8,6 +8,8 @@ import { ProductCard } from "@/components/ProductCard";
 import { ProductFilters } from "@/components/ProductFilters";
 import { scoreRelevance } from "@/lib/fuzzySearch";
 import { toMetaDescription } from "@/lib/seo";
+import { getFeatureFlags } from "@/lib/featureFlags";
+import { SITE_SETTING_KEYS } from "@/lib/siteSettings";
 import type { Metadata } from "next";
 
 // متادیتای صفحه‌ی لیست محصولات -- عنوان پویا بر اساس جستجو/دسته‌بندی انتخابی
@@ -37,6 +39,7 @@ type SearchParams = {
   sort?: string;
   fastShipping?: string; // "true" یعنی فقط محصولات ارسال فوری
   flashSaleOnly?: string; // "true" یعنی فقط محصولات در حراج فلش فعال
+  defectiveOnly?: string; // "true" یعنی فقط محصولاتِ ایراد دار
   attrs?: string; // comma-separated "نام‌ویژگی~مقدار" (مثلا "جنسیت~زنانه,رنگ~قرمز")
 };
 
@@ -47,6 +50,7 @@ export default async function ProductsPage({
 }) {
   const params = await searchParams;
   const session = await auth();
+  const flags = await getFeatureFlags();
   const [allProducts, categoryTree, popularity, ratings, wishlistedIds] = await Promise.all([
     fetchMazonProducts(),
     fetchCategoryTree(),
@@ -103,7 +107,10 @@ export default async function ProductsPage({
         { text: p.title, weight: 3 },
         { text: p.brand, weight: 2 },
         { text: p.categoryName, weight: 1 },
-        { text: p.description, weight: 0.5 },
+        // فقط برای امتیازدهیِ جست‌وجو -- تگ‌های احتمالیِ HTML (از RichTextEditor)
+        // نویزن، نه محتوای واقعی؛ اینجا نیازی به sanitizerِ کامل نیست، فقط حذفِ
+        // ساده‌ی تگ‌ها کافیه (نه رندر می‌شه نه ذخیره)
+        { text: p.description?.replace(/<[^>]+>/g, " "), weight: 0.5 },
       ]);
       if (score > 0) relevanceByProductId.set(p.id, score);
       return score > 0;
@@ -124,6 +131,9 @@ export default async function ProductsPage({
   }
   if (params.flashSaleOnly === "true") {
     filtered = filtered.filter((p) => !!p.flashSale);
+  }
+  if (flags[SITE_SETTING_KEYS.FEATURE_DEFECTIVE_ITEMS] && params.defectiveOnly === "true") {
+    filtered = filtered.filter((p) => !!p.defectNote);
   }
   if (minDiscount > 0) {
     filtered = filtered.filter((p) => p.discount >= minDiscount);
@@ -198,6 +208,7 @@ export default async function ProductsPage({
         brands={brands}
         priceBounds={priceBounds}
         availableFacets={availableFacets}
+        defectiveItemsEnabled={!!flags[SITE_SETTING_KEYS.FEATURE_DEFECTIVE_ITEMS]}
       />
 
       <div>
@@ -222,6 +233,14 @@ export default async function ProductsPage({
               className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-wine)] bg-[var(--color-wine)]/10 px-2.5 py-1 rounded-full hover:bg-[var(--color-wine)]/20"
             >
               ⚡ فقط حراج فلش ✕
+            </Link>
+          )}
+          {flags[SITE_SETTING_KEYS.FEATURE_DEFECTIVE_ITEMS] && params.defectiveOnly === "true" && (
+            <Link
+              href="/products"
+              className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-ochre)] bg-[var(--color-ochre)]/10 px-2.5 py-1 rounded-full hover:bg-[var(--color-ochre)]/20"
+            >
+              ⚠️ فقط ایراد دار ✕
             </Link>
           )}
           {minDiscount > 0 && (

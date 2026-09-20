@@ -27,8 +27,16 @@ type LoyaltyData = {
   totalLoyalty: number;
   transactions: { id: string; type: "LOYALTY" | "GIFT_CARD"; amount: number; description: string; createdAt: string }[];
   loyaltyPoints: number;
-  tier: { label: string; bonusPercent: number };
+  tier: { key: string; label: string; bonusPercent: number; freeShipping: boolean };
   pointsToNextTier: number | null;
+  allTiers: {
+    key: string;
+    label: string;
+    minPoints: number;
+    cashbackPercent: number;
+    freeShipping: boolean;
+    isCurrent: boolean;
+  }[];
 };
 
 // صفحه‌ی «کارت هدیه و وفاداری»: خرید/فعال‌سازی کارت هدیه + کسراژ وفاداری
@@ -125,15 +133,45 @@ export default function LoyaltyPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 space-y-10">
       <header>
-        <h1 className="text-2xl font-bold">🎁 کارت هدیه و وفاداری</h1>
+        <h1 className="text-2xl font-bold">🏆 باشگاه مشتریان</h1>
         <p className="text-sm text-[var(--color-muted)] mt-1">
-          کارت هدیه بخر و کدش را هدیه بده، یا کدی که گرفتی را فعال کن. بعد از هر
-          تحویلِ کامل سفارش هم کسراژ وفاداری به کیف پولت اضافه می‌شود.
+          هرچی بیشتر خرید کنی، سطحت بالاتر می‌ره و کسراژ و مزایای بیشتری می‌گیری. کارت هدیه هم می‌تونی
+          بخری/هدیه بدی، یا کدی که گرفتی را فعال کنی.
         </p>
       </header>
 
       {notice && <p className="bg-emerald-50 text-emerald-800 border cut-line rounded-lg px-4 py-3 text-sm">{notice}</p>}
       {error && <p className="bg-red-50 text-red-700 border cut-line rounded-lg px-4 py-3 text-sm">{error}</p>}
+
+      {data && data.allTiers.length > 0 && (
+        <section className="border cut-line rounded-xl p-5 bg-white space-y-3">
+          <h2 className="font-bold">نردبانِ سطوح</h2>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {data.allTiers.map((t) => (
+              <div
+                key={t.key}
+                className={`rounded-lg p-4 border-2 ${
+                  t.isCurrent ? "border-[var(--color-wine)] bg-[var(--color-wine)]/5" : "cut-line"
+                }`}
+              >
+                <p className="font-bold flex items-center gap-1.5">
+                  {t.key === "GOLD" ? "🥇" : t.key === "SILVER" ? "🥈" : "🥉"} {t.label}
+                  {t.isCurrent && (
+                    <span className="text-[10px] font-bold text-[var(--color-wine)]">(سطح فعلی تو)</span>
+                  )}
+                </p>
+                <p className="text-xs text-[var(--color-muted)] mt-1">
+                  از {fmt(t.minPoints)} امتیاز
+                </p>
+                <ul className="text-xs mt-2 space-y-1">
+                  <li>💰 {t.cashbackPercent}٪ کسراژ نقدی</li>
+                  {t.freeShipping && <li>🚚 ارسال رایگان نامحدود</li>}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {data && (
         <section className="border cut-line rounded-xl p-5 bg-white space-y-2">
@@ -156,6 +194,7 @@ export default function LoyaltyPage() {
               <p className="font-bold">
                 🏆 {data.tier.label} {data.tier.bonusPercent > 0 && `(+%${data.tier.bonusPercent} کسراژ)`}
               </p>
+              {data.tier.freeShipping && <p className="text-[11px] text-emerald-700 mt-0.5">🚚 ارسال رایگان فعاله</p>}
             </div>
             <div className="border cut-line rounded-lg p-3">
               <p className="text-xs text-[var(--color-muted)]">امتیازِ وفاداری</p>
@@ -168,6 +207,35 @@ export default function LoyaltyPage() {
               </div>
             )}
           </div>
+          {(() => {
+            const currentIdx = data.allTiers.findIndex((t) => t.isCurrent);
+            const current = data.allTiers[currentIdx];
+            const next = data.allTiers[currentIdx + 1];
+            if (!current) return null;
+            const rangeStart = current.minPoints;
+            const pct = next
+              ? Math.min(
+                  100,
+                  Math.max(0, ((data.loyaltyPoints - rangeStart) / (next.minPoints - rangeStart)) * 100)
+                )
+              : 100;
+            return (
+              <div>
+                <div className="flex justify-between text-[11px] text-[var(--color-muted)] mb-1">
+                  <span>
+                    {current.key === "GOLD" ? "🥇" : current.key === "SILVER" ? "🥈" : "🥉"} {current.label}
+                  </span>
+                  <span>{next ? `${next.key === "GOLD" ? "🥇" : "🥈"} ${next.label}` : "بالاترین سطح 🎉"}</span>
+                </div>
+                <div className="h-2 rounded-full bg-[var(--color-linen-dim)] overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-wine)] rounded-full transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
           {data.transactions.length > 0 && (
             <ul className="text-sm divide-y divide-[var(--color-linen-dim)]">
               {data.transactions.slice(0, 10).map((t) => (

@@ -56,7 +56,15 @@ export function ProductGallery({
   const rect = containerRef.current?.getBoundingClientRect();
 
   return (
-    <div className="max-w-[440px] mx-auto md:mx-0">
+    // چون این div یه آیتمِ گرید (parent: grid-cols-1 md:grid-cols-[440px_1fr]) است،
+    // بدونِ width صریح، margin:auto (هر دو طرف) طبقِ اسپکِ CSS Grid خودکار
+    // justify-self رو از stretch به start/fit-content تغییر می‌ده و اندازه‌ی
+    // آیتم رو به‌جایِ عرضِ واقعیِ ترکِ گرید، نزدیکِ سقفِ max-width می‌بره --
+    // دقیقاً همون چیزی که باعثِ اسکرولِ افقی توی موبایلِ باریک (کوچیک‌تر از
+    // ۴۴۰px) می‌شد. با w-full (عرض:۱۰۰%، یه مقدارِ معین)، margin:auto درست
+    // کار می‌کنه: روی موبایلِ باریک عرض واقعیِ ترک رو می‌گیره (بدونِ اسکرول)،
+    // روی حالتِ تک‌ستونیِ عریض‌تر (بینِ ۴۴۰ تا md) وسط‌چین با سقفِ ۴۴۰px می‌مونه
+    <div className="w-full max-w-[440px] mx-auto md:mx-0">
       <div
         ref={containerRef}
         className={`relative aspect-[3/4] bg-[var(--color-linen-dim)] rounded-xl overflow-hidden ${

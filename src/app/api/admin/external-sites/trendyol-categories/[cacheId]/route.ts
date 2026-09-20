@@ -12,6 +12,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ca
   const { cacheId } = await params;
   const body = await request.json();
   const nameFa = typeof body.nameFa === "string" ? body.nameFa.trim() || null : null;
+  const nameFaSynonyms = typeof body.nameFaSynonyms === "string" ? body.nameFaSynonyms.trim() || null : null;
 
   const current = await prisma.trendyolCategoryCache.findUnique({
     where: { id: cacheId },
@@ -35,7 +36,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ca
   try {
     await prisma.trendyolCategoryCache.updateMany({
       where: { id: { in: matchingIds } },
-      data: { nameFa, nameFaSuggested: false },
+      data: { nameFa, nameFaSynonyms, nameFaSuggested: false },
     });
 
     // این ترجمه رو هم به دیکشنری مشترک (TrendyolTitleTermDictionary) اضافه

@@ -76,14 +76,19 @@ export async function finalizeItemsPayment(
     const wallet = await getOrCreateWallet(order.userId);
     walletUsed = Math.min(wallet.balance, totalBeforeWallet);
   }
-  const finalTotal = totalBeforeWallet - walletUsed;
+  let finalTotal = totalBeforeWallet - walletUsed;
 
   // پرداخت‌درمحل: پول موقع تحویل نقدی گرفته می‌شه، پس نه کارتی تخصیص داده
   // می‌شه نه منتظرِ آپلود فیش می‌مونیم -- درست مثلِ finalTotal===0، مستقیم PAID
   const isCashOnDelivery = order.paymentMethod === "CASH_ON_DELIVERY";
 
+  // اگه کیف‌پول درخواست شده، همین‌جا (بیرونِ تراکنش) finalTotal>0 محاسبه شده،
+  // ولی داخلِ تراکنش balance دوباره خونده می‌شه (گاردِ همزمانی پایین‌تر) و
+  // ممکنه actualFinalTotal>0 بشه درحالی‌که اینجا صفر بود -- پس هر وقت کیف‌پول
+  // درخواست شده، کارت رو محتاطانه از قبل پیدا می‌کنیم، حتی اگه الان finalTotal
+  // صفر باشه؛ وگرنه داخلِ تراکنش assignedCard=null می‌موند و کرش می‌کرد
   let assignedCard: { cardNumber: string; shebaNumber: string | null; holderName: string } | null = null;
-  if (finalTotal > 0 && !isCashOnDelivery) {
+  if (!isCashOnDelivery && (finalTotal > 0 || order.useWalletRequested)) {
     const cardId = opts.bankCardId;
     assignedCard = cardId
       ? await prisma.bankCard.findUnique({ where: { id: cardId } })
@@ -97,7 +102,8 @@ export async function finalizeItemsPayment(
                 orderBy: { createdAt: "asc" },
               })
           );
-    if (!assignedCard) {
+    if (!assignedCard && finalTotal > 0) {
+      // اینجا (بدونِ ریسِ کیف‌پول) از قبل مطمئنیم کارت لازمه -- خطای فوری درسته
       return {
         ok: false,
         error: cardId ? "کارت بانکی یافت نشد" : "هیچ کارتِ بانکیِ فعالی برای تخصیصِ خودکار پیدا نشد",
@@ -107,8 +113,8 @@ export async function finalizeItemsPayment(
   }
 
   // وضعیتِ نهاییِ پرداخت از قبل قابل محاسبه‌ست -- برای گاردِ اتمیِ داخل تراکنش لازمه
-  const willBePaid = finalTotal === 0 || isCashOnDelivery;
-  const deadlineAt = willBePaid
+  let willBePaid = finalTotal === 0 || isCashOnDelivery;
+  let deadlineAt = willBePaid
     ? null
     : computePaymentDeadline(new Date(), Number(await getSiteSetting(SITE_SETTING_KEYS.PAYMENT_DEADLINE_H)) || 48);
 
@@ -118,15 +124,36 @@ export async function finalizeItemsPayment(
   // شرطیِ updateMany اتمیه؛ فقط اولین فراخوانی که هنوز PENDING رو می‌بینه
   // برنده می‌شه، بقیه با count=0 کنار گذاشته می‌شن (قبل از هر جابه‌جایی پول)
   const updated = await prisma.$transaction(async (tx) => {
+    // داخل تراکنش، کیف پول را دوباره بخوان تا با stale balance محاسبه‌شده بیرون
+    // ناسازگار نشود (اگر موجودی بین دو فراخوانی همزمان کم شده باشد)
+    let actualWalletUsed = walletUsed;
+    let actualFinalTotal = finalTotal;
+    let actualWillBePaid = willBePaid;
+    let actualDeadlineAt = deadlineAt;
+    if (order.useWalletRequested) {
+      const freshWallet = await getOrCreateWallet(order.userId, tx);
+      actualWalletUsed = Math.min(freshWallet.balance, totalBeforeWallet);
+      actualFinalTotal = totalBeforeWallet - actualWalletUsed;
+      actualWillBePaid = actualFinalTotal === 0 || isCashOnDelivery;
+      if (actualWillBePaid !== willBePaid) {
+        actualDeadlineAt = actualWillBePaid ? null : computePaymentDeadline(new Date(), Number(await getSiteSetting(SITE_SETTING_KEYS.PAYMENT_DEADLINE_H)) || 48);
+      }
+      // موجودیِ کیف‌پول بینِ محاسبه‌ی بیرونی و این‌جا کم شده و حالا واقعاً به
+      // کارت نیاز داریم، ولی چون بیرون finalTotal صفر بود کارتی پیدا نشده بود
+      if (!actualWillBePaid && !assignedCard) {
+        throw new Error("NEEDS_CARD_RACE");
+      }
+    }
+
     const claimed = await tx.order.updateMany({
       where: { id: orderId, paymentStatus: "PENDING" },
       data: {
         shippingCost: persistShippingCost,
         shippingMethod: persistShippingMethod,
         itemsNegotiationStatus: "AGREED",
-        walletUsed,
-        total: finalTotal,
-        ...(willBePaid
+        walletUsed: actualWalletUsed,
+        total: actualFinalTotal,
+        ...(actualWillBePaid
           ? { paymentStatus: "PAID", paidAt: new Date() }
           : {
               paymentStatus: "AWAITING_PAYMENT",
@@ -134,21 +161,26 @@ export async function finalizeItemsPayment(
               assignedCardNumber: assignedCard!.cardNumber,
               assignedShebaNumber: assignedCard!.shebaNumber,
               assignedCardHolder: assignedCard!.holderName,
-              paymentDeadlineAt: deadlineAt,
+              paymentDeadlineAt: actualDeadlineAt,
             }),
       },
     });
     if (claimed.count === 0) return null;
 
-    if (walletUsed > 0) {
+    if (actualWalletUsed > 0) {
       await applyWalletTransaction(tx, {
         userId: order.userId,
-        amount: walletUsed,
+        amount: actualWalletUsed,
         type: "PURCHASE",
         description: `پرداخت سفارش #${order.id.slice(-8)}`,
         orderId: order.id,
       });
     }
+    // برای ادامه‌ی تراکنش (history/event) مقادیر به‌روز را جایگزین کن
+    walletUsed = actualWalletUsed;
+    finalTotal = actualFinalTotal;
+    willBePaid = actualWillBePaid;
+    deadlineAt = actualDeadlineAt;
 
     const result = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
 
@@ -180,7 +212,18 @@ export async function finalizeItemsPayment(
     }
 
     return result;
+  }).catch((err) => {
+    if (err instanceof Error && err.message === "NEEDS_CARD_RACE") return "NEEDS_CARD_RACE" as const;
+    throw err;
   });
+
+  if (updated === "NEEDS_CARD_RACE") {
+    return {
+      ok: false,
+      error: "موجودی کیف پول هم‌زمان تغییر کرد و کارتی برای مابقی تخصیص نیافته -- لطفاً دوباره تلاش کنید",
+      status: 409,
+    };
+  }
 
   if (!updated) {
     return { ok: false, error: "این سفارش قبلاً نهایی شده است", status: 409 };

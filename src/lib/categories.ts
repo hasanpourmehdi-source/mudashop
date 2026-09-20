@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { categoryIcon } from "@/lib/categoryIcon";
 
@@ -18,7 +19,9 @@ export type MegaMenuRoot = CategoryNode & { attrsQuery?: string; rawCategoryLink
 
 // درخت کامل دسته‌بندی‌ها از ریشه (parentId=null) تا ۳ سطح عمق -- برای مگامنو و فیلتر
 // (۳ سطح چیزی مثل «بچگانه ← دخترانه ← شومیز دخترانه» رو پوشش می‌ده)
-export async function fetchCategoryTree(): Promise<CategoryNode[]> {
+// هم layout هم بعضی صفحه‌ها (مثل products/page.tsx) این رو صدا می‌زنن -- cache()
+// توی یه درخواستِ واحد فقط یه‌بار کوئریِ سه‌سطحیِ سنگین رو اجرا می‌کنه
+export const fetchCategoryTree = cache(async (): Promise<CategoryNode[]> => {
   const roots = await prisma.category.findMany({
     where: { parentId: null },
     orderBy: { name: "asc" },
@@ -53,7 +56,7 @@ export async function fetchCategoryTree(): Promise<CategoryNode[]> {
       })),
     })),
   }));
-}
+});
 
 // اسلاگ خود گره + همه‌ی فرزندان و نوه‌هاش -- برای اینکه انتخاب یه دسته‌ی والد
 // (که خودش محصولی نداره، مثل «بچگانه») همه‌ی زیرمجموعه‌هاشو هم فیلتر کنه

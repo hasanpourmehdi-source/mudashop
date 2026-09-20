@@ -11,6 +11,13 @@ export default async function middleware(req: NextRequest) {
   const token = await getToken({
     req,
     secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "",
+    // NextAuth خودش نامِ کوکیِ سشن رو بر اساسِ https-بودنِ url تعیین می‌کنه
+    // (__Secure-authjs.session-token روی https، authjs.session-token روی http --
+    // src/lib/../node_modules/@auth/core/lib/init.js). getToken بدونِ این پارامتر
+    // پیش‌فرضش false هست و دنبالِ نامِ بدونِ پیشوند می‌گرده -- روی production (https)
+    // اون کوکی هیچ‌وقت پیدا نمی‌شه و middleware همیشه کاربرِ لاگین‌کرده رو هم
+    // به auth/login ریدایرکت می‌کنه
+    secureCookie: req.nextUrl.protocol === "https:",
   });
   const isLoggedIn = !!token;
   const isAdmin = token?.role === "ADMIN";

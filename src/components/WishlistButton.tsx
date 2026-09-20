@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { Spinner } from "@/components/Spinner";
 
 function HeartIcon({ filled, className }: { filled: boolean; className?: string }) {
   return (
@@ -114,7 +115,7 @@ export function WishlistButton({
         className="inline-flex items-center gap-2 border cut-line rounded-full px-4 py-2.5 text-sm font-medium bg-white hover:border-[var(--color-wine)] transition-colors disabled:opacity-60"
       >
         <span className={wishlisted ? "text-[var(--color-wine)]" : "text-[var(--color-muted)]"}>
-          <HeartIcon filled={wishlisted} className="w-4 h-4" />
+          {loading ? <Spinner className="w-4 h-4" /> : <HeartIcon filled={wishlisted} className="w-4 h-4" />}
         </span>
         {wishlisted ? "در لیست علاقه‌مندی" : "افزودن به لیست علاقه‌مندی"}
       </button>
@@ -131,7 +132,7 @@ export function WishlistButton({
         className="shrink-0 w-12 h-12 rounded-full border cut-line bg-white flex items-center justify-center hover:border-[var(--color-wine)] transition-colors disabled:opacity-60"
       >
         <span className={wishlisted ? "text-[var(--color-wine)]" : "text-[var(--color-muted)]"}>
-          <HeartIcon filled={wishlisted} className="w-5 h-5" />
+          {loading ? <Spinner className="w-5 h-5" /> : <HeartIcon filled={wishlisted} className="w-5 h-5" />}
         </span>
       </button>
     );
@@ -147,7 +148,7 @@ export function WishlistButton({
         className="absolute top-2 right-2 z-20 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-sm hover:scale-105 transition-transform disabled:opacity-60"
       >
         <span className={wishlisted ? "text-[var(--color-wine)]" : "text-[var(--color-ink)]"}>
-          <HeartIcon filled={wishlisted} className="w-4 h-4" />
+          {loading ? <Spinner className="w-4 h-4" /> : <HeartIcon filled={wishlisted} className="w-4 h-4" />}
         </span>
       </button>
     );

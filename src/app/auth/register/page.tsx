@@ -5,11 +5,15 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ensureDeviceCookie } from "@/lib/clientDevice";
+import { CaptchaField, type CaptchaValue } from "@/components/CaptchaField";
+import { Spinner } from "@/components/Spinner";
 
 function RegisterForm() {
   const searchParams = useSearchParams();
   const referralCode = searchParams.get("ref") ?? undefined;
   const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [captcha, setCaptcha] = useState<CaptchaValue>({ captchaId: "", captchaAnswer: "" });
+  const [captchaKey, setCaptchaKey] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -21,12 +25,14 @@ function RegisterForm() {
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, referralCode }),
+      body: JSON.stringify({ ...form, referralCode, captchaId: captcha.captchaId, captchaAnswer: captcha.captchaAnswer }),
     });
     const data = await res.json();
 
     if (!res.ok) {
       setError(data.error ?? "خطایی رخ داد");
+      setCaptchaKey((k) => k + 1);
+      setCaptcha({ captchaId: "", captchaAnswer: "" });
       setLoading(false);
       return;
     }
@@ -84,13 +90,16 @@ function RegisterForm() {
           />
         </div>
 
+        <CaptchaField key={captchaKey} value={captcha} onChange={setCaptcha} />
+
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
+          className="w-full inline-flex items-center justify-center gap-2 bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
         >
+          {loading && <Spinner className="w-4 h-4" />}
           {loading ? "در حال ثبت‌نام..." : "ثبت‌نام"}
         </button>
       </form>

@@ -3,7 +3,9 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
+import { cache } from "react";
 import { prisma } from "@/lib/prisma";
+import { verifyCaptcha } from "@/lib/captcha";
 
 // محافظت در برابر brute-force: بعد از این تعداد رمز اشتباه پیاپی، حساب برای
 // مدتی قفل می‌شود (نه برای همیشه -- تا یک کاربر واقعی که رمزش را فراموش کرده
@@ -15,7 +17,7 @@ function minutesLeft(until: Date): number {
   return Math.max(1, Math.ceil((until.getTime() - Date.now()) / 60_000));
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const { handlers, auth: uncachedAuth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   trustHost: true,
   pages: {
@@ -31,11 +33,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        captchaId: { label: "CaptchaId", type: "text" },
+        captchaAnswer: { label: "CaptchaAnswer", type: "text" },
       },
       async authorize(credentials) {
         const email = credentials?.email as string | undefined;
         const password = credentials?.password as string | undefined;
+        const captchaId = credentials?.captchaId as string | undefined;
+        const captchaAnswer = credentials?.captchaAnswer as string | undefined;
         if (!email || !password) return null;
+
+        // کپچا برای ورود الزامی است (مثل تگموند) -- جلوگیری از brute-force
+        if (!verifyCaptcha(captchaId, captchaAnswer)) {
+          throw new Error("کد امنیتی اشتباه است -- لطفاً دوباره امتحان کنید");
+        }
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.password) return null;
@@ -160,3 +171,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+// خیلی از صفحه‌ها + خودِ layout ریشه، هرکدوم مستقلاً auth() صدا می‌زنن -- بدونِ
+// cache، یعنی برای هر بارگذاریِ صفحه (برای کاربرِ لاگین‌کرده) کوئریِ اعتبارسنجیِ
+// نشست (jwt callback: userSession.findUnique + user.findUnique) چندین بار
+// تکراری روی DB اجرا می‌شد. cache() فقط داخلِ همون یک رندرِ سرور (یه
+// درخواستِ HTTP) نتیجه رو یادش می‌مونه -- نه بینِ درخواست‌های جدا -- پس
+// تازگیِ نشست/لغوِ فوری دست‌نخورده می‌مونه
+export const auth = cache(uncachedAuth);
+export { handlers, signIn, signOut };

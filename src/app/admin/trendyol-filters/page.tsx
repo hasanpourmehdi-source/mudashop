@@ -296,9 +296,9 @@ export default function TrendyolFiltersAdminPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div>
-        <h1 className="text-xl font-bold">ترجمه‌ی فیلترهای ترندیول</h1>
+        <h1 className="text-xl font-bold">ترجمه‌ی فیلترهای سایت‌های خارجی</h1>
         <p className="text-xs text-[var(--color-muted)] mt-1">
-          گروه‌های فیلتر واقعی ترندیول (رنگ، برند، نوع کیف، سوییچ‌ها، ...) و مقادیرشون -- برای
+          گروه‌های فیلتر واقعی سایتِ خارجی (رنگ، برند، نوع کیف، سوییچ‌ها، ...) و مقادیرشون -- برای
           همگام‌سازی، یه wc (دسته‌بندی) یا wg (جنسیت) نمونه بده، همه‌ی ~۳۰ گروه با تمام مقادیرشون
           گرفته می‌شن.
         </p>

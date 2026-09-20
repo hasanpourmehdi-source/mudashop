@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
 import type { Prisma } from "@prisma/client";
-import { invalidateTitleDictionaryCache, invalidateTitleCacheForTerm } from "@/lib/trendyolTitleTranslation";
+import {
+  invalidateTitleDictionaryCache,
+  invalidateTitleCacheForTerm,
+  bumpDictionaryVersion,
+} from "@/lib/trendyolTitleTranslation";
 import { refreshUntranslatedRowsContaining } from "@/lib/trendyolTranslationDictionary";
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -20,6 +24,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const updated = await prisma.trendyolTitleTermDictionary.update({ where: { id }, data });
     invalidateTitleDictionaryCache();
+    await bumpDictionaryVersion();
     // termTr خودِ ردیف (نه ورودی body) رو برای invalidate استفاده می‌کنیم چون
     // termTr هیچ‌وقت از این مسیر ویرایش نمی‌شه (فقط termFa/priority) -- پس
     // updated.termTr همیشه دقیقاً همون اصطلاحیه که باید عنوان‌های مرتبطش رو پاک کنیم
@@ -39,6 +44,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   try {
     await prisma.trendyolTitleTermDictionary.delete({ where: { id } });
     invalidateTitleDictionaryCache();
+    await bumpDictionaryVersion();
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "ردیف پیدا نشد یا خطا در حذف" }, { status: 400 });

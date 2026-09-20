@@ -6,15 +6,23 @@ import {
   requestTrendyolWithRetry,
   buildTrendyolFetchError,
 } from "@/lib/trendyol";
-import { translateTrendyolTitle, translateTrendyolAttributeText, translateTurkishPhrase } from "@/lib/trendyolTitleTranslation";
+import {
+  translateTrendyolTitle,
+  translateTrendyolAttributeText,
+  translateTurkishPhrase,
+  translateCampaignName,
+  withCategoryPrefix,
+} from "@/lib/trendyolTitleTranslation";
+import { filterOutHiddenCampaigns } from "@/lib/trendyolHiddenCampaigns";
 // نکته: برای ترجمه‌ی خودِ کمپین‌ها (جمله‌ی کامل مثل "2 Adet ve Üzeri 40 TL
 // İndirim") عمداً از translateTrendyolAttributeText استفاده می‌شه، نه
 // translateTurkishPhrase -- چون این دومی (مثل خودِ عنوان محصول) ترتیبِ
 // بلوک‌های ترجمه‌شده رو معکوس می‌کنه (فرضِ صفت-قبل-از-اسمِ ترکی) و کلماتِ
 // ناشناخته رو کامل حذف می‌کنه؛ هردو برای یه جمله‌ی کامل (نه عبارتِ توصیفی)
 // نتیجه‌ی مغشوش/ناقص می‌دهد
-import { getExchangeRateInfo, applyExchangeRate } from "@/lib/exchangeRate";
+import { getExchangeRateInfo, applyExchangeRate, type ExchangeRateInfo } from "@/lib/exchangeRate";
 import { fetchTrendyolPageViaBrowser } from "@/lib/trendyolBrowserFetch";
+import { toProxiedImageUrl } from "@/lib/imageProxy";
 
 // ============================================================================
 // صفحه‌ی جزئیات محصول ترندیول -- فاز ۱: فقط بخش بالای صفحه (SSR)
@@ -34,7 +42,54 @@ import { fetchTrendyolPageViaBrowser } from "@/lib/trendyolBrowserFetch";
 
 // id همون promotions[].id ترندیول است -- لینک ورود به کمپین
 // (`https://www.trendyol.com/sr?prm={id}`) دقیقاً از همینه ساخته می‌شود
-export type TrendyolCampaignBadge = { id: number; text: string; endsAt: string | null };
+export type TrendyolCampaignBadge = {
+  id: number;
+  text: string;
+  rawNameTr: string; // اسمِ خامِ ترکی -- برای اینکه ادمین (اگه ترجمه ناقص بود) بتونه ازش الگو بسازه
+  matchedFormula: boolean; // آیا یه فرمولِ ادمین‌ساخته این اسم رو پوشش داد؟
+  // سه‌تای زیر فقط وقتی matchedFormula=true مقدار دارن -- برای اینکه ادمین
+  // بتونه همون‌جا (کنارِ خودِ بجِ کمپین) فرمولِ ازقبل‌مچ‌شده رو ویرایش کنه،
+  // بدونِ رفتن به صفحه‌ی جداگانه‌ی «فرمول‌ها»
+  formulaId: string | null;
+  matchedPatternTr: string | null;
+  matchedTemplateFa: string | null;
+  endsAt: string | null;
+  discountType: string | null;
+  sampleImages: string[]; // خالی یعنی یا هنوز چیزی جمع نشده یا این کمپین (مثلِ تخفیفِ سبدخرید) اصلاً عکس نمی‌گیره
+};
+
+// فروشنده‌ی فعلیِ این لیستینگ (merchantListing.merchant) و «فروشنده‌های دیگه‌ی
+// همین محصول» (merchantListing.otherMerchants[] -- نه otherMerchantsVariants
+// که برخلافِ اسمش فقط سایزهای دیگه از همون فروشنده رو نشون می‌ده، نه فروشنده‌ی
+// دیگه). قیمت‌ها به تومان تبدیل شدن (نه لیرِ خام)
+export type TrendyolCurrentSeller = {
+  merchantId: number;
+  name: string;
+  score: number | null;
+  scoreColor: string | null;
+  price: number | null;
+  originalPrice: number | null;
+  // همون price/originalPrice به لیر، بدونِ تبدیل -- برای تولتیقِ ادمین (هاورِ
+  // موس روی قیمت) تا نرخِ تبدیل سریع قابلِ‌تأیید باشه، بدونِ رفتن به لاگِ نرخِ ارز
+  priceTL: number | null;
+  originalPriceTL: number | null;
+  campaignLabel: string | null; // مثلاً "٪۲ تخفیفِ سبدخرید" -- وقتی discountedPrice از sellingPrice کمتره
+  variantLabel: string | null;
+};
+export type TrendyolOtherSeller = {
+  merchantId: number;
+  name: string;
+  score: number | null;
+  scoreColor: string | null;
+  price: number | null;
+  originalPrice: number | null;
+  priceTL: number | null;
+  originalPriceTL: number | null;
+  campaignLabel: string | null;
+  inStock: boolean;
+  freeCargo: boolean;
+  variantLabel: string | null; // مثلاً "سایز: S" -- همون قراردادِ AddToCartForm
+};
 
 export type TrendyolProductVariantColor = {
   contentId: string; // sku در JSON-LD -- همون شناسه‌ای که در URL /p-{id} میاد
@@ -66,6 +121,8 @@ export type TrendyolProductDetail = {
   quantity: number | null;
   url: string;
   campaignBadges: TrendyolCampaignBadge[]; // کمپین‌های واقعی («۲ عدد و بیشتر ۴۰ لیر تخفیف» و مشابه) -- ترجمه‌شده، همراه با id برای لینک ورود به کمپین
+  currentSeller: TrendyolCurrentSeller | null;
+  otherSellers: TrendyolOtherSeller[]; // مرتب‌شده بر اساس ارزون‌ترین اول
 };
 
 // بلوک <script type="application/ld+json"> که @type: "ProductGroup" داره رو پیدا می‌کنه
@@ -203,7 +260,9 @@ function extractOgImage(html: string): string | null {
 // با اسم نگه‌اش می‌داریم تا بشه دقیقاً همون لینک را ساخت. کمپین‌های
 // «کارگو/ارسال رایگان» (promotionDiscountType: "Cargo") عمداً حذف می‌شن --
 // طبق نظرِ صریح، نیازی نیست به مشتری نشون داده شن
-function extractCampaignPromotions(html: string): { id: number; name: string; endsAt: string | null }[] {
+function extractCampaignPromotions(
+  html: string
+): { id: number; name: string; endsAt: string | null; discountType: string | null }[] {
   const marker = '"promotions":[';
   const idx = html.indexOf(marker);
   if (idx === -1) return [];
@@ -217,12 +276,17 @@ function extractCampaignPromotions(html: string): { id: number; name: string; en
       promotionEndDate?: unknown;
     }[];
     const seen = new Set<number>();
-    const result: { id: number; name: string; endsAt: string | null }[] = [];
+    const result: { id: number; name: string; endsAt: string | null; discountType: string | null }[] = [];
     for (const p of parsed) {
       if (typeof p.id !== "number" || typeof p.name !== "string" || !p.name || seen.has(p.id)) continue;
       if (p.promotionDiscountType === "Cargo") continue;
       seen.add(p.id);
-      result.push({ id: p.id, name: p.name, endsAt: typeof p.promotionEndDate === "string" ? p.promotionEndDate : null });
+      result.push({
+        id: p.id,
+        name: p.name,
+        endsAt: typeof p.promotionEndDate === "string" ? p.promotionEndDate : null,
+        discountType: typeof p.promotionDiscountType === "string" ? p.promotionDiscountType : null,
+      });
     }
     return result;
   } catch {
@@ -230,52 +294,288 @@ function extractCampaignPromotions(html: string): { id: number; name: string; en
   }
 }
 
-async function translateCampaignBadges(html: string): Promise<TrendyolCampaignBadge[]> {
-  const promotions = extractCampaignPromotions(html);
-  if (promotions.length === 0) return [];
-  return Promise.all(
-    promotions.map(async (p) => ({
-      id: p.id,
-      text: await translateTrendyolAttributeText(p.name),
-      endsAt: p.endsAt,
-    }))
+// merchantListing کلِ اطلاعاتِ فروشِ این لیستینگ رو داره: فروشنده‌ی فعلی
+// (merchant) و آرایه‌ی otherMerchants[] (هر کدوم با variants[] خودش که
+// price.sellingPrice داره) -- همینجا توی همون window["__envoy__SHARED_PROPS"]
+// که برای promotions هم استفاده می‌کنیم embed شده، پس اسکرپِ جدا/زنده لازم نداره
+function extractMerchantListing(html: string): {
+  merchant: Record<string, unknown> | null;
+  winnerVariant: Record<string, unknown> | null;
+  otherMerchants: Record<string, unknown>[];
+} {
+  const marker = '"merchantListing":{';
+  const idx = html.indexOf(marker);
+  if (idx === -1) return { merchant: null, winnerVariant: null, otherMerchants: [] };
+  const raw = extractBracketedJson(html, idx + marker.length - 1, "{", "}");
+  if (!raw) return { merchant: null, winnerVariant: null, otherMerchants: [] };
+  try {
+    const parsed = JSON.parse(raw) as {
+      merchant?: Record<string, unknown>;
+      winnerVariant?: Record<string, unknown>;
+      otherMerchants?: Record<string, unknown>[];
+    };
+    return {
+      merchant: parsed.merchant ?? null,
+      winnerVariant: parsed.winnerVariant ?? null,
+      otherMerchants: Array.isArray(parsed.otherMerchants) ? parsed.otherMerchants : [],
+    };
+  } catch {
+    return { merchant: null, winnerVariant: null, otherMerchants: [] };
+  }
+}
+
+// اسمِ ویژگی‌هایی که معمولاً به‌عنوانِ variantAttributes میان -- فقط این چندتای
+// پرتکرار رو مستقیم ترجمه می‌کنیم (بدونِ فراخوانیِ async دیکشنری کاملِ سایت،
+// چون این تابع باید sync بمونه)؛ بقیه با همون اسمِ خامِ ترکی نشون داده می‌شن،
+// که بازم بهتر از هیچی نشون‌ندادنه
+const KNOWN_ATTRIBUTE_NAMES_FA: Record<string, string> = {
+  Beden: "سایز",
+  Renk: "رنگ",
+};
+
+// یه واریانت (variantAttributes) رو به برچسبِ نمایشی مثلِ "سایز: S" تبدیل می‌کنه.
+// وقتی هیچ ویژگیِ نوعِ Size‌ای نیست (مثلاً محصولی که فقط رنگ داره، نه سایز)،
+// همون ویژگیِ موجود رو با اسمِ خودش نشون می‌دیم -- نه اینکه هیچی نشون ندیم
+function variantLabelFromAttributes(variant: Record<string, unknown> | null | undefined): string | null {
+  const attrs = Array.isArray(variant?.variantAttributes)
+    ? (variant!.variantAttributes as Record<string, unknown>[])
+    : [];
+  if (attrs.length === 0) return null;
+  return (
+    attrs
+      .filter(
+        (a): a is Record<string, unknown> & { attributeValue: string } => typeof a.attributeValue === "string"
+      )
+      .map((a) => {
+        const rawName = typeof a.attributeName === "string" ? a.attributeName : null;
+        const label =
+          a.attributeType === "Size" ? "سایز" : rawName ? (KNOWN_ATTRIBUTE_NAMES_FA[rawName] ?? rawName) : "ویژگی";
+        return `${label}: ${a.attributeValue}`;
+      })
+      .join(" / ") || null
   );
 }
 
+// قیمتِ نهایی + قیمتِ «قبل از تخفیف» + برچسبِ کمپین رو از روی یه واریانت
+// می‌سازه. عمداً درصدِ تخفیف رو خودمون از رویِ نسبتِ قیمت‌ها حساب می‌کنیم (نه از
+// روی متنِ خامِ کمپینِ ترندیول که ترجمه‌ش قابلِ‌اعتماد نیست) --
+// discountedPrice پایین‌تر از sellingPrice یعنی یه «تخفیفِ سبدخرید» فعالِ اضافه
+// روی قیمتِ عادی هست؛ وگرنه فقط تخفیفِ معمولیِ originalPrice/sellingPrice رو نشون می‌دیم
+function computePriceInfo(variant: Record<string, unknown> | null | undefined): {
+  price: number | null;
+  originalPrice: number | null;
+  campaignLabel: string | null;
+} {
+  const priceObj = variant?.price as Record<string, unknown> | undefined;
+  const sellingPrice = (priceObj?.sellingPrice as Record<string, unknown> | undefined)?.value as number | undefined;
+  const discountedPrice = (priceObj?.discountedPrice as Record<string, unknown> | undefined)?.value as
+    | number
+    | undefined;
+  const originalPrice = (priceObj?.originalPrice as Record<string, unknown> | undefined)?.value as
+    | number
+    | undefined;
+
+  const finalPrice = discountedPrice ?? sellingPrice ?? null;
+  if (finalPrice == null) return { price: null, originalPrice: null, campaignLabel: null };
+
+  if (discountedPrice != null && sellingPrice != null && discountedPrice < sellingPrice) {
+    const pct = Math.round((1 - discountedPrice / sellingPrice) * 100);
+    return {
+      price: discountedPrice,
+      originalPrice: sellingPrice,
+      campaignLabel: pct > 0 ? `٪${pct.toLocaleString("fa-IR")} تخفیفِ سبدخرید` : null,
+    };
+  }
+
+  if (originalPrice != null && originalPrice > finalPrice) {
+    return { price: finalPrice, originalPrice, campaignLabel: null };
+  }
+
+  return { price: finalPrice, originalPrice: null, campaignLabel: null };
+}
+
+// هر فروشنده ممکنه چند variant (مثلاً چند سایز) داشته باشه -- ارزون‌ترینش رو
+// به‌عنوان قیمتِ نماینده‌ی اون فروشنده نشون می‌دیم
+function cheapestVariant(variants: unknown): {
+  price: number | null;
+  originalPrice: number | null;
+  campaignLabel: string | null;
+  inStock: boolean;
+  freeCargo: boolean;
+  variantLabel: string | null;
+} {
+  const empty = {
+    price: null,
+    originalPrice: null,
+    campaignLabel: null,
+    inStock: false,
+    freeCargo: false,
+    variantLabel: null,
+  };
+  if (!Array.isArray(variants)) return empty;
+  let best: Record<string, unknown> | null = null;
+  let bestPrice = Infinity;
+  for (const v of variants as Record<string, unknown>[]) {
+    const price = v?.price as Record<string, unknown> | undefined;
+    const sellingPrice = (price?.sellingPrice as Record<string, unknown> | undefined)?.value;
+    if (typeof sellingPrice !== "number" || sellingPrice >= bestPrice) continue;
+    best = v;
+    bestPrice = sellingPrice;
+  }
+  if (!best) return empty;
+  const { price, originalPrice, campaignLabel } = computePriceInfo(best);
+  return {
+    price,
+    originalPrice,
+    campaignLabel,
+    inStock: Boolean(best.inStock),
+    freeCargo: Boolean(best.freeCargo),
+    variantLabel: variantLabelFromAttributes(best),
+  };
+}
+
+function extractSellers(
+  html: string,
+  tryRate: ExchangeRateInfo
+): { currentSeller: TrendyolCurrentSeller | null; otherSellers: TrendyolOtherSeller[] } {
+  const { merchant, winnerVariant, otherMerchants } = extractMerchantListing(html);
+
+  const scoreOf = (m: Record<string, unknown>) => m.sellerScore as Record<string, unknown> | undefined;
+
+  const currentSeller: TrendyolCurrentSeller | null =
+    merchant && typeof merchant.id === "number" && typeof merchant.name === "string"
+      ? (() => {
+          const { price, originalPrice, campaignLabel } = computePriceInfo(winnerVariant);
+          return {
+            merchantId: merchant.id,
+            name: merchant.name,
+            score: (scoreOf(merchant)?.value as number | undefined) ?? null,
+            scoreColor: (scoreOf(merchant)?.color as string | undefined) ?? null,
+            price: price != null ? applyExchangeRate(price, tryRate) : null,
+            originalPrice: originalPrice != null ? applyExchangeRate(originalPrice, tryRate) : null,
+            priceTL: price,
+            originalPriceTL: originalPrice,
+            campaignLabel,
+            variantLabel: variantLabelFromAttributes(winnerVariant),
+          };
+        })()
+      : null;
+
+  const otherSellers: TrendyolOtherSeller[] = otherMerchants
+    .filter((m): m is Record<string, unknown> => typeof m.id === "number" && typeof m.name === "string")
+    .map((m) => {
+      const { price, originalPrice, campaignLabel, inStock, freeCargo, variantLabel } = cheapestVariant(m.variants);
+      return {
+        merchantId: m.id as number,
+        name: m.name as string,
+        score: (scoreOf(m)?.value as number | undefined) ?? null,
+        scoreColor: (scoreOf(m)?.color as string | undefined) ?? null,
+        price: price != null ? applyExchangeRate(price, tryRate) : null,
+        originalPrice: originalPrice != null ? applyExchangeRate(originalPrice, tryRate) : null,
+        priceTL: price,
+        originalPriceTL: originalPrice,
+        campaignLabel,
+        inStock,
+        freeCargo,
+        variantLabel,
+      };
+    })
+    .filter((s) => s.price != null)
+    .sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+
+  return { currentSeller, otherSellers };
+}
+
+async function translateCampaignBadges(html: string): Promise<TrendyolCampaignBadge[]> {
+  const promotions = extractCampaignPromotions(html);
+  if (promotions.length === 0) return [];
+  const translated = await Promise.all(
+    promotions.map(async (p) => {
+      const { text, matchedFormula, formulaId, matchedPatternTr, matchedTemplateFa } = await translateCampaignName(
+        p.name
+      );
+      return {
+        id: p.id,
+        text,
+        rawNameTr: p.name,
+        matchedFormula,
+        formulaId: formulaId ?? null,
+        matchedPatternTr: matchedPatternTr ?? null,
+        matchedTemplateFa: matchedTemplateFa ?? null,
+        endsAt: p.endsAt,
+        discountType: p.discountType,
+        sampleImages: [] as string[], // بعداً توسطِ recordDiscoveredCampaigns پر می‌شه
+      };
+    })
+  );
+  // طبقِ درخواستِ صریح -- کمپینی که ادمین با تیکِ «غیرفعال» مخفی کرده، از همین‌جا
+  // (قبل از رسیدن به هر کدوم از مصرف‌کننده‌ها: صفحه‌ی محصول، پوستر، ...) حذف می‌شه
+  return filterOutHiddenCampaigns(translated);
+}
+
+const MAX_CAMPAIGN_SAMPLE_IMAGES = 6;
+
 // بهترین‌تلاش -- کمپین‌های کشف‌شده‌ی این محصول رو توی جدول مشترک ثبت/به‌روز
 // می‌کنه تا صفحه‌ی اصلی بتونه بدون کرالِ کاملِ ترندیول، «کمپین‌های ترندیول» رو
-// نشون بده. هیچ خطایی نباید کل fetch جزئیاتِ محصول رو بترکونه
+// نشون بده. هیچ خطایی نباید کل fetch جزئیاتِ محصول رو بترکونه. برمی‌گردونه:
+// نگاشتِ campaignId -> آرایه‌ی نهاییِ عکس‌های نمونه (برای نمایشِ فوریِ همین
+// صفحه، نه فقط ذخیره برای دفعه‌ی بعد) -- کمپین‌هایی از نوعِ تخفیفِ سبدخرید
+// (DiscountOnBasket) اصلاً عکس جمع نمی‌کنن، چون خودِ ترندیول هم برای این نوع
+// عکسِ نمونه نشون نمی‌ده
 async function recordDiscoveredCampaigns(
   productUrl: string,
   badges: TrendyolCampaignBadge[],
   sampleImage: string | null
-): Promise<void> {
-  if (badges.length === 0) return;
+): Promise<Map<number, string[]>> {
+  const result = new Map<number, string[]>();
+  if (badges.length === 0) return result;
   try {
     const site = productUrl.includes("trendyol-milla") ? "TRENDYOL_MILLA" : "TRENDYOL";
     await Promise.all(
-      badges.map((b) =>
-        prisma.trendyolDiscoveredCampaign.upsert({
+      badges.map(async (b) => {
+        const showsSamples = b.discountType !== "DiscountOnBasket";
+        const existing = await prisma.trendyolDiscoveredCampaign.findUnique({
+          where: { campaignId_site: { campaignId: b.id, site } },
+          select: { sampleImages: true },
+        });
+        let mergedImages: string[] = [];
+        if (showsSamples) {
+          const prevImages: string[] = existing?.sampleImages ? JSON.parse(existing.sampleImages) : [];
+          mergedImages =
+            sampleImage && !prevImages.includes(sampleImage)
+              ? [...prevImages, sampleImage].slice(0, MAX_CAMPAIGN_SAMPLE_IMAGES)
+              : prevImages;
+        }
+        result.set(b.id, mergedImages);
+
+        await prisma.trendyolDiscoveredCampaign.upsert({
           where: { campaignId_site: { campaignId: b.id, site } },
           create: {
             campaignId: b.id,
             site,
             text: b.text,
+            rawNameTr: b.rawNameTr,
             sampleImage,
+            sampleImages: JSON.stringify(mergedImages),
+            discountType: b.discountType,
             endsAt: b.endsAt ? new Date(b.endsAt) : null,
           },
           update: {
             text: b.text,
+            rawNameTr: b.rawNameTr,
             sampleImage,
+            sampleImages: JSON.stringify(mergedImages),
+            discountType: b.discountType,
             endsAt: b.endsAt ? new Date(b.endsAt) : null,
             lastSeenAt: new Date(),
           },
-        })
-      )
+        });
+      })
     );
   } catch (err) {
     console.error("خطا در ثبتِ کمپین‌های کشف‌شده‌ی ترندیول:", err);
   }
+  return result;
 }
 
 // از یه ایندکس مشخص (بلافاصله بعد از یه marker مثل ':') براکت‌های تودرتو رو
@@ -311,17 +611,30 @@ function extractBracketedJson(html: string, startIdx: number, openChar: "[" | "{
 
 // لیست سایزهای واقعاً قابل‌انتخاب (نه فقط سایزِ همین محصول) -- توی صفحه‌ی میلا
 // به‌شکل "variants":[{"itemNumber":...,"value":"S","inStock":true,...},...] میاد
+// "variants":[...] توی این صفحه‌ها چندبار تکرار می‌شه، با دو شکلِ کاملاً متفاوت:
+// - شکلِ «غلط» (اسنپ‌شاتِ قیمتِ فروشنده/لیستینگِ خاص): کلیدهایی مثلِ price,
+//   listingId, variantAttributes,... داره ولی هیچ‌وقت فیلدِ سطحِ‌بالای value رو نداره
+// - شکلِ «درست» (لیستِ واقعیِ سایزهای قابل‌انتخابِ محصول): کلیدهاش itemNumber,
+//   value, beautifiedValue, inStock,... هستن -- همیشه value داره، چه محصول
+//   ۱ سایز داشته باشه چه چندتا (پس معیارِ درست «وجودِ value» ــه، نه «تعدادِ
+//   مقدارهای متفاوت» -- محصولِ تک‌سایز مثلِ جوراب هیچ‌وقت با معیارِ قبلی پاس نمی‌شد)
 function extractSizesFromHtml(html: string): string[] {
   const marker = '"variants":[';
-  const idx = html.indexOf(marker);
-  if (idx === -1) return [];
-  const raw = extractBracketedJson(html, idx + marker.length - 1, "[", "]");
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { value?: unknown }[];
-    return parsed.map((v) => v.value).filter((v): v is string => typeof v === "string" && v.length > 0);
-  } catch {
-    return [];
+  let idx = 0;
+  while (true) {
+    idx = html.indexOf(marker, idx);
+    if (idx === -1) return [];
+    const raw = extractBracketedJson(html, idx + marker.length - 1, "[", "]");
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { value?: unknown }[];
+        const values = parsed.map((v) => v.value).filter((v): v is string => typeof v === "string" && v.length > 0);
+        if (values.length > 0) return values;
+      } catch {
+        // این occurrence پارس نشد -- برو سراغِ occurrence بعدی
+      }
+    }
+    idx += marker.length;
   }
 }
 
@@ -360,7 +673,7 @@ async function buildDetailFromDataLayerOnly(
   if (!name || !contentId) return null;
 
   const ogImage = extractOgImage(html);
-  const images = extractGalleryImagesFromHtml(html, ogImage);
+  const images = extractGalleryImagesFromHtml(html, ogImage).map(toProxiedImageUrl);
   const mainImage = images[0] ?? "";
   const sizes = extractSizesFromHtml(html);
   const rawAttributes = extractRawAttributesFromHtml(html);
@@ -373,9 +686,11 @@ async function buildDetailFromDataLayerOnly(
   const quantity = parseTrendyolQuantity(dataLayer.product_quantity);
 
   const brand = typeof dataLayer.product_brand === "string" ? dataLayer.product_brand : null;
-  const nameFa = await translateTrendyolTitle(name, brand);
   const rawCategoryName = typeof dataLayer.product_categoryname === "string" ? dataLayer.product_categoryname : null;
   const categoryNameFa = rawCategoryName ? (await translateTurkishPhrase(rawCategoryName)).translated : null;
+  // موضوعِ اصلیِ محصول (دسته‌بندی) همیشه اولِ عنوان -- طبقِ درخواستِ صریح، تا
+  // مشتری مجبور نباشه کل عنوانِ ترجمه‌شده رو بخونه تا بفهمه اصلاً چیه
+  const nameFa = withCategoryPrefix(await translateTrendyolTitle(name, brand), categoryNameFa, name);
   const attributes = await Promise.all(
     rawAttributes.map(async (a) => ({
       name: await translateTrendyolAttributeText(a.name),
@@ -386,7 +701,16 @@ async function buildDetailFromDataLayerOnly(
   const priceInToman = price != null ? applyExchangeRate(price, tryRate) : null;
   const originalPriceInToman = originalPrice != null ? applyExchangeRate(originalPrice, tryRate) : null;
   const campaignBadges = await translateCampaignBadges(html);
-  await recordDiscoveredCampaigns(productUrl, campaignBadges, mainImage || null);
+  const sampleImagesByCampaign = await recordDiscoveredCampaigns(productUrl, campaignBadges, mainImage || null);
+  for (const b of campaignBadges) b.sampleImages = sampleImagesByCampaign.get(b.id) ?? [];
+  const { currentSeller, otherSellers } = extractSellers(html, tryRate);
+  // همون فیکسِ مسیرِ اصلی (پایین‌تر، تابعِ بعدی) -- برای تخفیف‌های نوعِ
+  // سبدخرید، dataLayer originalPrice رو معکوس گزارش می‌ده؛ currentSeller
+  // (merchantListing) قابلِ‌اعتمادتره، وقتی موجود باشه
+  const finalPrice = currentSeller?.price ?? priceInToman;
+  const finalOriginalPrice = currentSeller ? currentSeller.originalPrice : originalPriceInToman;
+  const finalPriceTL = currentSeller?.priceTL ?? price;
+  const finalOriginalPriceTL = currentSeller ? currentSeller.originalPriceTL : originalPrice;
 
   return {
     contentId,
@@ -401,14 +725,16 @@ async function buildDetailFromDataLayerOnly(
       : [],
     attributes,
     sizes,
-    price: priceInToman,
-    originalPrice: originalPriceInToman,
-    priceTL: price,
-    originalPriceTL: originalPrice,
+    price: finalPrice,
+    originalPrice: finalOriginalPrice,
+    priceTL: finalPriceTL,
+    originalPriceTL: finalOriginalPriceTL,
     inStock: dataLayer.product_status === "Available",
     quantity,
     url: productUrl,
     campaignBadges,
+    currentSeller,
+    otherSellers,
   };
 }
 
@@ -422,7 +748,10 @@ function parseTrendyolQuantity(raw: unknown): number | null {
 
 function rawImageUrl(path: unknown): string | null {
   if (typeof path !== "string" || !path) return null;
-  return path.startsWith("http") ? path : `https://cdn.dsmcdn.com${path.startsWith("/") ? "" : "/"}${path}`;
+  const absolute = path.startsWith("http")
+    ? path.replace(/^http:\/\//, "https://")
+    : `https://cdn.dsmcdn.com${path.startsWith("/") ? "" : "/"}${path}`;
+  return toProxiedImageUrl(absolute);
 }
 
 // از یه URL کامل ترندیول (مثلاً .../mavi/xxx-p-123456) شناسه‌ی محصول رو درمیاره
@@ -560,6 +889,10 @@ export async function fetchTrendyolProductDetail(
     const richerImages = extractGalleryImagesFromHtml(html, images[0] ?? extractOgImage(html));
     if (richerImages.length > images.length) images = richerImages;
   }
+  // مهم: images همین‌جا خام می‌مونه (پروکسی نمی‌شه) -- کدِ زیر (colorVariants،
+  // rawImageUrl(images[0])) به نسخه‌ی خامش نیاز داره، وگرنه rawImageUrl یه
+  // مسیرِ نسبی (/api/image-proxy?...) رو با cdn.dsmcdn.com/ پیشوند می‌زنه و دوباره
+  // پروکسی می‌کنه (پروکسیِ تودرتو). فقط درست قبل از return نهایی پروکسی می‌شه
 
   // hasVariant[] -- فقط در ProductGroup موجوده (رنگ‌های دیگه). محصول تک‌رنگ
   // (Product ساده) این فیلد رو اصلاً نداره -- پس colorVariants فقط شامل خودشه
@@ -639,9 +972,10 @@ export async function fetchTrendyolProductDetail(
     typeof dataLayer?.product_original_price === "number" ? dataLayer.product_original_price : price;
   const quantity = parseTrendyolQuantity(dataLayer?.product_quantity);
 
-  const nameFa = await translateTrendyolTitle(name, brand);
   const rawCategoryName = (product.pattern as string) || null;
   const categoryNameFa = rawCategoryName ? (await translateTurkishPhrase(rawCategoryName)).translated : null;
+  // موضوعِ اصلیِ محصول (دسته‌بندی) همیشه اولِ عنوان -- طبقِ درخواستِ صریح
+  const nameFa = withCategoryPrefix(await translateTrendyolTitle(name, brand), categoryNameFa, name);
 
   // قیمت‌های بالا (price, originalPrice, colorVariants[].price) همه به لیر
   // (TRY) هستن -- قبل از برگردوندن، با نرخ فعلی به تومان تبدیل می‌شن. این‌جا
@@ -662,7 +996,26 @@ export async function fetchTrendyolProductDetail(
     }))
   );
   const campaignBadges = await translateCampaignBadges(html);
-  await recordDiscoveredCampaigns(productUrl, campaignBadges, images[0] ?? null);
+  const proxiedFirstImage = images[0] ? toProxiedImageUrl(images[0]) : null;
+  const sampleImagesByCampaign = await recordDiscoveredCampaigns(productUrl, campaignBadges, proxiedFirstImage);
+  for (const b of campaignBadges) b.sampleImages = sampleImagesByCampaign.get(b.id) ?? [];
+  const { currentSeller, otherSellers } = extractSellers(html, tryRate);
+
+  // برای تخفیف‌های نوعِ «سبدخرید» (BASKET_PROMO)، dataLayer صفحه‌ی محصول
+  // product_original_price رو *معکوس* گزارش می‌ده (کمتر از product_price،
+  // یعنی همون قیمتِ بعدِ تخفیفه، نه قبلش) -- دقیقاً همون رفتاری که برای
+  // singlePrice.componentType==="BASKET_PROMO" توی نتایجِ سرچ هم مستند شده
+  // (بالاتر، parseBasketCampaignPercent). نتیجه: originalPrice > price
+  // برقرار نمی‌شه، تخفیف اصلاً نمایش داده نمی‌شه، و به‌جای قیمتِ واقعیِ
+  // تخفیف‌خورده، قیمتِ کاملِ محصول به مشتری نشون داده می‌شه. currentSeller
+  // (از merchantListing، همون منبعِ دقیق‌ترِ ترندیول برای مقایسه‌ی فروشنده‌ها)
+  // این مشکل رو نداره -- discountedPrice/sellingPrice رو مستقیم می‌بینه، نه
+  // اینکه از originalPrice حدس بزنه -- پس وقتی موجوده، به‌جای dataLayer
+  // معیارِ اصلیِ قیمت/تخفیفِ محصول می‌شه
+  const finalPrice = currentSeller?.price ?? priceInToman;
+  const finalOriginalPrice = currentSeller ? currentSeller.originalPrice : originalPriceInToman;
+  const finalPriceTL = currentSeller?.priceTL ?? price;
+  const finalOriginalPriceTL = currentSeller ? currentSeller.originalPriceTL : originalPrice;
 
   return {
     contentId,
@@ -671,18 +1024,20 @@ export async function fetchTrendyolProductDetail(
     brand,
     categoryName: categoryNameFa,
     categoryNameTr: rawCategoryName,
-    images,
+    images: images.map(toProxiedImageUrl),
     colorVariants: colorVariantsInToman,
     attributes,
     sizes: Array.from(sizesSet),
-    price: priceInToman,
-    originalPrice: originalPriceInToman,
-    priceTL: price,
-    originalPriceTL: originalPrice,
+    price: finalPrice,
+    originalPrice: finalOriginalPrice,
+    priceTL: finalPriceTL,
+    originalPriceTL: finalOriginalPriceTL,
     inStock: (product.offers as Record<string, unknown> | undefined)?.availability ===
       "https://schema.org/InStock",
     quantity,
     url: productUrl,
     campaignBadges,
+    currentSeller,
+    otherSellers,
   };
 }

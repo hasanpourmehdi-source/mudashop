@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { CaptchaField, type CaptchaValue } from "@/components/CaptchaField";
+import { Spinner } from "@/components/Spinner";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
+  const [captcha, setCaptcha] = useState<CaptchaValue>({ captchaId: "", captchaAnswer: "" });
+  const [captchaKey, setCaptchaKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [devResetLink, setDevResetLink] = useState<string | null>(null);
@@ -18,13 +22,15 @@ export default function ForgotPasswordPage() {
     const res = await fetch("/api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, captchaId: captcha.captchaId, captchaAnswer: captcha.captchaAnswer }),
     });
     const data = await res.json();
     setLoading(false);
 
     if (!res.ok) {
       setError(data.error ?? "خطایی پیش آمد");
+      setCaptchaKey((k) => k + 1);
+      setCaptcha({ captchaId: "", captchaAnswer: "" });
       return;
     }
 
@@ -75,13 +81,16 @@ export default function ForgotPasswordPage() {
             />
           </div>
 
+          <CaptchaField key={captchaKey} value={captcha} onChange={setCaptcha} />
+
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
+            className="w-full inline-flex items-center justify-center gap-2 bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
           >
+            {loading && <Spinner className="w-4 h-4" />}
             {loading ? "در حال ارسال..." : "ارسال لینک بازیابی"}
           </button>
         </form>

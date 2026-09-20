@@ -4,12 +4,22 @@ import Link from "next/link";
 import { fetchTrendyolProductById, fetchTrendyolProductsFromUrl, siteSlugToKind } from "@/lib/trendyol";
 import { fetchTrendyolProductDetail } from "@/lib/trendyolProductDetail";
 import { fetchSimilarTrendyolProducts } from "@/lib/trendyolSimilarProducts";
+import { fetchFrequentlyBoughtTogether } from "@/lib/products";
+import { HorizontalProductCarousel } from "@/components/HorizontalProductCarousel";
 import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { prisma } from "@/lib/prisma";
-import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { getSiteSetting, getSiteSettingBool, fetchTrustBadges, SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { recordTrendyolProductView, fetchRecentTrendyolViewersCount } from "@/lib/trendyolProductViews";
+import { LiveViewersBadge } from "@/components/LiveViewersBadge";
+import { TrustBadgesInline } from "@/components/TrustBadgesInline";
+import { ShippingInfoBox } from "@/components/ShippingInfoBox";
+import { getFeatureFlags } from "@/lib/featureFlags";
+import { PriceReportWidget } from "@/components/PriceReportWidget";
+import { TrendyolOtherSellers } from "@/components/TrendyolOtherSellers";
 import { TRENDYOL_RAW_CATEGORY_SENTINEL, buildExternalSiteUrl, encodeTrendyolCategoryParam } from "@/lib/externalSites";
 import { parseAttrsQuery } from "@/lib/attrsQuery";
+import { toProxiedImageUrl } from "@/lib/imageProxy";
 import { AddToCartForm } from "@/components/AddToCartForm";
 import { ProductGallery } from "@/components/ProductGallery";
 import { ProductCampaigns } from "@/components/ProductCampaigns";
@@ -23,10 +33,15 @@ import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
 import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
 import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
 import { RecentlyViewedRecorder } from "@/components/RecentlyViewedRecorder";
+import { CurrentMarketplaceSync } from "@/components/CurrentMarketplaceSync";
 import { auth } from "@/lib/auth";
 import { ProductJsonLd } from "@/components/ProductJsonLd";
 import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
 import type { Metadata } from "next";
+
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
 
 // از segment آدرس (مثلاً "896710400-cep-detayli-gri-basic-tisort-...") فقط
 // contentId رو درمیاره -- همیشه اولین بخش قبل از اولین "-" هست
@@ -134,10 +149,10 @@ export default async function TrendyolProductPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ attrs?: string }>;
+  searchParams: Promise<{ attrs?: string; merchantId?: string }>;
 }) {
   const { slug } = await params;
-  const { attrs } = await searchParams;
+  const { attrs, merchantId: merchantIdParam } = await searchParams;
   const initialAttrs = parseAttrsQuery(attrs);
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
@@ -167,6 +182,23 @@ export default async function TrendyolProductPage({
   }
 
   if (!product) notFound();
+
+  // نشانه‌ی اجتماعیِ لحظه‌ای -- شمارشِ بازدیدهای *قبلِ* همین بازدید (تا خودِ
+  // همین لودِ صفحه توی عددش حساب نشه)، بعد ثبتِ همین بازدید برایِ نفرِ بعدی --
+  // بدونِ بلاک‌کردنِ رندرِ صفحه
+  const socialProofWindowMinutes = Number(await getSiteSetting(SITE_SETTING_KEYS.SOCIAL_PROOF_WINDOW_MINUTES)) || 10;
+  const socialProofMinCount = Number(await getSiteSetting(SITE_SETTING_KEYS.SOCIAL_PROOF_MIN_COUNT)) || 2;
+  const recentViewersCount = await fetchRecentTrendyolViewersCount(product.contentId, socialProofWindowMinutes);
+  recordTrendyolProductView(product.contentId);
+
+  const trustBadges = await fetchTrustBadges();
+  const shippingInfoEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.SHIPPING_INFO_ENABLED);
+
+  // «این محصول رو خریدن، این‌ها رو هم خریدن» -- هم‌خریدیِ واقعیِ سفارش‌های
+  // پرداخت‌شده (مزون + ترندیول/میلا)؛ همون تابعی که روی صفحه‌ی مزون هم استفاده
+  // می‌شه، فقط اینجا seed اش contentId ترندیوله نه شناسه‌ی مزون
+  const crossSellMaxItems = Number(await getSiteSetting(SITE_SETTING_KEYS.CROSS_SELL_MAX_ITEMS)) || 4;
+  const frequentlyBoughtTogether = await fetchFrequentlyBoughtTogether(product.contentId, crossSellMaxItems);
 
   // «محصولات مشابه» -- best-effort: این endpoint نیاز به یه سایز مشخص داره
   // (sizeVariantAttributeValue)، پس اگه محصول اصلاً سایزی نداشت (یا خطا داد)،
@@ -213,10 +245,72 @@ export default async function TrendyolProductPage({
     values: [{ attribute: "سایز", value: size }],
   }));
 
+  // وقتی از لیستِ «فروشنده‌های دیگر» با ?merchantId=... وارد این صفحه شده باشیم،
+  // دقیقاً مثلِ خودِ ترندیول، کلِ صفحه از دیدِ همون فروشنده رندر می‌شه: قیمت/تخفیفِ
+  // بالای صفحه از قیمتِ همون فروشنده میاد، و فروشنده‌ی پیش‌فرضِ قبلی به لیستِ
+  // «فروشنده‌های دیگر» منتقل می‌شه. نیازی به فچِ زنده‌ی جدید نیست -- otherSellers[]
+  // از همون یه فچِ موجود، قیمتِ همه‌ی فروشنده‌ها رو از قبل داره
+  const requestedMerchantId = merchantIdParam ? Number(merchantIdParam) : null;
+  const selectedSeller =
+    requestedMerchantId != null && Number.isFinite(requestedMerchantId)
+      ? product.otherSellers.find((s) => s.merchantId === requestedMerchantId && s.price != null) ?? null
+      : null;
+
+  const effectivePrice = selectedSeller?.price ?? product.price;
+  const effectiveOriginalPrice = selectedSeller ? selectedSeller.originalPrice : product.originalPrice;
+  const effectivePriceTL = selectedSeller?.priceTL ?? product.priceTL;
+  const effectiveOriginalPriceTL = selectedSeller ? selectedSeller.originalPriceTL : product.originalPriceTL;
+
+  const displayCurrentSeller = selectedSeller
+    ? {
+        merchantId: selectedSeller.merchantId,
+        name: selectedSeller.name,
+        score: selectedSeller.score,
+        scoreColor: selectedSeller.scoreColor,
+        price: selectedSeller.price,
+        originalPrice: selectedSeller.originalPrice,
+        priceTL: selectedSeller.priceTL,
+        originalPriceTL: selectedSeller.originalPriceTL,
+        campaignLabel: selectedSeller.campaignLabel,
+        variantLabel: selectedSeller.variantLabel,
+      }
+    : product.currentSeller;
+
+  const displayOtherSellers = selectedSeller
+    ? [
+        ...(product.currentSeller
+          ? [
+              {
+                merchantId: product.currentSeller.merchantId,
+                name: product.currentSeller.name,
+                score: product.currentSeller.score,
+                scoreColor: product.currentSeller.scoreColor,
+                price: product.currentSeller.price,
+                originalPrice: product.currentSeller.originalPrice,
+                priceTL: product.currentSeller.priceTL,
+                originalPriceTL: product.currentSeller.originalPriceTL,
+                campaignLabel: product.currentSeller.campaignLabel,
+                inStock: product.inStock,
+                freeCargo: false,
+                variantLabel: product.currentSeller.variantLabel,
+              },
+            ]
+          : []),
+        ...product.otherSellers.filter((s) => s.merchantId !== selectedSeller.merchantId),
+      ].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+    : product.otherSellers;
+
+  // اگه نرخِ لیر توی تنظیمات ثبت نشده باشه، effectivePrice/effectiveOriginalPrice
+  // (تومان) هردو صفرن -- این یعنی شرطِ اول همیشه false می‌شه و تخفیفِ واقعی
+  // اصلاً به AddToCartForm نمی‌رسه (نه فقط قیمتِ نهایی، که قبلاً fallback به
+  // لیر داره، بلکه خودِ محاسبه‌ی درصد). پس اینجا هم یه fallback به قیمتِ خامِ
+  // لیر لازمه، وگرنه خطِ روی قیمتِ قبلی هیچ‌وقت نشون داده نمی‌شه
   const discountPercent =
-    product.originalPrice && product.price && product.originalPrice > product.price
-      ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)
-      : 0;
+    effectiveOriginalPrice && effectivePrice && effectiveOriginalPrice > effectivePrice
+      ? Math.round(((effectiveOriginalPrice - effectivePrice) / effectiveOriginalPrice) * 100)
+      : effectiveOriginalPriceTL && effectivePriceTL && effectiveOriginalPriceTL > effectivePriceTL
+        ? Math.round(((effectiveOriginalPriceTL - effectivePriceTL) / effectiveOriginalPriceTL) * 100)
+        : 0;
 
   // برای کلیک‌پذیر کردن بخش دسته‌بندی توی breadcrumb، اسم خام ترکی رو با
   // TrendyolCategoryCache تطبیق می‌دیم (best-effort -- momکنه یه اسم برگ توی چند
@@ -248,11 +342,12 @@ export default async function TrendyolProductPage({
   // اگه ادمین اسمش رو عوض کرد، اینجا هم خودکار هماهنگ بمونه
   const externalSite = await prisma.externalSite.findUnique({
     where: { slug: siteSlug },
-    select: { id: true, name: true, isReturnable: true },
+    select: { id: true, name: true, isReturnable: true, showOtherSellers: true },
   });
   const siteLabel = externalSite?.name ?? (siteSlug === "trendyol-milla" ? "میلا" : "ترندیول");
   const nonReturnableProductsEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED);
   const isNonReturnable = nonReturnableProductsEnabled && externalSite?.isReturnable === false;
+  const flags = await getFeatureFlags();
 
   let categoryLabel = product.categoryName;
   let categoryHref: string | undefined;
@@ -297,6 +392,14 @@ export default async function TrendyolProductPage({
       }
     }
   }
+  // طبقِ درخواستِ صریح («کلِ روبمپ باید قابل‌کلیک باشه») -- اگه دسته‌بندیِ این
+  // محصول توی TrendyolCategoryCache سینک نشده باشه (پس wc= دقیقش رو نداریم)،
+  // به‌جای نمایشِ متنِ بی‌لینک، یه سرچِ متنی روی همون اسمِ دسته می‌زنیم؛ خودِ
+  // صفحه‌ی سرچ (parseSearchQueryToFilters) اگه اسم دقیقاً با یه دسته مچ بشه
+  // خودکار به فیلترِ همون دسته ریدایرکت می‌کنه، وگرنه لااقل یه نتیجه‌ی مرتبط می‌ده
+  if (categoryLabel && !categoryHref) {
+    categoryHref = `/marketplaces/${siteSlug}?q=${encodeURIComponent(categoryLabel)}`;
+  }
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 pt-4 pb-8">
@@ -314,6 +417,7 @@ export default async function TrendyolProductPage({
         }}
         url={siteUrl(`/products/trendyol/${encodeURIComponent(slug)}`)}
       />
+      <CurrentMarketplaceSync siteSlug={siteSlug} />
       <RecentlyViewedRecorder
         product={{
           id: `trendyol-${product.contentId}`,
@@ -339,8 +443,13 @@ export default async function TrendyolProductPage({
       {/* ستون گالری دقیقاً به‌اندازه‌ی عرض واقعیِ خودش (همون max-w-[440px] که
           خودِ ProductGallery داره) تعریف شده -- وگرنه با grid-cols-2 (۱fr ۱fr)،
           چون گالری خودش max-w دارد و توضیحات ندارد، یه فضای خالی حدود ۱۶۰px
-          بین عکس و توضیحات می‌افتاد که هیچ محتوایی توش نبود */}
-      <div className="grid md:grid-cols-[440px_1fr] lg:grid-cols-[440px_1fr_280px] gap-8">
+          بین عکس و توضیحات می‌افتاد که هیچ محتوایی توش نبود.
+          grid-cols-1 صریح توی موبایل لازمه (نه فقط تکیه به رفتارِ پیش‌فرضِ
+          grid): بدونش، تراکِ تکِ ضمنی min-width:auto می‌گیره، یعنی عکسِ داخلِ
+          ProductGallery (که خودش تا max-w-[440px] می‌خواد پر بشه) کلِ تراک/گرید/
+          صفحه رو تا ۴۴۰px می‌کشید و توی موبایلِ باریک‌تر افقی اسکرول می‌شد --
+          grid-cols-1 با minmax(0,1fr) این min-width رو صفر می‌کنه */}
+      <div className="grid grid-cols-1 md:grid-cols-[440px_1fr] lg:grid-cols-[440px_1fr_280px] gap-8">
         <ProductGallery images={product.images} title={product.nameFa} />
 
         <div>
@@ -360,9 +469,11 @@ export default async function TrendyolProductPage({
             )
           )}
 
-          <h1 className="text-2xl font-extrabold mb-3">{product.nameFa}</h1>
+          <h1 className="text-2xl font-extrabold mb-3">
+            <AdminClickToTranslate text={product.nameFa} isAdmin={isAdmin} />
+          </h1>
           <div className="flex flex-wrap items-center gap-2 mb-1">
-            <AdminOriginalTitleCopy originalTitle={product.name} isAdmin={isAdmin} alwaysVisible />
+            <AdminOriginalTitleCopy originalTitle={product.name} isAdmin={isAdmin} alwaysVisible brand={product.brand} />
             <AdminOriginalLinkCopy url={product.url} isAdmin={isAdmin} />
           </div>
 
@@ -398,26 +509,55 @@ export default async function TrendyolProductPage({
             </p>
           )}
 
+          <LiveViewersBadge
+            count={recentViewersCount}
+            minCount={socialProofMinCount}
+            windowMinutes={socialProofWindowMinutes}
+          />
+
           <AddToCartForm
             productId={`trendyol-${product.contentId}`}
             slugOrId={product.contentId}
             source="TRENDYOL"
             title={product.nameFa}
             image={product.images[0] ?? ""}
-            basePrice={product.price ?? 0}
-            originalPrice={product.originalPrice ?? undefined}
+            basePrice={effectivePrice ?? 0}
+            originalPrice={effectiveOriginalPrice ?? undefined}
+            priceTL={effectivePriceTL}
+            originalPriceTL={effectiveOriginalPriceTL}
+            isAdmin={isAdmin}
             discount={discountPercent}
             variants={variantOptions.length > 0 ? variantOptions : undefined}
             initialAttrs={initialAttrs}
             fixedVariantLabel={currentColorName ? `رنگ: ${currentColorName}` : undefined}
             siteLabel={siteLabel}
+            merchantId={selectedSeller?.merchantId}
+            merchantName={selectedSeller?.name}
           />
 
-          {isNonReturnable && (
-            <p className="mt-4 text-xs text-red-600 font-medium border-t cut-line pt-4">
-              کالاهای «{siteLabel}» قابل مرجوع نیستند.
-            </p>
+          <ShippingInfoBox variant="trendyol" enabled={shippingInfoEnabled} />
+
+          <div className="mt-3">
+            <TrustBadgesInline badges={trustBadges} />
+          </div>
+
+          {flags[SITE_SETTING_KEYS.FEATURE_CHEAPER_PRICE_REPORT] && (
+            <PriceReportWidget externalId={product.contentId} currentPrice={effectivePrice ?? 0} />
           )}
+
+          <p className="mt-4 text-xs border-t cut-line pt-4">
+            {isNonReturnable ? (
+              <span className="text-red-600 font-medium">کالاهای «{siteLabel}» قابل مرجوع نیستند.</span>
+            ) : (
+              <>
+                <strong className="text-[var(--color-ink)]">شرایط مرجوع کردن کالا: </strong>
+                <span className="text-[var(--color-muted)]">
+                  کالای خارجی فقط در صورتِ خرابی، ارسالِ اشتباه یا نامناسب‌بودنِ سایز/رنگ قابلِ مرجوعه --
+                  انصراف از خرید یا نپسندیدن شاملِ مرجوعی نمی‌شه.
+                </span>
+              </>
+            )}
+          </p>
 
           {product.attributes.length > 0 && (
             <div className="mt-8 pt-6 border-t cut-line">
@@ -428,7 +568,11 @@ export default async function TrendyolProductPage({
                     key={attr.name}
                     className="flex items-center justify-between gap-3 bg-[var(--color-linen-dim)] rounded-lg px-4 py-3 text-sm"
                   >
-                    <span className="text-[var(--color-muted)]">
+                    {/* min-w-0 لازمه چون این‌ها فرزندِ flex هستن -- بدونش، مقدارِ
+                        ترجمه‌نشده‌ی طولانی (مثلاً یه اسمِ ویژگیِ ترکیِ بلند) عرضِ
+                        خودش رو به‌جای شکستنِ خط، به کلِ ردیف/گرید/صفحه تحمیل
+                        می‌کرد و صفحه توی موبایل افقی اسکرول می‌شد */}
+                    <span className="text-[var(--color-muted)] min-w-0 break-words">
                       <AdminClickToTranslate text={attr.name} isAdmin={isAdmin} />
                     </span>
                     {isImageUrl(attr.value) ? (
@@ -436,9 +580,9 @@ export default async function TrendyolProductPage({
                       // عکس (آیکون) از CDN ترندیوله، نه متن -- باید خودِ عکس نشون
                       // داده بشه، نه آدرس خامش
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={attr.value} alt={attr.name} className="h-8 w-auto object-contain" />
+                      <img src={toProxiedImageUrl(attr.value)} alt={attr.name} className="h-8 w-auto object-contain shrink-0" />
                     ) : (
-                      <span className="font-bold">
+                      <span className="font-bold min-w-0 break-words text-left">
                         <AdminClickToTranslate text={attr.value} isAdmin={isAdmin} />
                       </span>
                     )}
@@ -453,20 +597,40 @@ export default async function TrendyolProductPage({
             ترندیول (کنارِ عکس/اطلاعاتِ اصلی، نه بالای عنوان). توی صفحه‌های
             کوچیک‌تر (بدون این ستونِ سوم) زیرِ همه‌چیز می‌افته */}
         <div className="md:col-span-2 lg:col-span-1">
-          <ProductCampaigns badges={product.campaignBadges} siteSlug={siteSlug} isAdmin={isAdmin} />
+          {flags[SITE_SETTING_KEYS.FEATURE_TRENDYOL_CAMPAIGNS] && (
+            <ProductCampaigns badges={product.campaignBadges} siteSlug={siteSlug} isAdmin={isAdmin} />
+          )}
+
+          {externalSite?.showOtherSellers !== false && (
+            <TrendyolOtherSellers
+              contentId={product.contentId}
+              siteSlug={siteSlug}
+              currentSeller={displayCurrentSeller}
+              otherSellers={displayOtherSellers}
+              isAdmin={isAdmin}
+            />
+          )}
         </div>
       </div>
 
+      {flags[SITE_SETTING_KEYS.FEATURE_FREQUENTLY_BOUGHT_TOGETHER] && frequentlyBoughtTogether.length > 0 && (
+        <div className="mt-8 pt-6 border-t cut-line">
+          <h2 className="font-bold mb-4">این محصول رو خریدن، این‌ها رو هم خریدن</h2>
+          <HorizontalProductCarousel products={frequentlyBoughtTogether} wishlistedIds={new Set()} />
+        </div>
+      )}
       <TrendyolSimilarProducts products={similarProducts} isAdmin={isAdmin} />
       <TrendyolBestSellers products={bestSellers} isAdmin={isAdmin} />
 
-      <ReviewsSection
-        externalId={product.contentId}
-        externalSiteId={externalSite?.id}
-        productTitle={product.nameFa}
-        productImage={product.images[0]}
-      />
-      <QASection externalId={product.contentId} />
+      {flags[SITE_SETTING_KEYS.FEATURE_PRODUCT_REVIEWS] && (
+        <ReviewsSection
+          externalId={product.contentId}
+          externalSiteId={externalSite?.id}
+          productTitle={product.nameFa}
+          productImage={product.images[0]}
+        />
+      )}
+      {flags[SITE_SETTING_KEYS.FEATURE_PRODUCT_QA] && <QASection externalId={product.contentId} />}
     </div>
   );
 }

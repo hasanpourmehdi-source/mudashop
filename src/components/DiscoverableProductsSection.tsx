@@ -50,7 +50,7 @@ export function DiscoverableProductsSection({
 
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
-      <h2 className="text-xl font-bold mb-4">محصولات قابل کشف</h2>
+      <h2 className="text-xl font-bold mb-4">کاوش محصولات</h2>
       <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-4">
         {TABS.map((tab) => (
           <button

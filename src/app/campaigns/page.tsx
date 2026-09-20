@@ -26,13 +26,18 @@ export default async function CampaignsPage() {
           {campaigns.map((c) => (
             <Link
               key={`${c.siteSlug}-${c.campaignId}`}
-              href={`/marketplaces/${c.siteSlug}/campaign/${c.campaignId}?text=${encodeURIComponent(c.text)}`}
+              href={`/marketplaces/${c.siteSlug}/campaign/${c.campaignId}?text=${encodeURIComponent(c.text)}${
+                c.rawNameTr ? `&rawNameTr=${encodeURIComponent(c.rawNameTr)}` : ""
+              }`}
               className="rounded-xl overflow-hidden bg-white border cut-line hover:border-[var(--color-wine)] transition-colors"
             >
-              <div className="relative aspect-square bg-[var(--color-linen-dim)]">
-                {c.sampleImage && (
+              <div className="relative bg-[var(--color-linen-dim)]">
+                {c.sampleImage ? (
+                  // طبقِ درخواستِ صریح: بدونِ برشِ مربعی -- نسبتِ ابعادِ واقعیِ عکس حفظ می‌شه
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={c.sampleImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  <img src={c.sampleImage} alt="" className="w-full h-auto block" />
+                ) : (
+                  <div className="aspect-square" />
                 )}
                 <span className="absolute top-1.5 right-1.5 text-[10px] font-bold bg-black/60 text-white rounded-full px-2 py-0.5">
                   {c.siteLabel}

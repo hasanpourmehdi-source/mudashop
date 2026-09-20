@@ -23,11 +23,14 @@ export function CartUserSync() {
     const guestStore = getCartStore("guest");
     const userStore = getCartStore(session.user.id);
 
-    const guestItems = guestStore.getState().items;
-    if (guestItems.length > 0) {
-      guestItems.forEach((item) => userStore.getState().addItem(item));
-      guestStore.getState().clear();
-    }
+    // قبلاً فقط items مهمان ادغام می‌شد و savedForLaterِ مهمان نه ادغام می‌شد
+    // نه پاک -- برای همیشه توی سطلِ "guest" (مشترکِ بینِ همه‌ی مهمان‌های همون
+    // مرورگر/دستگاه) باقی می‌موند: هم دیده نمی‌شد (گم‌شده برای همون کاربر)، هم
+    // نشتِ حریمِ خصوصی بود (مهمانِ بعدیِ همون دستگاه می‌تونست ببینتش)
+    const { items: guestItems, savedForLater: guestSaved } = guestStore.getState();
+    guestItems.forEach((item) => userStore.getState().addItem(item));
+    if (guestSaved.length > 0) userStore.getState().mergeSavedForLater(guestSaved);
+    if (guestItems.length > 0 || guestSaved.length > 0) guestStore.getState().clearAll();
 
     // همگام‌سازیِ بین‌دستگاهی: هرچی از یه دستگاه دیگه روی سرور ذخیره شده رو
     // با سبد/خریدِ‌بعدیِ همین دستگاه ادغام کن. فقط اقلامی که این‌جا نیستن

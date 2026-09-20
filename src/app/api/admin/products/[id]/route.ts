@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/requireAdmin";
+import { sanitizeProductDescription, stripHtmlToText } from "@/lib/sanitizeHtml";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { notifyStockSubscribers } from "@/lib/stockNotify";
@@ -24,6 +25,10 @@ const variantUpdateSchema = z.object({
   id: z.string().min(1),
   stock: z.number().int().min(0, "موجودی نمی‌تواند منفی باشد"),
   priceDiff: z.number().int().default(0),
+  // اندازه‌ی واقعیِ این ترکیب (اختیاری) -- آرایه‌ی خالی یعنی «ادمین چیزی وارد نکرده»
+  measurements: z
+    .array(z.object({ label: z.string().min(1), cm: z.number().positive() }))
+    .default([]),
 });
 
 const specSchema = z.object({
@@ -33,7 +38,12 @@ const specSchema = z.object({
 
 const updateSchema = z.object({
   title: z.string().min(2, "عنوان باید حداقل ۲ حرف باشد").optional(),
-  description: z.string().min(1, "توضیحات الزامی است").optional(),
+  description: z
+    .string()
+    .min(1, "توضیحات الزامی است")
+    .transform((val) => sanitizeProductDescription(val))
+    .refine((val) => stripHtmlToText(val).length > 0, { message: "توضیحات الزامی است" })
+    .optional(),
   brandId: z.string().optional(),
   basePrice: z.number().int("قیمت باید عدد صحیح باشد").positive("قیمت باید مثبت باشد").optional(),
   discount: z.number().int().min(0, "تخفیف نمی‌تواند منفی باشد").max(100, "تخفیف نمی‌تواند بیشتر از ۱۰۰٪ باشد").optional(),
@@ -41,6 +51,8 @@ const updateSchema = z.object({
   colorImages: z.record(z.string(), z.array(z.string())).optional(),
   fastShipping: z.boolean().optional(),
   isReturnable: z.boolean().optional(),
+  defectNote: z.string().optional(),
+  defectImage: z.string().optional(),
   careInstructions: z.string().optional(),
   videoUrl: z.string().optional(),
   categoryId: z.string().optional(),
@@ -112,7 +124,11 @@ export async function PUT(
           } else {
             await tx.productVariant.update({
               where: { id: v.id },
-              data: { stock: v.stock, priceDiff: v.priceDiff },
+              data: {
+                stock: v.stock,
+                priceDiff: v.priceDiff,
+                measurements: v.measurements.length > 0 ? JSON.stringify(v.measurements) : null,
+              },
             });
             restockedVariantIds.push(v.id);
           }

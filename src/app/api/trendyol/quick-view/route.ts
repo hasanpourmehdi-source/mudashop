@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { fetchTrendyolProductDetail } from "@/lib/trendyolProductDetail";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // ALLOWED_HOSTS مشابه src/app/api/trendyol/live/route.ts -- فقط اجازه‌ی fetch
 // از دامنه‌های ترندیول شناخته‌شده رو می‌ده
 const ALLOWED_HOSTS = [

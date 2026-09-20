@@ -4,6 +4,10 @@ import { TRENDYOL_TOP_SECTIONS } from "@/lib/trendyolTopSections";
 import { TRENDYOL_RAW_CATEGORY_SENTINEL, encodeTrendyolCategoryParam } from "@/lib/externalSites";
 import { siteSlugToKind } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 type TreeNode = {
   id: string;
   name: string;
@@ -23,12 +27,24 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
   const site = siteSlugToKind(slug);
   const roots: (TreeNode & { attrsQuery?: string; rawCategoryLinks: true })[] = [];
 
+  // قبلاً برای هر کدوم از ۱۰ بخشِ اصلی یه findMany جدا زده می‌شد -- یعنی ۱۰
+  // رفت‌وبرگشتِ جداگانه‌ی DB توی *هر* بارگذاریِ این endpoint (که تقریباً هر
+  // صفحه‌ی ترندیول با منوی سه‌خط صداش می‌زنه). الان یه findMany برای کلِ سایت
+  // (با OR رویِ همه‌ی پیشوندهای بخش‌ها)، و تفکیکِ هر بخش از رویِ همون یه
+  // نتیجه، توی حافظه انجام می‌شه -- خروجی دقیقاً همون قبلیه
+  const prefixes = TRENDYOL_TOP_SECTIONS.map(({ turkish }) => `${turkish} > `);
+  const allRows = await prisma.trendyolCategoryCache.findMany({
+    where: {
+      site,
+      confirmedEmpty: false,
+      OR: prefixes.map((prefix) => ({ path: { startsWith: prefix } })),
+    },
+    select: { id: true, param: true, nameFa: true, nameTr: true, path: true },
+  });
+
   for (const { turkish: section, fa: label, isGenderSection, rootWc } of TRENDYOL_TOP_SECTIONS) {
     const prefix = `${section} > `;
-    const rows = await prisma.trendyolCategoryCache.findMany({
-      where: { site, path: { startsWith: prefix }, confirmedEmpty: false },
-      select: { id: true, param: true, nameFa: true, nameTr: true, path: true },
-    });
+    const rows = allRows.filter((row) => row.path.startsWith(prefix));
 
     const level1 = new Map<string, TreeNode>();
     for (const row of rows) {

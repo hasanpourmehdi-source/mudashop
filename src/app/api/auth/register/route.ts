@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { resolveReferrerId } from "@/lib/referral";
 import { sendVerificationEmail } from "@/lib/emailVerification";
+import { verifyCaptcha } from "@/lib/captcha";
 
 const registerSchema = z.object({
   name: z.string().min(2, "نام باید حداقل ۲ حرف باشد"),
@@ -11,6 +12,8 @@ const registerSchema = z.object({
   password: z.string().min(6, "رمز عبور باید حداقل ۶ کاراکتر باشد"),
   phone: z.string().optional(),
   referralCode: z.string().optional(),
+  captchaId: z.string().min(1, "کد امنیتی الزامی است"),
+  captchaAnswer: z.string().min(1, "پاسخ کد امنیتی الزامی است"),
 });
 
 export async function POST(req: Request) {
@@ -25,7 +28,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const { name, email, password, phone, referralCode } = parsed.data;
+    const { name, email, password, phone, referralCode, captchaId, captchaAnswer } = parsed.data;
+
+    if (!verifyCaptcha(captchaId, captchaAnswer)) {
+      return NextResponse.json({ error: "کد امنیتی اشتباه است -- لطفاً دوباره امتحان کنید" }, { status: 400 });
+    }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing && !existing.isGuest) {

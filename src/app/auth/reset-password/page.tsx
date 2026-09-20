@@ -3,6 +3,7 @@
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { Spinner } from "@/components/Spinner";
 
 export default function ResetPasswordPage() {
   return (
@@ -108,8 +109,9 @@ function ResetPasswordForm() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
+          className="w-full inline-flex items-center justify-center gap-2 bg-[var(--color-wine)] text-white py-2.5 rounded-full font-medium disabled:opacity-50"
         >
+          {loading && <Spinner className="w-4 h-4" />}
           {loading ? "در حال ثبت..." : "ثبت رمز جدید"}
         </button>
       </form>

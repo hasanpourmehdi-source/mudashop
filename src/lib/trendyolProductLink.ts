@@ -27,3 +27,16 @@ export function internalTrendyolProductHref(
   const base = slug ? `/products/trendyol/${contentId}-${slug}` : `/products/trendyol/${contentId}`;
   return attrsQuery ? `${base}?attrs=${encodeURIComponent(attrsQuery)}` : base;
 }
+
+// لینکِ خودِ ترندیول برای یه فروشنده‌ی مشخص -- همون آدرسِ کانونیک با
+// query-paramِ merchantId جایگزین‌شده (بدونِ نیازِ جدولِ کشِ جدا؛ ترندیول
+// خودش این پارامتر رو برای تشخیصِ فروشنده استفاده می‌کنه)
+export function withMerchantId(url: string, merchantId: number): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("merchantId", String(merchantId));
+    return u.toString();
+  } catch {
+    return url;
+  }
+}

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
 import { normalizeSlug } from "@/lib/slug";
-import { foldTurkish, toPersianDigits } from "@/lib/turkishText";
+import { foldTurkish, toPersianDigits, toEnglishDigits } from "@/lib/turkishText";
 import { levenshtein } from "@/lib/fuzzySearch";
 
 // ============================================================================
@@ -27,7 +27,7 @@ export type DictionaryEntry = { termTr: string; termFa: string; priority: number
 // عنوان‌هایی که با نسخه‌ی قدیمی الگوریتم از قبل کش شده بودن، تا ابد همون
 // ترجمه‌ی غلط/قدیمی رو نشون می‌دن، چون findUnique همیشه cache رو برمی‌گردونه
 // و هیچ‌وقت دوباره ترجمه نمی‌شه
-export const TITLE_ALGO_VERSION = 7;
+export const TITLE_ALGO_VERSION = 10;
 
 // عدد (با یا بدون % یا اعشار) نیازی به دیکشنری ندارد -- ترجمه‌ی خودش خودشه
 // (مثلاً "50" یا "%100")؛ برای همین نه باید کلمه‌ی ناشناخته حساب بشه، نه از
@@ -37,12 +37,70 @@ function isNumericToken(token: string): boolean {
   return /^%?\d+([.,]\d+)?%?$/.test(token);
 }
 
-// دیکشنری توی حافظه کش می‌شه (در طول عمر پروسه) چون خیلی زیاد خونده می‌شه ولی
-// به‌ندرت عوض می‌شه -- وقتی ادمین از پنل چیزی اضافه/ویرایش کرد، invalidateDictionaryCache را صدا بزن
+// واحدهای اندازه‌گیریِ ترکی که همیشه بلافاصله بعدِ یه عدد میان («30 ml»، «100
+// gr») -- توی tokenizeAndTranslate برای جلوگیری از جدا افتادنِ عدد از واحدش
+// موقعِ معکوس‌سازیِ کلیِ segments استفاده می‌شه (نه هر کلمه‌ی بعدِ عدد، چون
+// مثلاً «%100 Pamuklu» باید عمداً از هم جدا بمونه -- اونجا عدد توصیفیه، نه
+// واحدِ فیزیکیِ کلمه‌ی بعدی). هر واحدِ جدیدی که همین مشکل رو داشت، اینجا اضافه بشه
+const MEASUREMENT_UNIT_WORDS = new Set(["ml"]);
+
+// دیکشنری توی حافظه کش می‌شه چون خیلی زیاد خونده می‌شه ولی به‌ندرت عوض می‌شه --
+// وقتی ادمین از پنل چیزی اضافه/ویرایش کرد، invalidateTitleDictionaryCache صدا
+// زده می‌شه، ولی تنها-invalidate-روی-نوشتن کافی نیست: روی Vercel هر instanceِ
+// serverlessِ گرم یه کپیِ جداگانه از این متغیر توی حافظه‌ی خودش داره، پس
+// invalidate روی instanceِ لحظه‌ی ذخیره فقط همون یکی رو پاک می‌کنه -- بقیه‌ی
+// instanceهای گرم تا ابد (تا recycleِ خودشون) همون کپیِ کهنه رو serve می‌کنن.
+// طبقِ همون الگوی exchangeRate.ts، یه TTLِ کوتاه هم اضافه شد تا حداکثر چند
+// دقیقه‌ای خودش رو تازه کنه، حتی روی instanceی که invalidate بهش نرسیده
+const DICTIONARY_CACHE_TTL_MS = 5 * 60 * 1000;
 let dictionaryCache: DictionaryEntry[] | null = null;
+let dictionaryCacheExpiresAt = 0;
 
 export function invalidateTitleDictionaryCache() {
   dictionaryCache = null;
+  dictionaryCacheExpiresAt = 0;
+}
+
+// طبقِ گزارشِ صریح («چرا ترجمه رو عوض می‌کنم همون لحظه اعمال نمی‌شه؟»): مشکلِ
+// چندinstanceیِ بالا با فقط ۵ دقیقه TTL یعنی یه ادمین می‌تونست تا ۵ دقیقه بعدِ
+// ذخیره، هنوز ترجمه‌ی قدیمی رو (روی یه instanceِ گرمِ دیگه) ببینه. اینجا یه
+// نسخه‌ی سبک (یه ردیفِ SiteSetting با timestamp) اضافه شده که هر نوشتن
+// (افزودن/ویرایش/حذف) به‌روزش می‌کنه؛ loadDictionary هر instance این نسخه رو
+// (با TTLِ خیلی کوتاه‌ترِ خودش، نه رویِ کلِ دیکشنری) چک می‌کنه -- اگه فرق داشت،
+// یعنی یه instanceِ دیگه چیزی عوض کرده، پس کشِ محلی رو دور می‌ریزیم. نتیجه:
+// حداکثر چند ثانیه‌ای (نه چند دقیقه‌ای) روی همه‌ی instanceها اعمال می‌شه
+const DICTIONARY_VERSION_KEY = "internal:trendyolDictionaryVersion";
+const VERSION_CHECK_TTL_MS = 10 * 1000;
+let lastKnownVersion: string | null = null;
+let versionCheckedAt = 0;
+
+export async function bumpDictionaryVersion(): Promise<void> {
+  try {
+    const value = String(Date.now());
+    await prisma.siteSetting.upsert({
+      where: { key: DICTIONARY_VERSION_KEY },
+      create: { key: DICTIONARY_VERSION_KEY, value },
+      update: { value },
+    });
+  } catch {
+    // best-effort -- اگه fail بشه، حداکثر همون TTLِ ۵دقیقه‌ایِ قدیمی اعمال می‌شه
+  }
+}
+
+async function dictionaryVersionChanged(): Promise<boolean> {
+  if (Date.now() - versionCheckedAt < VERSION_CHECK_TTL_MS) return false;
+  versionCheckedAt = Date.now();
+  try {
+    const row = await prisma.siteSetting.findUnique({ where: { key: DICTIONARY_VERSION_KEY } });
+    const version = row?.value ?? "";
+    if (version !== lastKnownVersion) {
+      lastKnownVersion = version;
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // وقتی ادمین یه اصطلاح جدید به دیکشنری اضافه/ویرایش می‌کنه، این تابع همه‌ی
@@ -72,8 +130,12 @@ export async function invalidateTitleCacheForTerm(termTr: string): Promise<void>
   }
 }
 
-async function loadDictionary(): Promise<DictionaryEntry[]> {
-  if (dictionaryCache) return dictionaryCache;
+// export شده تا endpointِ batch (check-titles) بتونه یه بار لودش کنه و برای
+// چندین عنوان با هم (بدونِ چندباره خوندن از DB) با tokenizeAndTranslate استفاده کنه
+export async function loadDictionary(): Promise<DictionaryEntry[]> {
+  if (dictionaryCache && dictionaryCacheExpiresAt > Date.now() && !(await dictionaryVersionChanged())) {
+    return dictionaryCache;
+  }
   const rows: DictionaryEntry[] = await prisma.trendyolTitleTermDictionary.findMany({
     select: { termTr: true, termFa: true, priority: true },
   });
@@ -86,7 +148,94 @@ async function loadDictionary(): Promise<DictionaryEntry[]> {
     return b.priority - a.priority;
   });
   dictionaryCache = sorted;
+  dictionaryCacheExpiresAt = Date.now() + DICTIONARY_CACHE_TTL_MS;
   return sorted;
+}
+
+// ================= فرمول‌های اسمِ کمپین =================
+// بعضی اسم‌کمپین‌های ترندیول (مثلِ "2 Ürün %30 İndirim" یا "Sepette %30
+// İndirim") شاملِ عدد/درصدن و دیکشنریِ کلمه‌به‌کلمه‌ی بالا براشون مناسب نیست --
+// این‌جا ادمین خودش از پنل («فرمول‌های اسمِ کمپینِ ترندیول») یه الگوی ترکی با
+// placeholderهای {1},{2},... تعریف می‌کنه (هرکدوم یعنی یه عددِ دلخواه) و یه
+// قالبِ فارسی با همون placeholderها -- مثلاً الگو: "{1} Ürün %{2} İndirim"،
+// قالب: "خرید {1}م ٪{2} تخفیف". هیچ رجکسِ خامی از ادمین گرفته نمی‌شه، فقط این
+// نحوِ ساده -- امن‌تر و برای غیرِ برنامه‌نویس هم قابل‌فهمه
+export type CampaignNameFormula = { id: string; patternTr: string; templateFa: string; priority: number };
+
+// همون مشکلِ چندinstanceیِ dictionaryCache بالا اینجا هم هست -- invalidate روی
+// نوشتن فقط instanceِ همون لحظه رو تازه می‌کنه، بقیه‌ی instanceهای گرمِ
+// Vercel تا مدت‌ها همون فرمولِ ذخیره‌نشده رو serve می‌کنن (باگِ گزارش‌شده:
+// «ذخیره کردم ولی دفعه‌ی بعد هنوز میگه ترجمه نشده»). همون TTLِ کوتاه اینجا هم لازمه
+const CAMPAIGN_FORMULA_CACHE_TTL_MS = 5 * 60 * 1000;
+let campaignFormulaCache: CampaignNameFormula[] | null = null;
+let campaignFormulaCacheExpiresAt = 0;
+
+export function invalidateCampaignFormulaCache() {
+  campaignFormulaCache = null;
+  campaignFormulaCacheExpiresAt = 0;
+}
+
+async function loadCampaignFormulas(): Promise<CampaignNameFormula[]> {
+  if (campaignFormulaCache && campaignFormulaCacheExpiresAt > Date.now()) return campaignFormulaCache;
+  const rows = await prisma.trendyolCampaignNameFormula.findMany({
+    select: { id: true, patternTr: true, templateFa: true, priority: true },
+    orderBy: { priority: "desc" },
+  });
+  campaignFormulaCache = rows;
+  campaignFormulaCacheExpiresAt = Date.now() + CAMPAIGN_FORMULA_CACHE_TTL_MS;
+  return rows;
+}
+
+// الگوی {n} رو به یه regex تبدیل می‌کنه -- بقیه‌ی کاراکترهای خاصِ regex
+// (چون متنِ الگو ممکنه %  یا . داشته باشه) escape می‌شن، فقط {n} خودش تبدیل به
+// یه گروهِ عددیِ capture می‌شه
+function buildFormulaRegex(patternTr: string): RegExp | null {
+  const escaped = patternTr.trim().replace(/[.*+?^$()|[\]\\]/g, "\\$&");
+  const withGroups = escaped.replace(/\{[0-9۰-۹]+\}/g, "(\\d+)");
+  try {
+    return new RegExp(`^${withGroups}$`, "i");
+  } catch {
+    return null;
+  }
+}
+
+// اسمِ کمپین رو اول با فرمول‌های ادمین‌ساخته چک می‌کنه؛ اگه هیچ‌کدوم مچ نشد،
+// از همون مترجمِ عمومیِ کلمه‌به‌کلمه استفاده می‌کنه (fallback، نه شکست).
+// matchedFormula مشخص می‌کنه آیا یه فرمول واقعاً پیداش کرده یا نه -- برای اینکه
+// فقط وقتی هیچ فرمولی پوششش نمی‌ده، به ادمین پیشنهادِ «تعریفِ الگو» نشون داده
+// بشه. وقتی matchedFormula=true، formulaId/matchedPatternTr/matchedTemplateFa
+// هم برمی‌گردن -- طبقِ درخواستِ صریح، تا ادمین بتونه همون‌جا (کنارِ خودِ بجِ
+// کمپین) بدونِ رفتن به صفحه‌ی جداگانه‌ی «فرمول‌ها» سریع ویرایشش کنه
+export async function translateCampaignName(text: string): Promise<{
+  text: string;
+  matchedFormula: boolean;
+  formulaId?: string;
+  matchedPatternTr?: string;
+  matchedTemplateFa?: string;
+}> {
+  const trimmed = text.trim();
+  const formulas = await loadCampaignFormulas();
+  for (const f of formulas) {
+    const regex = buildFormulaRegex(f.patternTr);
+    if (!regex) continue;
+    const match = trimmed.match(regex);
+    if (!match) continue;
+    // رقمِ داخلِ {n} ممکنه فارسی تایپ شده باشه (کیبورد/IME) -- مثلاً «{۲}»؛
+    // toEnglishDigits قبل از Number() لازمه، وگرنه اون placeholder جایگزین
+    // نمی‌شه و عیناً توی متنِ نهایی می‌مونه
+    const formatted = f.templateFa.replace(/\{([0-9۰-۹]+)\}/g, (_, idxStr) => {
+      const val = match[Number(toEnglishDigits(idxStr))];
+      return val ? toPersianDigits(val) : "";
+    });
+    return {
+      text: formatted,
+      matchedFormula: true,
+      formulaId: f.id,
+      matchedPatternTr: f.patternTr,
+      matchedTemplateFa: f.templateFa,
+    };
+  }
+  return { text: await translateTrendyolAttributeText(text), matchedFormula: false };
 }
 
 // نرمال‌سازی برای lookup -- طبق درخواست صریح، حروف خاص ترکی (ç/ş/ğ/ı/ö/ü) هم
@@ -100,11 +249,12 @@ const turkishLowercase = foldTurkish;
 // صریح: یه اصطلاح ترکی فقط باید *یه‌جا* ترجمه بشه و همه‌جا (عنوان محصول، اسم
 // دسته‌بندی، مقدار فیلتر) از همون یک ترجمه استفاده کنن -- نه سه‌تا دیکشنری جدا
 export async function translateTurkishPhrase(
-  text: string
+  text: string,
+  brand?: string | null
 ): Promise<{ translated: string; unknownTerms: string[] }> {
   if (!text.trim()) return { translated: text, unknownTerms: [] };
   const dictionary = await loadDictionary();
-  return tokenizeAndTranslate(text, dictionary);
+  return tokenizeAndTranslate(text, dictionary, brand);
 }
 
 // وقتی یه توکن با - یا / بین چندتا کلمه جدا شده (مثلاً "Slim-Fit" یا
@@ -212,6 +362,23 @@ export function tokenizeAndTranslate(
     if (singleEntry) {
       segments.push(singleEntry.termFa);
     } else if (isNumericToken(normalized)) {
+      // یه عددِ واحدِ اندازه‌گیری («30 ml»، «100 gr») همیشه بلافاصله بعدش میاد،
+      // و ترتیبِ عدد+واحد هیچ‌وقت نباید عوض بشه (فارسی هم «عدد سپس واحد» رو
+      // حفظ می‌کنه، مثلاً «۳۰ میل») -- ولی معکوس‌سازیِ کلیِ segments پایین‌تر این
+      // فرض رو رویِ *همه‌ی* segmentها یکسان اعمال می‌کنه و بدونِ این استثنا
+      // «30 ml» رو به «میل ۳۰» تبدیل می‌کرد. توجه: این فقط برای *واحد*ها صادقه،
+      // نه هر کلمه‌ی بعدِ عدد -- مثلاً «%100 Pamuklu» (ترکیبِ پارچه) عمداً باید
+      // از هم جدا بمونه (تستِ موجود این رو تأیید می‌کنه)، چون اونجا عدد یه
+      // درصدِ توصیفیه، نه اندازه‌ی فیزیکیِ همون کلمه‌ی بعدی
+      const nextNormalized = normalizedWords[i + 1];
+      if (nextNormalized && MEASUREMENT_UNIT_WORDS.has(nextNormalized)) {
+        const unitEntry = dictionary.find((e) => e.termTr === nextNormalized);
+        if (unitEntry) {
+          segments.push(`${normalized} ${unitEntry.termFa}`);
+          i += 2;
+          continue;
+        }
+      }
       segments.push(normalized);
     } else if (/[-/]/.test(normalized)) {
       const compound = translateCompoundToken(rawWords[i], dictionary, unknownTerms);
@@ -237,10 +404,94 @@ export function tokenizeAndTranslate(
   const reversedSegments = [...segments].reverse();
 
   // اگه هیچ کلمه‌ای ترجمه نشد (مثلاً عنوانی که کاملاً از اصطلاحات ناشناخته
-  // تشکیل شده)، نمایش عنوان خام ترکی از خالی‌گذاشتن کامل بهتره
-  const translated = toPersianDigits(reversedSegments.length > 0 ? reversedSegments.join(" ") : title);
+  // تشکیل شده)، نمایش عنوان خام ترکی از خالی‌گذاشتن کامل بهتره -- این حالت
+  // دست‌نخورده می‌مونه (نه از dropRepeatedPhrases رد می‌شه، که فاصله‌های خامِ
+  // ورودی رو هم جمع می‌کنه)
+  //
+  // بعضی عنوان‌های ترندیول عمداً/سهواً یه ویژگی رو چندبار تکرار می‌کنن (مثلاً
+  // «Büyük Beden» دوبار توی عنوانِ خام، یا دوتا توکنِ متفاوت که هردو به همون
+  // عبارت ترجمه می‌شن) -- طبقِ درخواستِ صریح، هرجای عنوان که یه کلمه/عبارتِ
+  // تکراری پیدا بشه، فقط بارِ اولش نگه داشته می‌شه. عمداً روی *رشته‌ی نهاییِ
+  // چسبیده* (نه فقط segmentهای جدا) اعمال می‌شه، چون تکرار می‌تونه از دو
+  // segmentِ متفاوت (نه فقط دو segmentِ کاملاً یکسان) پدید بیاد -- مثلاً یه
+  // segmentِ دوکلمه‌ایِ «سایز بزرگ» جایی، و دو segmentِ تک‌کلمه‌ایِ «سایز»+«بزرگ»
+  // جدا جایی دیگه، که به‌عنوانِ آرایه با هم برابر نیستن ولی توی متنِ نهایی
+  // همون رشته رو می‌سازن
+  const translated = toPersianDigits(
+    reversedSegments.length > 0 ? dropRepeatedPhrases(reversedSegments.join(" ")) : title
+  );
 
   return { translated, unknownTerms: Array.from(unknownTerms) };
+}
+
+// حذفِ کلمه/عبارتِ تکراری از هر جای متن -- طولانی‌ترین دنباله‌های ممکن رو اول
+// چک می‌کنه (تا مثلاً یه عبارتِ دوکلمه‌ای به‌جای دوتا کلمه‌ی تک‌تکِ جدا حذف
+// بشه)، فقط تکرارهای *غیرِهم‌پوشان* (نه خودِ همون رخداد) رو حذف می‌کنه، و
+// همیشه رخدادِ اول رو نگه می‌داره
+function dropRepeatedPhrases(text: string): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  const drop = new Set<number>();
+  const maxLen = Math.floor(words.length / 2);
+  for (let len = maxLen; len >= 1; len--) {
+    const firstSeenAt = new Map<string, number>();
+    for (let i = 0; i + len <= words.length; i++) {
+      let overlapsDrop = false;
+      for (let k = 0; k < len; k++) {
+        if (drop.has(i + k)) {
+          overlapsDrop = true;
+          break;
+        }
+      }
+      if (overlapsDrop) continue;
+      const phrase = words.slice(i, i + len).join(" ");
+      const firstStart = firstSeenAt.get(phrase);
+      if (firstStart === undefined) {
+        firstSeenAt.set(phrase, i);
+      } else if (i >= firstStart + len) {
+        for (let k = 0; k < len; k++) drop.add(i + k);
+      }
+    }
+  }
+  return words.filter((_, i) => !drop.has(i)).join(" ");
+}
+
+// حتی بعدِ معکوس‌سازیِ segmentها، بعضی عنوان‌های ترکی (وقتی مثلاً آخرین
+// کلمه‌شون یه جزئیاتِ فرعی مثل «۳'lü Paket» باشه، نه اسمِ اصلی) هنوز با
+// موضوعِ اصلیِ محصول شروع نمی‌شن. چون dataLayerِ خودِ ترندیول یه دسته‌بندیِ
+// جدا و همیشه‌قابل‌اعتماد داره (که جدا هم ترجمه می‌شه، برای categoryName روی
+// صفحه)، اونو با اطمینانِ کامل اولِ عنوان می‌ذاریم -- مگه اینکه عنوان از قبل
+// همون عبارت رو *هرجا* (نه فقط اولش) داشته باشه. چرا هرجا نه فقط اول: چون
+// معکوس‌سازیِ segmentها می‌تونه اسمِ اصلیِ محصول (که معمولاً همون دسته‌بندیه)
+// رو وسطِ عنوان بندازه، نه لزوماً اولش (مثلاً «سایز بزرگ کیف لوازم آرایش
+// طرح‌دار...» -- اسمِ اصلی وسطه، نه اول)؛ چک‌کردنِ فقط چندکلمه‌ی اول این حالت
+// رو تشخیص نمی‌داد و «کیف لوازم آرایش» دوبار توی عنوان تکرار می‌شد.
+//
+// یه حالتِ سخت‌تر هم هست: دسته‌بندی به‌صورتِ عبارتِ *پیوسته* (مثلاً «پیراهن
+// سایز بزرگ») توی عنوان نیست، ولی کلماتش جدا از هم (با یه کلمه‌ی دیگه فاصله،
+// مثلاً «پیراهن مجلسی سایز بزرگ») هستن -- چکِ includes بالا این رو تشخیص
+// نمی‌ده و بازم عبارتِ کامل رو دوباره اول می‌ذاره. برای همین بعد از چسبوندن،
+// نتیجه رو یه‌بار از dropRepeatedPhrases رد می‌کنیم تا اگه کلماتِ دسته‌بندی
+// (حالا که اولِ عنوانن) با همون کلماتِ پراکنده‌ی وسطِ عنوان یکی شدن، تکرار حذف بشه
+export function withCategoryPrefix(
+  translatedTitle: string,
+  categoryName?: string | null,
+  originalTitle?: string | null
+): string {
+  const cat = categoryName?.trim();
+  if (!cat) return translatedTitle;
+  // اگه هیچ کلمه‌ای از عنوان ترجمه نشده (یعنی tokenizeAndTranslate به‌خاطرِ
+  // نبودِ حتی یه اصطلاحِ آشنا، دقیقاً همون عنوانِ خام رو برگردونده)، چسبوندنِ
+  // پیشوندِ فارسیِ دسته‌بندی به یه متنِ کاملاً خارجی یه ترکیبِ نصفه‌نیمه/بدریخت
+  // می‌سازه (مثلاً «شلوار پیژامه PYJAMAS KNIT BOTTOMS») -- به‌جاش فقط همون
+  // دسته‌بندیِ فارسی (که همیشه واقعاً ترجمه‌شده، چون از دیتای ساختاریافته‌ی
+  // خودِ ترندیول میاد نه دیکشنری) به‌تنهایی نشون داده می‌شه
+  if (originalTitle != null && translatedTitle === originalTitle) return cat;
+  // قبلاً اگه categoryName هرجای عنوان (نه لزوماً اولش) بود، دست‌نخورده برمی‌گشت --
+  // ولی خودِ اسمِ محصول (دسته‌بندی) باید همیشه اول بیاد، نه هرجایی که کلمه‌به‌کلمه
+  // افتاده. برای همین همیشه به‌جلو prepend می‌کنیم و با dropRepeatedPhrases
+  // کپیِ قدیمی‌ای که وسط/آخرِ عنوان مونده حذف می‌شه (چون phrase تکراری‌ست)
+  if (translatedTitle.startsWith(cat)) return translatedTitle;
+  return dropRepeatedPhrases(`${cat} ${translatedTitle}`);
 }
 
 // نقطه‌ی ورود اصلی -- کش را چک می‌کند، و در صورت نبود، ترجمه می‌کند و ذخیره می‌کند.
@@ -280,8 +531,13 @@ export async function translateTrendyolTitle(originalTitle: string, brand?: stri
   return translated;
 }
 
-// برای batch fetch (لیست محصولات) -- همه رو موازی ترجمه می‌کند به‌جای یکی‌یکی.
-// brand هر محصول (اگه معلوم باشه) از حذف‌شدن به‌عنوان کلمه‌ی ناشناخته مستثنی می‌شود
+// برای batch fetch (لیست محصولات) -- قبلاً برای هر عنوانِ یکتا یه findUnique
+// جدا (و گاهی upsert جدا) می‌زد؛ یه صفحه‌ی گریدِ ۲۴-۴۸ تایی یعنی همون تعداد
+// رفت‌وبرگشتِ جداگانه به DB. الان دقیقاً همون بهینه‌سازیِ check-title اینجا هم
+// اعمال شده: یه findMany برای همه‌ی عنوان‌های یکتا (به‌جای N تا findUnique)،
+// و بعد فقط برای عنوان‌هایی که واقعاً کش نداشتن/الگوریتمشون کهنه بود
+// (معمولاً بعدِ گرم‌شدنِ کش، صفر یا خیلی کمه) دیکشنری یه‌بار لود و upsertها
+// توی یه تراکنشِ واحد اجرا می‌شن
 export async function translateTrendyolTitles(
   items: { title: string; brand?: string | null }[]
 ): Promise<Map<string, string>> {
@@ -289,11 +545,61 @@ export async function translateTrendyolTitles(
   for (const item of items) {
     if (item.title && !uniqueByTitle.has(item.title)) uniqueByTitle.set(item.title, item.brand);
   }
-  const results = await Promise.all(
-    Array.from(uniqueByTitle.entries()).map(
-      async ([title, brand]) => [title, await translateTrendyolTitle(title, brand)] as const
-    )
-  );
+  const titles = Array.from(uniqueByTitle.keys());
+  if (titles.length === 0) return new Map();
+
+  const cachedRows = await prisma.trendyolTitleCache.findMany({
+    where: { originalTitle: { in: titles } },
+    select: { originalTitle: true, translatedTitle: true, algorithmVersion: true },
+  });
+  const cachedByTitle = new Map(cachedRows.map((r) => [r.originalTitle, r]));
+
+  const results = new Map<string, string>();
+  const toUpsert: { originalTitle: string; translatedTitle: string; unknownTerms: string | null }[] = [];
+  let dictionary: DictionaryEntry[] | null = null;
+
+  for (const title of titles) {
+    const cached = cachedByTitle.get(title);
+    if (cached && cached.algorithmVersion === TITLE_ALGO_VERSION) {
+      results.set(title, cached.translatedTitle);
+      continue;
+    }
+    dictionary ??= await loadDictionary();
+    const { translated, unknownTerms } = tokenizeAndTranslate(title, dictionary, uniqueByTitle.get(title));
+    results.set(title, translated);
+    toUpsert.push({
+      originalTitle: title,
+      translatedTitle: translated,
+      unknownTerms: unknownTerms.length > 0 ? unknownTerms.join("|") : null,
+    });
+  }
+
+  // ذخیره‌ی نتیجه‌ها در کش -- best-effort، اگه ذخیره خطا داد نباید کل ترجمه رو
+  // بترکونه. توی یه تراکنشِ واحد (نه N تا await جدا) که رفت‌وبرگشتِ کمتری داشته باشه
+  if (toUpsert.length > 0) {
+    try {
+      await prisma.$transaction(
+        toUpsert.map((row) =>
+          prisma.trendyolTitleCache.upsert({
+            where: { originalTitle: row.originalTitle },
+            create: {
+              originalTitle: row.originalTitle,
+              translatedTitle: row.translatedTitle,
+              unknownTerms: row.unknownTerms,
+              algorithmVersion: TITLE_ALGO_VERSION,
+            },
+            update: {
+              translatedTitle: row.translatedTitle,
+              unknownTerms: row.unknownTerms,
+              algorithmVersion: TITLE_ALGO_VERSION,
+            },
+          })
+        )
+      );
+    } catch (err) {
+      console.error("خطا در ذخیره‌ی کشِ ترجمه‌ی عنوان‌های ترندیول:", err);
+    }
+  }
 
   // بعد از هر batch، یه چک سبک برای کلمات ناشناخته‌ی پرتکرار -- notifyAdminsOnce
   // خودش dedupe می‌کنه (۲۴ ساعته) پس صدا زدنش هر بار مشکلی نداره
@@ -301,7 +607,7 @@ export async function translateTrendyolTitles(
     console.error("خطا در بررسی کلمات ناشناخته‌ی پرتکرار:", err);
   });
 
-  return new Map(results);
+  return results;
 }
 
 // حداقل تعداد تکرار یه کلمه‌ی ناشناخته توی عنوان‌های کش‌شده تا لازم بشه به
@@ -358,6 +664,24 @@ async function checkUnknownTermsThreshold() {
 // دست‌نخورده نگه می‌داره و کلمه‌ی ناشناخته رو به‌جای حذف، عیناً (با املای اصلی)
 // برمی‌گردونه. کش هم نداره -- عبارت‌ها کوتاهن، دوباره‌محاسبه‌شون ارزون‌تر از
 // قاطی‌کردن با کش/نسخه‌بندی عنوان‌های کامله (TITLE_ALGO_VERSION)
+// «X Tipi»/«X Türü» (نوعِ X)، «X Detaylı»/«X Detayı» (جزئیاتِ X)، «X Materyali»
+// (جنسِ X) -- همه یه الگوی مشترکِ دستوریِ ترکی دارن (اضافه‌ی ملکی: «X'in Y'si» =
+// «Y ـِ X»)، که توش کلمه‌ی مشخص‌کننده (Tipi/Türü/Detaylı/Materyali) همیشه بعد
+// از اسمِ اصلی (X) میاد، ولی فارسی برعکسه. ترجمه‌ی کلمه‌به‌کلمه‌ی این تابع (که
+// عمداً ترتیب رو حفظ می‌کنه، برخلافِ tokenizeAndTranslate) بدونِ این استثنا،
+// «X نوع»/«X جزئیات»/«X جنس» غلط تولید می‌کرد. هر کلمه‌ی ترکیِ دیگه‌ای که همین
+// الگوی اضافه‌ی ملکی رو داشت، به همین Set اضافه بشه
+const REVERSED_SUFFIX_WORDS = new Set([
+  "tipi",
+  "turu",
+  "detayli",
+  "detayi",
+  "materyali",
+  "suresi",
+  "cesidi",
+  "uzunlugu",
+]);
+
 export async function translateTrendyolAttributeText(text: string): Promise<string> {
   if (!text) return text;
 
@@ -384,6 +708,22 @@ export async function translateTrendyolAttributeText(text: string): Promise<stri
     if (matched) continue;
 
     const normalized = normalizedWords[i];
+
+    // اگه یه ردیفِ دقیق‌ترِ دوکلمه‌ای (مثلِ «sanayi tipi fan» -> «پنکه صنعتی»)
+    // توی حلقه‌ی بالا این ترکیب رو نگرفته باشه، این fallbackِ عمومی جای X و
+    // tipi/türü/detaylı/detayı رو برای *هر* X ممکن عوض می‌کنه -- به‌جای این‌که
+    // برای هر ترکیبِ خاصی مجبور باشیم توی دیکشنری یه ردیفِ جداگانه دستی اضافه کنیم
+    if (i + 1 < rawWords.length && REVERSED_SUFFIX_WORDS.has(normalizedWords[i + 1])) {
+      const suffixEntry = dictionary.find((e) => e.termTr === normalizedWords[i + 1]);
+      const currentEntry = dictionary.find((e) => e.termTr === normalized);
+      output.push(
+        suffixEntry ? suffixEntry.termFa : rawWords[i + 1],
+        currentEntry ? currentEntry.termFa : rawWords[i]
+      );
+      i += 2;
+      continue;
+    }
+
     const singleEntry = dictionary.find((e) => e.termTr === normalized);
     if (singleEntry) {
       output.push(singleEntry.termFa);
@@ -397,7 +737,16 @@ export async function translateTrendyolAttributeText(text: string): Promise<stri
     i++;
   }
 
-  return toPersianDigits(output.join(" "));
+  // بعضی مقادیرِ ویژگی (مثلِ «دستورِ شست‌وشو») به‌جای متن، یه URLِ عکسِ آیکون
+  // خامِ ترندیول هستن (مثلاً .../ty375/.../do_not_wash.jpg) -- toPersianDigits
+  // اگه بدونِ حفاظت رو کلِ رشته اجرا بشه، ارقامِ داخلِ خودِ URL رو هم فارسی
+  // می‌کنه (ty375 -> tyِ۳۷۵) و لینکِ عکس رو می‌شکنه. اینجا فقط بخش‌های غیرِ URL
+  // رقم‌هاشون فارسی می‌شن، خودِ URL دست‌نخورده می‌مونه
+  return output
+    .join(" ")
+    .split(/(https?:\/\/\S+)/)
+    .map((part) => (/^https?:\/\//.test(part) ? part : toPersianDigits(part)))
+    .join("");
 }
 
 function translateCompoundAttributeToken(rawWord: string, dictionary: DictionaryEntry[]): string {
@@ -483,14 +832,21 @@ function nearestSingleWordMatch(word: string, dictionary: ReverseDictionaryEntry
  * ندارد، چون جست‌وجوی ترندیول فقط ترکی/لاتین می‌فهمد و یه کلمه‌ی فارسی وسط
  * query فقط نتیجه رو خراب می‌کند.
  */
-export async function translateSearchQueryToTurkish(faQuery: string): Promise<string> {
+export async function translateSearchQueryToTurkish(
+  faQuery: string
+): Promise<{ translated: string; droppedWords: string[] }> {
   const normalized = normalizePersianForSearch(faQuery);
-  if (!normalized) return faQuery;
+  if (!normalized) return { translated: faQuery, droppedWords: [] };
 
   const dictionary = await loadReverseDictionary();
   const words = normalized.split(" ").filter(Boolean);
 
   const result: string[] = [];
+  // کلماتی که حتی نزدیک‌ترین معادلشون هم پیدا نشد و کلاً از عبارت حذف شدن --
+  // برای اینکه هرجا صدا زده می‌شه (مثلاً ابزارِ ادمینِ پوستر) بشه به کاربر
+  // نشون داد «این کلمه رو نفهمیدم، جستجو بدونِ اون انجام شد»، نه اینکه بی‌صدا
+  // معنیِ کل عبارت عوض بشه (مثلاً «شومیز سبز» فقط به «سبز» تبدیل بشه)
+  const droppedWords: string[] = [];
   let i = 0;
   while (i < words.length) {
     let matched = false;
@@ -506,13 +862,19 @@ export async function translateSearchQueryToTurkish(faQuery: string): Promise<st
     }
     if (matched) continue;
     const nearestTr = nearestSingleWordMatch(words[i], dictionary);
-    if (nearestTr) result.push(nearestTr);
+    if (nearestTr) {
+      result.push(nearestTr);
+    } else {
+      droppedWords.push(words[i]);
+    }
     i++;
   }
 
   // اگه حتی یه کلمه هم (نه دقیق، نه نزدیک‌ترین) ترجمه نشد، بهتره عبارت اصلی
   // فارسی رو برگردونیم تا این‌که یه q= کاملاً خالی بسازیم (که یعنی «همه‌ی
   // محصولات»، نه نتیجه‌ی این جست‌وجوی خاص)
-  return result.length > 0 ? result.join(" ") : faQuery;
+  return result.length > 0
+    ? { translated: result.join(" "), droppedWords }
+    : { translated: faQuery, droppedWords };
 }
 

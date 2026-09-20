@@ -30,7 +30,7 @@ export function CategoryDiscountShowcase({
 
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
-      <h2 className="text-xl font-bold mb-6">کشف تخفیف‌ها بر اساس دسته‌بندی</h2>
+      <h2 className="text-xl font-bold mb-6">دسته‌بندی‌های تخفیف‌دار</h2>
       <HorizontalScroller>
         {cards.map(({ category, image, color }) => (
           <Link

@@ -6,6 +6,8 @@ import { ProfileEditForm } from "@/components/ProfileEditForm";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { NotificationSettingsForm } from "@/components/NotificationSettingsForm";
 import { EmailVerificationBanner } from "@/components/EmailVerificationBanner";
+import { LogoutButton } from "@/components/LogoutButton";
+import { LoyaltyTierBadge } from "@/components/LoyaltyTierBadge";
 
 export default async function ProfilePage() {
   const session = await auth();
@@ -18,11 +20,16 @@ export default async function ProfilePage() {
   });
   if (!user) redirect("/auth/login");
 
+  // توی PWAِ نصب‌شده (بدونِ نوارِ آدرس) هیچ راهِ دیگه‌ای برای رسیدن به پنلِ
+  // ادمین/کارمندان نیست -- این لینک‌ها فقط برای همون نقش‌ها نشون داده می‌شن
   const quickLinks = [
+    ...(user.role === "ADMIN" ? [{ href: "/admin", icon: "🛠️", label: "پنل ادمین", bg: "#fdf0e6" }] : []),
+    ...(user.role === "STAFF" ? [{ href: "/staff", icon: "🛠️", label: "پرتال کارمندان", bg: "#fdf0e6" }] : []),
     { href: "/orders", icon: "📦", label: "سفارش‌های من", bg: "#fdeaf1" },
     { href: "/wallet", icon: "👛", label: "کیف پول", bg: "#e6f7ef" },
     { href: "/addresses", icon: "📍", label: "آدرس‌های من", bg: "#eaf1fd" },
-    { href: "/loyalty", icon: "🎁", label: "کارت هدیه و وفاداری", bg: "#fff4e0" },
+    { href: "/loyalty", icon: "🏆", label: "باشگاه مشتریان", bg: "#fff4e0" },
+    { href: "/coupons", icon: "🎟️", label: "کوپن‌های من", bg: "#e0f2fe" },
     { href: "/referral", icon: "🤝", label: "کد معرفی", bg: "#f5eaff" },
     { href: "/messages", icon: "💬", label: "پیام‌ها", bg: "#fdeaea" },
     { href: "/profile/security", icon: "🔐", label: "امنیت و دستگاه‌ها", bg: "#f1eafd" },
@@ -30,7 +37,10 @@ export default async function ProfilePage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-12 space-y-6">
-      <h1 className="text-xl font-bold">پروفایل من</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-bold">پروفایل من</h1>
+        <LoyaltyTierBadge variant="full" />
+      </div>
 
       {!user.emailVerified && user.password && <EmailVerificationBanner />}
 
@@ -75,6 +85,8 @@ export default async function ProfilePage() {
           چون با گوگل وارد شدی، این حساب رمز عبور جداگانه‌ای نداره.
         </p>
       )}
+
+      <LogoutButton />
     </div>
   );
 }

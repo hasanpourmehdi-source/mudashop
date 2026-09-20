@@ -39,7 +39,7 @@ export default function RecentlyViewedPage() {
                     />
                   )}
                   {p.discount > 0 && (
-                    <span className="ribbon-tag absolute top-2 left-0 font-bold">{p.discount}%-</span>
+                    <span className="ribbon-tag absolute top-2 left-0 font-bold">{p.discount}%</span>
                   )}
                 </div>
                 <div className="p-3 flex flex-col flex-1">
@@ -60,7 +60,7 @@ export default function RecentlyViewedPage() {
                 type="button"
                 onClick={() => remove(p.id)}
                 aria-label="حذف از اخیراً دیده‌اید"
-                className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border cut-line text-[var(--color-muted)] text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-[var(--color-wine)] transition-opacity"
+                className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border cut-line text-[var(--color-muted)] text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-[var(--color-wine)] transition-opacity"
               >
                 ✕
               </button>

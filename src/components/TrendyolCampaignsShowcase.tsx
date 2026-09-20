@@ -18,7 +18,7 @@ export function TrendyolCampaignsShowcase({
   return (
     <section className="max-w-[1600px] mx-auto px-4 py-8 border-b cut-line">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">🏷️ کمپین‌های ترندیول</h2>
+        <h2 className="text-xl font-bold">🏷️ جشنواره‌های خارجی</h2>
         <Link
           href="/campaigns"
           className="text-sm font-medium text-[var(--color-wine)] hover:underline flex items-center gap-1"
@@ -30,13 +30,20 @@ export function TrendyolCampaignsShowcase({
         {campaigns.map((c) => (
           <Link
             key={`${c.siteSlug}-${c.campaignId}`}
-            href={`/marketplaces/${c.siteSlug}/campaign/${c.campaignId}?text=${encodeURIComponent(c.text)}`}
+            href={`/marketplaces/${c.siteSlug}/campaign/${c.campaignId}?text=${encodeURIComponent(c.text)}${
+              c.rawNameTr ? `&rawNameTr=${encodeURIComponent(c.rawNameTr)}` : ""
+            }`}
             className="shrink-0 w-40 sm:w-48 rounded-xl overflow-hidden bg-white border cut-line hover:border-[var(--color-wine)] transition-colors"
           >
-            <div className="relative aspect-square bg-[var(--color-linen-dim)]">
-              {c.sampleImage && (
+            <div className="relative bg-[var(--color-linen-dim)]">
+              {c.sampleImage ? (
+                // طبقِ درخواستِ صریح: عکس نباید به یه قاب مربعی برش بخوره -- همون
+                // نسبتِ ابعادِ واقعیِ خودِ عکس نگه داشته می‌شه (نه object-cover رویِ
+                // یه کانتینرِ مربعیِ ثابت)
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={c.sampleImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                <img src={c.sampleImage} alt="" className="w-full h-auto block" />
+              ) : (
+                <div className="aspect-square" />
               )}
               <span className="absolute top-1.5 right-1.5 text-[10px] font-bold bg-black/60 text-white rounded-full px-2 py-0.5">
                 {c.siteLabel}

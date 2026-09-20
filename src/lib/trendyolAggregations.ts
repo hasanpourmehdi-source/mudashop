@@ -62,6 +62,16 @@ function buildAggregationsUrl(params: { wc?: string; wg?: string; wb?: string },
 // trendyol-milla.com هم کوکی‌های session معتبر داره (هرکدوم دامنه‌ی جدایی
 // دارن، کوکی‌های session هم مثل JWT/csrf-secret دامنه‌محورن، نه کوکی‌های
 // کشور/زبانِ ساده‌ای که seedTrendyolCookies روی هر دو ست می‌کنه)
+// طبقِ گزارشِ صریح («خطا در ارتباط با سرور» بعدِ چند ده ثانیه معطلی): هیچ‌کدوم
+// از درخواست‌های این فایل timeoutِ مشخصی نداشتن -- اگه کلادفلر به‌جایِ ردِ سریع
+// (403/503)، کانکشن رو فقط بی‌صدا معلق نگه داره، got تا ابد منتظر می‌مونه و
+// تنها چیزی که بالاخره متوقفش می‌کنه، کشتنِ کاملِ فانکشنِ Vercel بعدِ ۶۰ ثانیه‌ست
+// (که یه صفحه‌ی خطای غیرِJSON برمی‌گردونه -- برای همینه که فرانت‌اند فقط پیغامِ
+// عمومیِ «خطا در ارتباط با سرور» رو می‌بینه، نه خطای واقعی). با یه timeoutِ
+// معقول (۱۲ ثانیه)، حتی بدترین حالت (گرم‌کردن+اصلی+گرم‌کردنِ دوباره+retry)
+// خیلی زودتر از ۶۰ ثانیه شکست می‌خوره و یه خطای JSONِ واقعی برمی‌گردونه
+const REQUEST_TIMEOUT_MS = 12000;
+
 const warmedUpDomains = new Set<string>();
 async function ensureWarmedUp(rootDomain: string): Promise<void> {
   if (warmedUpDomains.has(rootDomain)) return;
@@ -71,6 +81,7 @@ async function ensureWarmedUp(rootDomain: string): Promise<void> {
       headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
       cookieJar: trendyolCookieJar,
       throwHttpErrors: false,
+      timeout: { request: REQUEST_TIMEOUT_MS },
     });
     warmedUpDomains.add(rootDomain);
   } catch {
@@ -93,25 +104,8 @@ export async function fetchTrendyolAggregations(
   await ensureWarmedUp(rootDomain);
 
   const url = buildAggregationsUrl(params, site);
-  const res = await gotScraping({
-    url,
-    headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
-    cookieJar: trendyolCookieJar,
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      origin,
-    },
-    throwHttpErrors: false,
-    responseType: "json",
-  });
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    // اگه با کوکی گرم هم بازم رد شد (معمولاً یعنی __cf_bm کهنه/مسموم شده)،
-    // کل jar رو ریست می‌کنیم و دوباره گرمش می‌کنیم -- فقط یه بار retry
-    resetTrendyolCookieJar();
-    warmedUpDomains.delete(rootDomain);
-    await ensureWarmedUp(rootDomain);
-    const retryRes = await gotScraping({
+  const requestOnce = () =>
+    gotScraping({
       url,
       headerGeneratorOptions: HEADER_GENERATOR_OPTIONS,
       cookieJar: trendyolCookieJar,
@@ -122,7 +116,25 @@ export async function fetchTrendyolAggregations(
       },
       throwHttpErrors: false,
       responseType: "json",
+      timeout: { request: REQUEST_TIMEOUT_MS },
     });
+
+  // نه فقط کدِ وضعیتِ بد (403/503)، بلکه timeoutِ خودِ got (اتصالی که کلادفلر
+  // بی‌صدا معلق نگه داشته) هم باید یه بار retry بشه، نه این‌که مستقیم بترکه --
+  // برای همین کلِ تلاشِ اول توی try/catch است، نه فقط چکِ statusCode
+  let res: Awaited<ReturnType<typeof requestOnce>>;
+  try {
+    res = await requestOnce();
+  } catch {
+    res = null as unknown as Awaited<ReturnType<typeof requestOnce>>;
+  }
+  if (!res || res.statusCode < 200 || res.statusCode >= 300) {
+    // اگه با کوکی گرم هم بازم رد شد (معمولاً یعنی __cf_bm کهنه/مسموم شده)،
+    // کل jar رو ریست می‌کنیم و دوباره گرمش می‌کنیم -- فقط یه بار retry
+    resetTrendyolCookieJar();
+    warmedUpDomains.delete(rootDomain);
+    await ensureWarmedUp(rootDomain);
+    const retryRes = await requestOnce();
     if (retryRes.statusCode < 200 || retryRes.statusCode >= 300) {
       throw buildTrendyolFetchError("دریافت فیلترهای ترندیول", retryRes, true);
     }

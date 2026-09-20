@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { applyWalletTransaction } from "@/lib/wallet";
+import { SITE_SETTING_KEYS, getSiteSetting } from "@/lib/siteSettings";
 
 // ================= کارت هدیه و وفاداری =================
 
@@ -109,10 +110,7 @@ export async function redeemGiftCard(userId: string, code: string): Promise<numb
 // درصد کسراژ وفاداری از تنظیمات سایت (پیش‌فرض ۲٪) -- بدون خطا، برای استفاده در
 // ادمین هم قابل تغییر است (SiteSetting با کلید LOYALTY_CASHBACK_PERCENT)
 export async function getLoyaltyCashbackPercent(): Promise<number> {
-  const setting = await prisma.siteSetting.findUnique({
-    where: { key: "LOYALTY_CASHBACK_PERCENT" },
-  });
-  const value = Number(setting?.value);
+  const value = Number(await getSiteSetting(SITE_SETTING_KEYS.LOYALTY_CASHBACK_PERCENT));
   if (!Number.isFinite(value) || value < 0 || value > 100) return 2;
   return value;
 }

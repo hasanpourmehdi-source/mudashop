@@ -10,6 +10,10 @@ import { SpecificationsEditor, SpecRow } from "@/components/SpecificationsEditor
 import { ImageListEditor } from "@/components/ImageListEditor";
 import { ColorImageMapper } from "@/components/ColorImageMapper";
 import { CurrencyInput } from "@/components/CurrencyInput";
+import { VariantMeasurementsEditor } from "@/components/VariantMeasurementsEditor";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { ImageUploadField } from "@/components/ImageUploadField";
+import { parseVariantMeasurements, type VariantMeasurement } from "@/lib/productMeasurements";
 
 type AttributeValue = { id: string; value: string };
 type Attribute = {
@@ -31,6 +35,7 @@ type ExistingVariant = {
   stock: number;
   priceDiff: number;
   values: { attribute: string; value: string }[];
+  measurements: VariantMeasurement[];
 };
 type Product = {
   id: string;
@@ -44,6 +49,8 @@ type Product = {
   colorImages: string;
   fastShipping: boolean;
   isReturnable: boolean;
+  defectNote: string | null;
+  defectImage: string | null;
   careInstructions: string | null;
   videoUrl: string | null;
   isActive: boolean;
@@ -137,6 +144,8 @@ export default function AdminProductsPage() {
   const [colorImages, setColorImages] = useState<Record<string, string[]>>({});
   const [fastShipping, setFastShipping] = useState(false);
   const [isReturnable, setIsReturnable] = useState(true);
+  const [defectNote, setDefectNote] = useState("");
+  const [defectImage, setDefectImage] = useState("");
   const [careInstructions, setCareInstructions] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [uploadingVideo, setUploadingVideo] = useState(false);
@@ -168,6 +177,8 @@ export default function AdminProductsPage() {
   const [editColorImages, setEditColorImages] = useState<Record<string, string[]>>({});
   const [editFastShipping, setEditFastShipping] = useState(false);
   const [editIsReturnable, setEditIsReturnable] = useState(true);
+  const [editDefectNote, setEditDefectNote] = useState("");
+  const [editDefectImage, setEditDefectImage] = useState("");
   const [editCareInstructions, setEditCareInstructions] = useState("");
   const [editVideoUrl, setEditVideoUrl] = useState("");
   const [editUploadingVideo, setEditUploadingVideo] = useState(false);
@@ -189,7 +200,20 @@ export default function AdminProductsPage() {
       fetch("/api/admin/categories"),
       fetch("/api/admin/brands"),
     ]);
-    if (pRes.ok) setProducts(await pRes.json());
+    if (pRes.ok) {
+      // measurements از سرور یه JSON-استرینگه (مثلِ images/colorImages)، ولی
+      // برخلافِ اون‌ها که هر جا لازم شد جدا parse می‌شن، این‌جا همون اول parse
+      // می‌کنیم چون هم توی لیست هم توی فرمِ ویرایش، به شکلِ آرایه‌ی قابل‌ویرایش لازمه
+      const raw: (Omit<Product, "variants"> & {
+        variants: (Omit<ExistingVariant, "measurements"> & { measurements: string | null })[];
+      })[] = await pRes.json();
+      setProducts(
+        raw.map((p) => ({
+          ...p,
+          variants: p.variants.map((v) => ({ ...v, measurements: parseVariantMeasurements(v.measurements) })),
+        }))
+      );
+    }
     if (cRes.ok) setCategories(await cRes.json());
     if (bRes.ok) setBrands(await bRes.json());
   }
@@ -254,6 +278,8 @@ export default function AdminProductsPage() {
         colorImages,
         fastShipping,
         isReturnable,
+        defectNote: defectNote || undefined,
+        defectImage: defectImage || undefined,
         careInstructions: careInstructions || undefined,
         videoUrl: videoUrl || undefined,
         categoryId: form.categoryId,
@@ -285,6 +311,8 @@ export default function AdminProductsPage() {
     setColorImages({});
     setFastShipping(false);
     setIsReturnable(true);
+    setDefectNote("");
+    setDefectImage("");
     setCareInstructions("");
     setVideoUrl("");
     setVariantBuilderKey((k) => k + 1);
@@ -311,6 +339,8 @@ export default function AdminProductsPage() {
     setEditColorImages(parseColorImagesJson(p.colorImages ?? "{}"));
     setEditFastShipping(p.fastShipping);
     setEditIsReturnable(p.isReturnable);
+    setEditDefectNote(p.defectNote ?? "");
+    setEditDefectImage(p.defectImage ?? "");
     setEditCareInstructions(p.careInstructions ?? "");
     setEditVideoUrl(p.videoUrl ?? "");
     setEditExistingVariants(p.variants);
@@ -333,6 +363,12 @@ export default function AdminProductsPage() {
   ) {
     setEditExistingVariants((prev) =>
       prev.map((v) => (v.id === variantId ? { ...v, [field]: value } : v))
+    );
+  }
+
+  function updateExistingVariantMeasurements(variantId: string, measurements: VariantMeasurement[]) {
+    setEditExistingVariants((prev) =>
+      prev.map((v) => (v.id === variantId ? { ...v, measurements } : v))
     );
   }
 
@@ -376,14 +412,16 @@ export default function AdminProductsPage() {
     const matchedById = new Map(matchedExistingUpdates.map((v) => [v.existingVariantId!, v]));
     const allTrackedExisting = editExistingVariants.map((v) => {
       const override = matchedById.get(v.id);
-      return override ? { id: v.id, stock: override.stock, priceDiff: override.priceDiff } : v;
+      // override از فرمِ «ترکیب جدید که در واقع با یکی موجود یکی درومد» میاد -- این
+      // فرم اصلاً مفهومِ measurements نداره، پس اندازه‌ی قبلیِ ترکیب دست‌نخورده می‌مونه
+      return override ? { id: v.id, stock: override.stock, priceDiff: override.priceDiff, measurements: v.measurements } : v;
     });
 
     // ترکیب‌هایی که موجودیشون به صفر رسیده، به‌جای آپدیت، حذف می‌شن (عدم وجود = عدم موجودی)
     const zeroedOutIds = allTrackedExisting.filter((v) => v.stock <= 0).map((v) => v.id);
     const variantUpdatesPayload = allTrackedExisting
       .filter((v) => v.stock > 0)
-      .map((v) => ({ id: v.id, stock: v.stock, priceDiff: v.priceDiff }));
+      .map((v) => ({ id: v.id, stock: v.stock, priceDiff: v.priceDiff, measurements: v.measurements }));
 
     const res = await fetch(`/api/admin/products/${id}`, {
       method: "PUT",
@@ -398,6 +436,8 @@ export default function AdminProductsPage() {
         colorImages: editColorImages,
         fastShipping: editFastShipping,
         isReturnable: editIsReturnable,
+        defectNote: editDefectNote,
+        defectImage: editDefectImage,
         careInstructions: editCareInstructions,
         videoUrl: editVideoUrl,
         categoryId: editForm.categoryId,
@@ -475,12 +515,10 @@ editingId === p.id ? (
                       invalid={editImagesError}
                     />
                   </div>
-                  <textarea
+                  <RichTextEditor
                     value={editForm.description}
-                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                    onChange={(html) => setEditForm({ ...editForm, description: html })}
                     placeholder="توضیحات"
-                    required
-                    className="border cut-line rounded-lg px-3 py-1.5 text-sm sm:col-span-2 min-h-20"
                   />
                 </div>
                 <p className="text-[10px] text-[var(--color-muted)]">
@@ -515,6 +553,10 @@ editingId === p.id ? (
                             allowNegative
                             placeholder="اختلاف قیمت"
                             className="w-24 border cut-line rounded-lg px-2 py-1 text-xs"
+                          />
+                          <VariantMeasurementsEditor
+                            measurements={v.measurements}
+                            onChange={(m) => updateExistingVariantMeasurements(v.id, m)}
                           />
                           <button
                             type="button"
@@ -593,6 +635,18 @@ editingId === p.id ? (
                   />
                   ↩️ قابل مرجوع (اگه تیک برداری، این محصول از قابلیتِ مرجوعیِ سراسری مستثنی می‌شه)
                 </label>
+
+                <div className="border cut-line rounded-lg p-3 space-y-2 bg-[var(--color-linen-dim)]">
+                  <label className="text-xs font-medium block">⚠️ ایراد دار (اختیاری)</label>
+                  <textarea
+                    value={editDefectNote}
+                    onChange={(e) => setEditDefectNote(e.target.value)}
+                    placeholder="مثلاً: این محصول شامل ایراد دوخت آستین می‌باشد."
+                    rows={2}
+                    className="w-full border cut-line rounded-lg px-2 py-1.5 text-xs bg-white"
+                  />
+                  <ImageUploadField value={editDefectImage} onChange={setEditDefectImage} />
+                </div>
 
                 <div>
                   <label className="text-xs font-medium block mb-1">نحوه مصرف / نگهداری (اختیاری)</label>
@@ -813,12 +867,10 @@ editingId === p.id ? (
               invalid={imagesError}
             />
           </div>
-          <textarea
-            placeholder="توضیحات"
-            required
+          <RichTextEditor
             value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="border cut-line rounded-lg px-3 py-2 bg-white sm:col-span-2 min-h-24"
+            onChange={(html) => setForm({ ...form, description: html })}
+            placeholder="توضیحات"
           />
 
           {form.categoryId &&
@@ -878,6 +930,23 @@ editingId === p.id ? (
             />
             ↩️ قابل مرجوع (اگه تیک برداری، این محصول از قابلیتِ مرجوعیِ سراسری مستثنی می‌شه)
           </label>
+
+          <div className="sm:col-span-2 border cut-line rounded-lg p-3 space-y-2 bg-[var(--color-linen-dim)]">
+            <label className="text-sm font-medium block">⚠️ ایراد دار (اختیاری)</label>
+            <p className="text-[11px] text-[var(--color-muted)]">
+              اگه این محصول نقصِ جزئی داره (مثلاً ایرادِ دوخت) و می‌خوای شفاف و ارزون‌تر بفروشیش، این
+              دو تا رو پر کن -- بجِ «ایراد دار» + توضیحِ نقص روی صفحه‌ی محصول نشون داده می‌شه. حتماً
+              «قابل مرجوع» رو هم بالا خاموش کن.
+            </p>
+            <textarea
+              value={defectNote}
+              onChange={(e) => setDefectNote(e.target.value)}
+              placeholder="مثلاً: این محصول شامل ایراد دوخت آستین می‌باشد."
+              rows={2}
+              className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+            />
+            <ImageUploadField value={defectImage} onChange={setDefectImage} />
+          </div>
 
           <div className="sm:col-span-2">
             <label className="text-sm font-medium block mb-1">نحوه مصرف / نگهداری (اختیاری)</label>

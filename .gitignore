@@ -47,3 +47,6 @@ prisma/*.db-journal
 # uploaded user content (فیش بانکی/عکس نظرات) -- نباید وارد تاریخچه بشن
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+.vercel
+.env*

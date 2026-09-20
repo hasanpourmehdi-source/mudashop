@@ -27,6 +27,68 @@ const CSP = [
   "form-action 'self'",
 ].join("; ");
 
+// قبلاً این‌جا لیستِ ۳۰تاییِ همه‌ی روت‌هایی بود که (مستقیم/غیرمستقیم) به
+// fetchTrendyolPageViaBrowser می‌رسیدن (که به‌خاطرِ matcherِ contains:true
+// زیر، واقعاً ۶۶ تا روت/API رو می‌گرفت) -- هرکدوم جدا-جدا باندلِ Playwright+
+// @sparticuz/chromium (~۸۶ مگابایت) رو حمل می‌کردن. با ۵ دیپلویِ نگه‌داشته‌شده،
+// این دوباره سهمیه‌ی Function Storage ورسل (۱۰ گیگ) رو پُر کرد (۲۰۲۶/۰۹/۰۹).
+// فیکسِ ریشه‌ای: خودِ اجرای Playwright به یه روتِ داخلیِ تنها منتقل شد
+// (src/app/api/internal/trendyol-browser-fetch)؛ src/lib/trendyolBrowserFetch.ts
+// (که trendyol.ts/trendyolProductDetail.ts صداش می‌زنن) الان فقط یه فچِ داخلیِ
+// HTTP به همون روته -- پس دیگه هیچ روتِ دیگه‌ای این باندل رو نیاز نداره، فقط
+// همین یکی
+const TRENDYOL_BROWSER_FETCH_ROUTES = ["/api/internal/trendyol-browser-fetch"];
+
+const TRENDYOL_BROWSER_FETCH_FILE_GLOBS = [
+  "./scripts/trendyolBrowserFetchWorker.cjs",
+  "./node_modules/playwright-extra/**",
+  "./node_modules/playwright-core/**",
+  "./node_modules/puppeteer-extra-plugin-stealth/**",
+  "./node_modules/puppeteer-extra-plugin-user-preferences/**",
+  "./node_modules/puppeteer-extra-plugin-user-data-dir/**",
+  "./node_modules/puppeteer-extra-plugin/**",
+  "./node_modules/@sparticuz/chromium/**",
+  "./node_modules/end-of-stream/**",
+  "./node_modules/events-universal/**",
+  "./node_modules/fast-fifo/**",
+  "./node_modules/pump/**",
+  "./node_modules/streamx/**",
+  "./node_modules/tar-fs/**",
+  "./node_modules/tar-stream/**",
+  "./node_modules/text-decoder/**",
+  "./node_modules/arr-union/**",
+  "./node_modules/balanced-match/**",
+  "./node_modules/brace-expansion/**",
+  "./node_modules/clone-deep/**",
+  "./node_modules/concat-map/**",
+  "./node_modules/debug/**",
+  "./node_modules/deepmerge/**",
+  "./node_modules/for-in/**",
+  "./node_modules/for-own/**",
+  "./node_modules/fs-extra/**",
+  "./node_modules/fs.realpath/**",
+  "./node_modules/glob/**",
+  "./node_modules/graceful-fs/**",
+  "./node_modules/has-flag/**",
+  "./node_modules/inflight/**",
+  "./node_modules/inherits/**",
+  "./node_modules/is-buffer/**",
+  "./node_modules/is-plain-object/**",
+  "./node_modules/isobject/**",
+  "./node_modules/jsonfile/**",
+  "./node_modules/kind-of/**",
+  "./node_modules/lazy-cache/**",
+  "./node_modules/merge-deep/**",
+  "./node_modules/minimatch/**",
+  "./node_modules/ms/**",
+  "./node_modules/once/**",
+  "./node_modules/path-is-absolute/**",
+  "./node_modules/rimraf/**",
+  "./node_modules/shallow-clone/**",
+  "./node_modules/supports-color/**",
+  "./node_modules/wrappy/**",
+];
+
 const nextConfig: NextConfig = {
   // got-scraping (و وابسته‌ش header-generator) فایل‌های داده‌ی JSON رو با مسیر
   // نسبی به __dirname خودشون می‌خونن (مثل data_files/headers-order.json). اگه
@@ -40,6 +102,22 @@ const nextConfig: NextConfig = {
     "https-proxy-agent",
     "socks-proxy-agent",
   ],
+
+  // scripts/trendyolBrowserFetchWorker.cjs عمداً import مستقیم نمی‌شه (توضیح
+  // کامل توی src/app/api/internal/trendyol-browser-fetch/route.ts) -- به‌عنوان
+  // یه پروسه‌ی Node جدا (execFile) صدا زده می‌شه. چون هیچ‌جا مستقیم import
+  // نمی‌شه، ردیابیِ خودکارِ فایل‌های Next.js (output file tracing) این اسکریپت
+  // و وابستگی‌هاش (playwright-extra، stealth، @sparticuz/chromium) رو
+  // نمی‌بینه و روی Vercel deploy نمی‌کنه -- نتیجه‌ش «Cannot find module»
+  // موقعِ اجرای واقعیه. اینجا صریح می‌گیم این فایل‌ها هم شاملِ باندلِ تنها
+  // روتی بشن که واقعاً اجراش می‌کنه (TRENDYOL_BROWSER_FETCH_ROUTES بالا --
+  // فقط همون یه روتِ داخلی، نه هر روتی که فقط فراخوانیش می‌کنه). اگه fallback
+  // به‌هر دلیلی شکست بخوره، بی‌خطره: fetchTrendyolPageViaBrowser همیشه با
+  // .catch() صدا زده می‌شه (trendyol.ts) و نتیجه‌ش دقیقاً همون مسیرِ خطای
+  // از‌قبل‌موجود (throw/اعلانِ ادمین) رو ادامه می‌ده -- نه کرشِ ۵۰۰
+  outputFileTracingIncludes: Object.fromEntries(
+    TRENDYOL_BROWSER_FETCH_ROUTES.map((route) => [route, TRENDYOL_BROWSER_FETCH_FILE_GLOBS])
+  ),
 
   async headers() {
     return [

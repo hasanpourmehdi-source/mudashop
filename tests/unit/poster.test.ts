@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTrendyolInput,
+  cleanTrendyolUrl,
   isAllowedTrendyolUrl,
   extractContentIdFromSlugPath,
   buildTag,
@@ -15,6 +16,14 @@ import {
   CAPTION_BODY,
   BASE_HASHTAGS,
   toEnglishBrandName,
+  resolveShareTargetInput,
+  isCouponCodeCampaign,
+  extractTrendyolLinkFromText,
+  buildDefaultHashtagSelection,
+  MAX_TOTAL_HASHTAGS,
+  extractBasketDiscountPercent,
+  isTrendyolShortLink,
+  resolveTrendyolShortLink,
 } from "@/lib/poster";
 
 describe("parseTrendyolInput", () => {
@@ -36,6 +45,158 @@ describe("parseTrendyolInput", () => {
   it("ورودی خالی را رد می‌کند", () => {
     expect(parseTrendyolInput("")).toBeNull();
     expect(parseTrendyolInput("   ")).toBeNull();
+  });
+
+  it("لینکِ کوتاهِ ty.gl (اپِ موبایل ترندیول) را هم می‌پذیرد", () => {
+    const p = parseTrendyolInput("https://ty.gl/q76wlxaxro571");
+    expect(p).toEqual({ type: "url", url: "https://ty.gl/q76wlxaxro571", hostname: "ty.gl" });
+  });
+
+  it("پارامترهای ردیابیِ لینکِ اشتراک‌گذاری (utm_*/adjust_*/link_contentid) را پاک می‌کند، ولی boutiqueId/merchantId را نگه می‌دارد", () => {
+    const messy =
+      "https://www.trendyol.com/adidas/kk4297-response-runner-kosu-ve-yuruyus-ayakkabi-p-1166449185?boutiqueId=691106&merchantId=968&adjust_t=mk12x3o_m4o2h83&adjust_tracker_limit=999999999&utm_medium=product_free&link_contentid=1166449185&utm_campaign=1166449185&adjust_campaign=product_free&utm_source=share";
+    const p = parseTrendyolInput(messy);
+    expect(p).toEqual({
+      type: "url",
+      url: "https://www.trendyol.com/adidas/kk4297-response-runner-kosu-ve-yuruyus-ayakkabi-p-1166449185?boutiqueId=691106&merchantId=968",
+      hostname: "www.trendyol.com",
+    });
+  });
+});
+
+describe("cleanTrendyolUrl", () => {
+  it("پارامترهای ردیابی رو حذف می‌کند، بقیه رو دست‌نخورده نگه می‌دارد", () => {
+    expect(
+      cleanTrendyolUrl(
+        "https://www.trendyol.com/x-p123?boutiqueId=1&merchantId=2&utm_source=share&adjust_t=abc&link_contentid=123",
+      ),
+    ).toBe("https://www.trendyol.com/x-p123?boutiqueId=1&merchantId=2");
+  });
+
+  it("لینکِ بدونِ پارامترِ ردیابی رو دست‌نخورده برمی‌گرداند", () => {
+    const clean = "https://www.trendyol.com/x-p123?boutiqueId=1";
+    expect(cleanTrendyolUrl(clean)).toBe(clean);
+  });
+
+  it("ورودیِ نامعتبر رو بدونِ کرش عیناً برمی‌گرداند", () => {
+    expect(cleanTrendyolUrl("not a url")).toBe("not a url");
+  });
+});
+
+describe("isTrendyolShortLink", () => {
+  it("ty.gl را تشخیص می‌دهد", () => {
+    expect(isTrendyolShortLink("https://ty.gl/abc123")).toBe(true);
+  });
+
+  it("لینکِ عادی/دامنه‌ی دیگر را رد می‌کند", () => {
+    expect(isTrendyolShortLink("https://www.trendyol.com/x")).toBe(false);
+    expect(isTrendyolShortLink("not a url")).toBe(false);
+  });
+});
+
+describe("resolveTrendyolShortLink", () => {
+  it("وقتی لینکِ نهایی مستقیم صفحه‌ی محصوله، همونو برمی‌گردونه", async () => {
+    const fetchMock = async () =>
+      ({ url: "https://www.trendyol.com/brand/product-p123456789" }) as Response;
+    const original = global.fetch;
+    global.fetch = fetchMock as typeof fetch;
+    try {
+      const result = await resolveTrendyolShortLink("https://ty.gl/abc123");
+      expect(result).toBe("https://www.trendyol.com/brand/product-p123456789");
+    } finally {
+      global.fetch = original;
+    }
+  });
+
+  it("cbِ صفحه‌ی میانیِ select-country را دیکود و به لینکِ کامل تبدیل می‌کند", async () => {
+    const cb = encodeURIComponent(
+      "/springstore/kahve-ustu-krep-alti-saten-tek-omuz-abiye-p-983990949?boutiqueId=61&merchantId=115754",
+    );
+    const fetchMock = async () =>
+      ({ url: `https://www.trendyol.com/en/select-country?cb=${cb}` }) as Response;
+    const original = global.fetch;
+    global.fetch = fetchMock as typeof fetch;
+    try {
+      const result = await resolveTrendyolShortLink("https://ty.gl/abc123");
+      expect(result).toBe(
+        "https://www.trendyol.com/springstore/kahve-ustu-krep-alti-saten-tek-omuz-abiye-p-983990949?boutiqueId=61&merchantId=115754",
+      );
+    } finally {
+      global.fetch = original;
+    }
+  });
+
+  it("وقتی fetch شکست بخوره، null برمی‌گردونه", async () => {
+    const original = global.fetch;
+    global.fetch = (async () => {
+      throw new Error("network fail");
+    }) as typeof fetch;
+    try {
+      const result = await resolveTrendyolShortLink("https://ty.gl/abc123");
+      expect(result).toBeNull();
+    } finally {
+      global.fetch = original;
+    }
+  });
+});
+
+describe("resolveShareTargetInput", () => {
+  it("اگه input صریح باشه، بدونِ اعتبارسنجی همونو برمی‌گردونه", () => {
+    const params = new URLSearchParams({ input: "هرچیزی" });
+    expect(resolveShareTargetInput(params)).toBe("هرچیزی");
+  });
+
+  it("پارامترِ url که خودش لینکِ مجاز باشه رو می‌پذیره", () => {
+    const params = new URLSearchParams({ url: "https://www.trendyol.com/x-p123456" });
+    expect(resolveShareTargetInput(params)).toBe("https://www.trendyol.com/x-p123456");
+  });
+
+  it("لینک را از وسطِ متنِ اشتراک‌گذاری‌شده استخراج می‌کند", () => {
+    const params = new URLSearchParams({
+      text: "این لباسو ببین: https://www.trendyol.com/guess/man-to-p123456789?boutiqueId=1 نظرت چیه؟",
+    });
+    expect(resolveShareTargetInput(params)).toBe("https://www.trendyol.com/guess/man-to-p123456789?boutiqueId=1");
+  });
+
+  it("url غیرمجاز را نادیده می‌گیرد ولی سراغِ text می‌رود", () => {
+    const params = new URLSearchParams({
+      url: "https://evil.com/x",
+      text: "https://www.trendyol.com/x-p123456",
+    });
+    expect(resolveShareTargetInput(params)).toBe("https://www.trendyol.com/x-p123456");
+  });
+
+  it("وقتی هیچ‌کدام لینکِ ترندیول/میلا ندارند null برمی‌گرداند", () => {
+    const params = new URLSearchParams({ title: "سلام", text: "بدونِ لینک", url: "https://evil.com/x" });
+    expect(resolveShareTargetInput(params)).toBeNull();
+  });
+
+  it("وقتی هیچ پارامتری نیست null برمی‌گرداند", () => {
+    expect(resolveShareTargetInput(new URLSearchParams())).toBeNull();
+  });
+});
+
+describe("extractTrendyolLinkFromText", () => {
+  it("خودِ لینکِ تمیز را می‌پذیرد", () => {
+    expect(extractTrendyolLinkFromText("https://www.trendyol.com/x-p123456")).toBe(
+      "https://www.trendyol.com/x-p123456"
+    );
+  });
+
+  it("contentId عددیِ تنها را می‌پذیرد", () => {
+    expect(extractTrendyolLinkFromText("123456789")).toBe("123456789");
+  });
+
+  it("لینک را از وسطِ متنِ کپی‌شده از کلیپ‌بورد استخراج می‌کند", () => {
+    expect(
+      extractTrendyolLinkFromText("این لباسو ببین: https://www.trendyol.com/x-p123456 نظرت چیه؟")
+    ).toBe("https://www.trendyol.com/x-p123456");
+  });
+
+  it("متنِ بدونِ لینکِ مجاز null برمی‌گرداند", () => {
+    expect(extractTrendyolLinkFromText("سلام چطوری")).toBeNull();
+    expect(extractTrendyolLinkFromText("https://evil.com/x")).toBeNull();
+    expect(extractTrendyolLinkFromText("")).toBeNull();
   });
 });
 
@@ -71,7 +232,9 @@ describe("buildTag", () => {
 describe("buildTelegramNote", () => {
   it("تگ و لینک را می‌سازد", () => {
     const note = buildTelegramNote({ tag: "Guessمانتو123456", url: "https://www.trendyol.com/x-p1" });
-    expect(note).toBe("#Guessمانتو123456\nhttps://www.trendyol.com/x-p1");
+    // تگ با LRI/PDI ایزوله می‌شه تا توی کانتینرِ RTL (یا بعدِ کپی‌شدن توی
+    // تلگرام) جهتش برعکس نشه -- src/lib/poster.ts::ltrIsolate
+    expect(note).toBe("⁦#Guessمانتو123456⁩\nhttps://www.trendyol.com/x-p1");
   });
 });
 
@@ -88,6 +251,18 @@ describe("pickKeyAttributes", () => {
 
   it("با ورودی خالی آرایه خالی می‌دهد", () => {
     expect(pickKeyAttributes([], 3)).toEqual([]);
+  });
+
+  it("دو ویژگیِ مختلف با مقدارِ عینِ‌هم را تکراری حساب می‌کند (فقط یکی برداشته می‌شود)", () => {
+    const attrs = [
+      { name: "جنسِ رویه", value: "مصنوعی چرم" },
+      { name: "جنسِ آستر", value: "مصنوعی چرم" },
+      { name: "یقه", value: "گرد" },
+    ];
+    const picked = pickKeyAttributes(attrs, 5);
+    const values = picked.map((a) => a.value);
+    expect(values.filter((v) => v === "مصنوعی چرم")).toHaveLength(1);
+    expect(values).toContain("گرد");
   });
 });
 
@@ -138,19 +313,49 @@ describe("buildGeneratedHashtags", () => {
       ],
       sizes: ["36", "40", "44", "48"],
     });
-    expect(tags).toContain("شومیز_زنانه_گلدوزی");
+    // تگِ ترکیبیِ کلمات (با «_») دیگه ساخته نمی‌شه -- طبقِ درخواستِ صریح
+    expect(tags).not.toContain("شومیز_زنانه_گلدوزی");
+    expect(tags).toContain("شومیز");
     expect(tags).toContain("گلدوزی");
-    expect(tags).toContain("defacto");
     expect(tags).toContain("آستین");
     expect(tags).toContain("کوتاه");
     expect(tags).toContain("رگولار");
     expect(tags).toContain("نخی");
     // اعداد سایز هشتگ نمی‌شوند
     expect(tags).not.toContain("36");
+    // اسمِ لاتینِ برند هم هشتگ می‌شود -- طبقِ درخواستِ صریحِ جدید (برخلافِ
+    // بقیه‌ی منابع که همچنان فقط معادلِ فارسی‌شون هشتگ می‌شه)
+    expect(tags).toContain("defacto");
+  });
+
+  it("معادلِ فارسیِ برند (brandFa) هم کنارِ خودِ برند هشتگ می‌شود", () => {
+    const tags = buildGeneratedHashtags({
+      brand: "Rowenta",
+      brandFa: "روونتا",
+    });
+    expect(tags).toContain("rowenta");
+    expect(tags).toContain("روونتا");
   });
 
   it("با ورودی خالی آرایه خالی می‌دهد", () => {
     expect(buildGeneratedHashtags({})).toEqual([]);
+  });
+
+  it("خط‌تیره‌ی داخلِ یه اسمِ ترکیبی (مثلاً دسته‌بندی) به زیرخط تبدیل می‌شه، نه اینکه خام بمونه", () => {
+    const tags = buildGeneratedHashtags({
+      categoryName: "سویشرت-شلوار",
+    });
+    expect(tags).toContain("سویشرت_شلوار");
+    expect(tags).not.toContain("سویشرت-شلوار");
+  });
+
+  it("دسته‌بندیِ چندکلمه‌ای (با فاصله) یه هشتگِ ترکیبیِ واحد می‌سازد، نه هشتگ‌های جدا -- چون توی UI هم با هم تیک می‌خورد", () => {
+    const tags = buildGeneratedHashtags({
+      categoryName: "شلوار گرمکن",
+    });
+    expect(tags).toContain("شلوار_گرمکن");
+    expect(tags).not.toContain("شلوار");
+    expect(tags).not.toContain("گرمکن");
   });
 });
 
@@ -165,14 +370,21 @@ describe("buildCaption", () => {
       attributes: [{ name: "جنس", value: "نخی" }],
     });
 
-    expect(caption.startsWith("#شومیزگلدوزی123456")).toBe(true);
+    // تگ دیگه # نداره (جزوِ سقفِ ۵تاییِ هشتگ‌های اینستاگرام حساب نشه) ولی هنوز
+    // با LRI/PDI ایزوله می‌شه (src/lib/poster.ts::ltrIsolate) -- جلوگیریِ
+    // برعکس‌شدنِ بایدایِ متنِ لاتین/عددی توی کانتینرِ RTL
+    expect(caption.startsWith("⁦شومیزگلدوزی123456⁩")).toBe(true);
     expect(caption).toContain("قیمت نهایی اجناس در دایرکت مشخص میشه");
     expect(caption).toContain("هزینه باربری بعد از وزنکشی محاسبه و اعلام خواهد شد");
-    expect(caption).toContain("#shoppingstage");
+    // «شاپینگ استیج» هم دیگه # نداره -- به‌جاش منشن (@) که اصلاً جزوِ سقفِ
+    // هشتگ‌ها حساب نمی‌شه
+    expect(caption).toContain("⁦@Shopping.Stage⁩");
+    expect(caption).not.toContain("#shoppingstage");
     expect(caption).toContain("*امکان تعویض یا کنسلی نداریم چون اجناس فقط برای شما سفارشی خریده شده*");
-    expect(caption).toContain("#شلوار");
-    expect(caption).toContain("#پانچو");
-    expect(caption).toContain("#شومیز_زنانه_گلدوزی");
+    expect(caption).toContain("#شومیز");
+    // تگِ ترکیبی دیگه ساخته نمی‌شه
+    expect(caption).not.toContain("#شومیز_زنانه_گلدوزی");
+    // اسمِ لاتینِ برند هم هشتگ می‌شه -- طبقِ درخواستِ صریحِ جدید
     expect(caption).toContain("#defacto");
   });
 
@@ -184,7 +396,7 @@ describe("buildCaption", () => {
     expect(BASE_HASHTAGS).toContain("بلوزاستیج");
   });
 
-  it("جمعِ هشتگ‌ها هرگز از ۳۰ بیشتر نمی‌شود", () => {
+  it("جمعِ هشتگ‌ها هرگز از ۵ بیشتر نمی‌شود", () => {
     const caption = buildCaption({
       tag: "تست123",
       nameFa: "شومیز زنانه گلدوزی نخی آستین کوتاه رگولار",
@@ -199,13 +411,106 @@ describe("buildCaption", () => {
     });
     const hashtagLine = caption.trim().split("\n").pop() ?? "";
     const count = hashtagLine.split(/\s+/).filter((t) => t.startsWith("#")).length;
-    expect(count).toBeLessThanOrEqual(30);
+    expect(count).toBeLessThanOrEqual(5);
+  });
+
+  it("وقتی هشتگ‌های ساخته‌شده کمتر از ۵تاست، از هشتگ‌های پایه پر می‌شود", () => {
+    const caption = buildCaption({ tag: "", nameFa: "" });
+    const hashtagLine = caption.trim().split("\n").pop() ?? "";
+    const count = hashtagLine.split(/\s+/).filter((t) => t.startsWith("#")).length;
+    expect(count).toBe(5);
   });
 
   it("بدون تگ، خط اول تگ حذف می‌شود", () => {
     const caption = buildCaption({ tag: "", nameFa: "پیراهن" });
     expect(caption.startsWith("#")).toBe(false);
     expect(caption).toContain("قیمت نهایی اجناس");
+  });
+
+  it("وقتی hashtags داده بشه، دقیقاً همون‌ها استفاده می‌شن (نه انتخابِ خودکار)", () => {
+    const caption = buildCaption({
+      tag: "تست123",
+      nameFa: "شومیز زنانه گلدوزی",
+      hashtags: ["دلخواه_یک", "دلخواه_دو"],
+    });
+    expect(caption).toContain("#دلخواه_یک");
+    expect(caption).toContain("#دلخواه_دو");
+    expect(caption).not.toContain("#شومیز");
+  });
+
+  it("hashtags هم هرگز از سقفِ MAX_TOTAL_HASHTAGS بیشتر نمی‌شه", () => {
+    const caption = buildCaption({
+      tag: "تست",
+      hashtags: ["یک", "دو", "سه", "چهار", "پنج", "شش", "هفت"],
+    });
+    const hashtagLine = caption.trim().split("\n").pop() ?? "";
+    const count = hashtagLine.split(/\s+/).filter((t) => t.startsWith("#")).length;
+    expect(count).toBe(MAX_TOTAL_HASHTAGS);
+  });
+});
+
+describe("buildDefaultHashtagSelection", () => {
+  it("همون منطقِ قبلیِ خودکار (ساخته‌شده + پرکننده‌ی پایه، حداکثر ۵تا) را برمی‌گرداند", () => {
+    const defaults = buildDefaultHashtagSelection({
+      nameFa: "شومیز زنانه گلدوزی",
+      categoryName: "بلوز",
+    });
+    expect(defaults.length).toBeLessThanOrEqual(MAX_TOTAL_HASHTAGS);
+    expect(defaults).toContain("شومیز");
+  });
+
+  it("با ورودیِ خالی، فقط از هشتگ‌های پایه پر می‌شود", () => {
+    const defaults = buildDefaultHashtagSelection({});
+    expect(defaults.length).toBe(MAX_TOTAL_HASHTAGS);
+    for (const h of defaults) expect(BASE_HASHTAGS).toContain(h);
+  });
+});
+
+describe("isCouponCodeCampaign", () => {
+  it("کمپینِ کدتخفیفی (کد+لاتین/رقم چسبیده) را تشخیص می‌دهد", () => {
+    expect(isCouponCodeCampaign("کدFIRSAT5PY0999TLye5 تخفیف")).toBe(true);
+  });
+
+  it("کمپینِ کدتخفیفی با فاصله را هم تشخیص می‌دهد", () => {
+    expect(isCouponCodeCampaign("کد تخفیف ویژه")).toBe(true);
+  });
+
+  it("کلماتِ فارسیِ دیگری که با «کد» شروع می‌شوند را کمپینِ کد حساب نمی‌کند", () => {
+    expect(isCouponCodeCampaign("کدو تنبل")).toBe(false);
+    expect(isCouponCodeCampaign("کدام مورد")).toBe(false);
+  });
+
+  it("کمپینِ واقعی (بدونِ کد) را کمپینِ کد حساب نمی‌کند", () => {
+    expect(isCouponCodeCampaign("۲ عدد و بیشتر ۴۰ لیر تخفیف")).toBe(false);
+    expect(isCouponCodeCampaign("سبدخرید ۷۰ تخفیف")).toBe(false);
+  });
+});
+
+describe("extractBasketDiscountPercent", () => {
+  it("درصد را از کمپینِ DiscountOnBasket با فرمتِ ٪قبلِ‌عدد درمی‌آورد", () => {
+    const pct = extractBasketDiscountPercent([
+      { rawNameTr: "Sepette %20 İndirim", discountType: "DiscountOnBasket" },
+    ]);
+    expect(pct).toBe(20);
+  });
+
+  it("فرمتِ عدد٪بعد را هم می‌پذیرد", () => {
+    const pct = extractBasketDiscountPercent([
+      { rawNameTr: "Sepette 15% Indirim", discountType: "DiscountOnBasket" },
+    ]);
+    expect(pct).toBe(15);
+  });
+
+  it("کمپینِ غیرِ DiscountOnBasket را نادیده می‌گیرد", () => {
+    const pct = extractBasketDiscountPercent([
+      { rawNameTr: "3 Al 2 Öde", discountType: "MultiBuy" },
+      { rawNameTr: "Sepette %20 İndirim", discountType: null },
+    ]);
+    expect(pct).toBeNull();
+  });
+
+  it("وقتی هیچ کمپینی نیست null برمی‌گرداند", () => {
+    expect(extractBasketDiscountPercent([])).toBeNull();
   });
 });
 

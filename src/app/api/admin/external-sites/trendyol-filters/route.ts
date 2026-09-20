@@ -5,6 +5,10 @@ import type { Prisma } from "@prisma/client";
 import { foldTurkish } from "@/lib/turkishText";
 import { siteSlugToKind } from "@/lib/trendyol";
 
+// Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
+// خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
+export const maxDuration = 60;
+
 // سرچ روی جدول محلی TrendyolFilterCache -- q روی nameFa/nameTr/groupTitleTr
 // می‌گرده. untranslatedOnly یعنی فقط ردیف‌هایی که هنوز nameFa ندارن.
 //

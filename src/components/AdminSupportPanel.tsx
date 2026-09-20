@@ -132,7 +132,10 @@ export function AdminSupportPanel() {
 
   return (
     <div className="grid md:grid-cols-[260px_1fr] gap-4 items-start">
-      <aside className="border cut-line rounded-xl bg-white overflow-hidden">
+      {/* min-w-0 پیشگیرانه روی هردو فرزند -- پایینِ md که این گرید تک‌ستونیِ
+          ضمنی می‌شه، بدونش محتوای غیرِ-جمع‌شونده (مثلاً پیام‌های بلندِ چت)
+          می‌تونست عرضِ صفحه رو بترکونه */}
+      <aside className="border cut-line rounded-xl bg-white overflow-hidden min-w-0">
         <h2 className="px-3 py-2.5 text-xs font-bold text-[var(--color-muted)] border-b cut-line">
           گفتگوها
         </h2>
@@ -167,7 +170,7 @@ export function AdminSupportPanel() {
         )}
       </aside>
 
-      <section className="border cut-line rounded-xl bg-white overflow-hidden flex flex-col min-h-[420px]">
+      <section className="border cut-line rounded-xl bg-white overflow-hidden flex flex-col min-h-[420px] min-w-0">
         {!activeUserId ? (
           <p className="m-auto text-xs text-[var(--color-muted)] p-6 text-center">
             یک گفتگو را از راست انتخاب کنید تا پیام‌ها و پاسخ نمایش داده شود.

@@ -4,7 +4,8 @@ import { requireAdmin } from "@/lib/requireAdmin";
 import { parsePackageStatuses, markPackageArrived, serializePackageStatuses } from "@/lib/packageStatuses";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { getLoyaltyCashbackPercent, applyOrderCashback } from "@/lib/giftCard";
-import { computeLoyaltyPointsEarned, getLoyaltyTier } from "@/lib/loyaltyTier";
+import { computeLoyaltyPointsEarned, getLoyaltyTier, getLoyaltyConfig } from "@/lib/loyaltyTier";
+import { SITE_SETTING_KEYS, getSiteSettingBool } from "@/lib/siteSettings";
 import { z } from "zod";
 
 const arriveSchema = z.object({
@@ -41,6 +42,8 @@ export async function POST(
   }
   const serialized = serializePackageStatuses(statuses);
   const shortId = id.slice(-8);
+  const loyaltyEnabled = await getSiteSettingBool(SITE_SETTING_KEYS.LOYALTY_CASHBACK_ENABLED);
+  const loyaltyConfig = loyaltyEnabled ? await getLoyaltyConfig() : null;
 
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.order.update({
@@ -73,9 +76,10 @@ export async function POST(
 
     // وفاداری: بعد از تحویلِ کاملِ سفارش، کسراژ به کیف پول مشتری اضافه می‌شه --
     // سطحِ فعلیِ کاربر (بر اساسِ امتیازهای قبلی) یه درصدِ اضافه به نرخِ پایه می‌ده
-    if (allArrived) {
+    // -- کلِ این بلوک فقط وقتی اجرا می‌شه که ادمین از تنظیمات روشنش کرده باشه
+    if (allArrived && loyaltyEnabled && loyaltyConfig) {
       const userBefore = await tx.user.findUnique({ where: { id: order.userId }, select: { loyaltyPoints: true } });
-      const tier = getLoyaltyTier(userBefore?.loyaltyPoints ?? 0);
+      const tier = getLoyaltyTier(userBefore?.loyaltyPoints ?? 0, loyaltyConfig.tiers);
       const basePercent = await getLoyaltyCashbackPercent();
       const cashback = await applyOrderCashback(tx, {
         userId: order.userId,
@@ -83,7 +87,7 @@ export async function POST(
         paidAmount: order.total,
         percent: basePercent + tier.bonusPercent,
       });
-      const pointsEarned = computeLoyaltyPointsEarned(order.total);
+      const pointsEarned = computeLoyaltyPointsEarned(order.total, loyaltyConfig.tomanPerPoint);
       if (pointsEarned > 0) {
         await tx.user.update({ where: { id: order.userId }, data: { loyaltyPoints: { increment: pointsEarned } } });
       }
@@ -92,6 +96,18 @@ export async function POST(
           data: {
             userId: order.userId,
             message: `${cashback.toLocaleString("fa-IR")} تومان کسراژ وفاداری سفارش #${shortId} به کیف پولت اضافه شد 🎁`,
+            link: `/loyalty`,
+          },
+        });
+      }
+
+      // ارتقاءِ سطحِ باشگاه -- اگه امتیازِ تازه از آستانه‌ی سطحِ بالاتر رد شد
+      const newTier = getLoyaltyTier((userBefore?.loyaltyPoints ?? 0) + pointsEarned, loyaltyConfig.tiers);
+      if (newTier.key !== tier.key) {
+        await tx.notification.create({
+          data: {
+            userId: order.userId,
+            message: `🎉 به سطح ${newTier.label} باشگاه مشتریان ارتقا یافتی!`,
             link: `/loyalty`,
           },
         });

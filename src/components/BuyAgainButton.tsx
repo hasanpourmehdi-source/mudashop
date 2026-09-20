@@ -3,14 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/hooks/useCart";
+import { Spinner } from "@/components/Spinner";
+import { useSalesPaused } from "@/components/SalesPausedProvider";
 
 // «خرید مجدد سریع» -- اقلام مزونِ سفارش قبلی را با قیمت/موجودی فعلی به سبد
 // اضافه می‌کند و می‌فرستد به سبد. اقلام ناموجود/حذف‌شده گزارش می‌شوند.
 export function BuyAgainButton({ orderId }: { orderId: string }) {
   const { addItem } = useCart();
+  const { paused: salesPaused } = useSalesPaused();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+
+  if (salesPaused) return null;
 
   async function handleClick() {
     setBusy(true);
@@ -51,6 +56,7 @@ export function BuyAgainButton({ orderId }: { orderId: string }) {
         disabled={busy}
         className="inline-flex items-center gap-1.5 bg-[var(--color-wine)] text-white px-4 py-2 rounded-full text-xs font-bold disabled:opacity-50 hover:opacity-90 transition-opacity"
       >
+        {busy && <Spinner className="w-3.5 h-3.5" />}
         {busy ? "در حال افزودن..." : "دوباره بخر"}
       </button>
       {feedback && <span className="text-[11px] text-[var(--color-ochre)]">{feedback}</span>}

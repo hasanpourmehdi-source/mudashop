@@ -1,6 +1,7 @@
 import { fetchTrendyolProductsFromUrl } from "@/lib/trendyol";
 import { buildExternalSiteUrl, resolveEffectiveFilters } from "@/lib/externalSites";
 import type { TrendyolLiveProduct } from "@/lib/trendyol";
+import { hasUntranslatedLatin } from "@/lib/turkishText";
 
 // «پرتخفیف‌ترین‌های ترندیول/میلا» برای صفحه‌ی اصلی -- برای کسی که دنبال چیز
 // خاصی نیست ولی یه تخفیف خوب می‌تونه ترغیبش کنه بخره (دقیقاً همون کاری که
@@ -17,8 +18,16 @@ export async function fetchTrendyolTopDiscounts(
 
   try {
     const { products } = await fetchTrendyolProductsFromUrl(url);
+    // همون فیلترِ «عنوان کاملاً ترجمه‌نشده» که trendyolBestSelling.ts هم داره --
+    // دسته‌بندیِ پیش‌فرضِ سایت گاهی همه‌چیز رو برمی‌گردونه، نه فقط پوشاک
     return [...products]
-      .filter((p) => p.price != null && p.originalPrice != null && p.originalPrice > p.price)
+      .filter(
+        (p) =>
+          p.price != null &&
+          p.originalPrice != null &&
+          p.originalPrice > p.price &&
+          !hasUntranslatedLatin(p.nameFa)
+      )
       .sort((a, b) => discountPercent(b) - discountPercent(a))
       .slice(0, limit);
   } catch {

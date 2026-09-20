@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Spinner } from "@/components/Spinner";
 
 const MAX_IMAGES = 4;
 
@@ -138,7 +139,8 @@ export function QuickReviewForm({
           </div>
         ))}
         {images.length < MAX_IMAGES && (
-          <label className="text-xs border cut-line rounded-lg px-2 py-1.5 cursor-pointer hover:border-[var(--color-wine)]">
+          <label className="text-xs inline-flex items-center gap-1.5 border cut-line rounded-lg px-2 py-1.5 cursor-pointer hover:border-[var(--color-wine)]">
+            {uploading && <Spinner className="w-3.5 h-3.5" />}
             {uploading ? "در حال آپلود..." : "📷 افزودن عکس"}
             <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden onChange={handleImageSelect} disabled={uploading} />
           </label>
@@ -151,8 +153,9 @@ export function QuickReviewForm({
         <button
           type="submit"
           disabled={submitting || uploading}
-          className="text-xs bg-[var(--color-wine)] text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
+          className="text-xs inline-flex items-center justify-center gap-1.5 bg-[var(--color-wine)] text-white px-4 py-1.5 rounded-full font-medium disabled:opacity-50"
         >
+          {submitting && <Spinner className="w-3.5 h-3.5" />}
           {submitting ? "در حال ثبت..." : "ثبت نظر"}
         </button>
         {onCancel && (

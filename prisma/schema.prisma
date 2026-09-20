@@ -3,9 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
-  // برای production روی PostgreSQL: provider = "postgresql"
 }
 
 // ================= کاربر و احراز هویت =================
@@ -61,10 +60,12 @@ model User {
   pushSubscriptions PushSubscription[]
   reviewHelpfulVotes ReviewHelpfulVote[]
   priceAlerts PriceAlert[]
+  cheaperPriceReports CheaperPriceReport[]
   boughtGiftCards GiftCard[] @relation("GiftCardBuyer")
   redeemedGiftCards GiftCard[] @relation("GiftCardRedeemer")
   sessions UserSession[]
   cartSnapshot CartSnapshot?
+  recentlyViewedSnapshot RecentlyViewedSnapshot?
   referredBy   User?   @relation("Referrals", fields: [referredById], references: [id], onDelete: SetNull)
   referrals    User[]  @relation("Referrals")
   referralRewardsGiven    ReferralReward[] @relation("ReferralRewardsGiven")
@@ -93,6 +94,21 @@ model CartSnapshot {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("cart_snapshots")
+}
+
+// عکسِ لحظه‌ایِ «اخیراً دیده‌اید»ِ کاربرِ لاگین‌کرده -- عیناً همون الگویِ
+// CartSnapshot، برای اینکه این لیست فقط localStorageِ همون مرورگر نباشه و با
+// لاگین از دستگاه/مرورگرِ دیگه هم قابل‌بازیابی باشه
+model RecentlyViewedSnapshot {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  itemsJson String // JSON آرایه‌ی RecentlyViewedProduct[]
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("recently_viewed_snapshots")
 }
 
 // پاداشِ کد معرفی -- وقتی اولین سفارشِ «پرداخت‌شده»‌ی کاربرِ معرفی‌شده ثبت
@@ -269,6 +285,50 @@ model Campaign {
   @@map("campaigns")
 }
 
+// مجموعه‌ی مناسبتی (یلدا، روزِ مادر، بلک‌فرایدی و ...) -- برخلافِ Campaign که
+// فقط به یه برند محدوده، اینجا می‌شه از هر برند/دسته‌ای محصول جمع کرد
+model OccasionCollection {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  bannerImage String
+  description String?
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  items OccasionCollectionItem[]
+
+  @@map("occasion_collections")
+}
+
+// مزون: رفرنسِ زنده به Product (قیمت/تخفیف همیشه لحظه‌ای خونده می‌شه). ترندیول:
+// اسنپ‌شاتِ عنوان/عکس/قیمت در لحظه‌ی افزودنِ ادمین (مثلِ OrderItem) چون
+// کاتالوگِ محلیِ ترندیول نداریم. productKey یه رشته‌ی غیر-nullِ ترکیبیه
+// ("mazon:<id>" یا "trendyol:<id>") نه دو فیلدِ جدا -- قیدِ یکتاییِ چندستونی
+// روی ستون‌های nullable توی SQLite کار نمی‌کنه (الگوی UnlinkedReviewClaim)
+model OccasionCollectionItem {
+  id            String        @id @default(cuid())
+  collectionId  String
+  source        ProductSource
+  productKey    String
+  productId     String?
+  externalId    String?
+  title         String?
+  image         String?
+  price         Int?
+  originalPrice Int?
+  productUrl    String?
+  addedAt       DateTime @default(now())
+
+  collection OccasionCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    Product?           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, productKey])
+  @@map("occasion_collection_items")
+}
+
 // راهنمای سایز -- فقط یک عکس (از سایت اصلی برند برداشته می‌شه)، مخصوص هر ترکیب دسته‌بندی+برند
 // مثلا «شومیز زنانه» + «زارا» یک عکس راهنمای سایز مخصوص خودشون دارن
 model SizeGuide {
@@ -323,6 +383,13 @@ model Product {
   // فلگ فقط وقتی معنی داره که SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED
   // (کلید سراسری) روشن باشه؛ وگرنه همه‌چیز طبق رفتار قبلی قابل‌مرجوعه
   isReturnable Boolean @default(true)
+  // محصولِ «ایراد دار» -- کالای واقعی که یه نقصِ جزئی داره (مثلاً ایرادِ دوخت)
+  // و به‌جای دور ریختن، شفاف و با تخفیف فروخته می‌شه. پرشدنِ defectNote یعنی
+  // این محصول ایراد داره (بجِ «ایراد دار» + توضیحِ نقص + عکسِ نمونه نشون داده
+  // می‌شه)؛ مستقل از isReturnable چون منطقاً دو مفهومِ جدان (این یکی «چرا
+  // ایراد داره»، اون یکی «قابلِ مرجوعه یا نه») حتی اگه معمولاً با هم بیان
+  defectNote  String?
+  defectImage String?
   // متنِ جدا از توضیحاتِ کلی -- «نحوه مصرف/نگهداری» (مثلاً دستورِ شست‌وشو برای
   // لباس، یا نحوه‌ی استفاده برای محصولاتی که این‌طور نیازی دارن). فقط مزون،
   // چون محتوای محصولاتِ خارجی دستِ ما نیست
@@ -349,6 +416,9 @@ model Product {
   views          ProductView[]
   priceSnapshots PriceSnapshot[]
   priceAlerts PriceAlert[]
+  customerShipments CustomerShipment[]
+  occasionCollectionItems OccasionCollectionItem[]
+  cheaperPriceReports CheaperPriceReport[]
 
   @@map("products")
 }
@@ -363,6 +433,19 @@ model ProductView {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_views")
+}
+
+// عینِ ProductView، ولی برای محصولاتِ ترندیول/میلا -- این‌ها ردیفِ محلیِ Product
+// ندارن (contentId مستقیم از خودِ ترندیوله، نه یه FK محلی)، پس نمی‌تونن از
+// همون جدول استفاده کنن. برای «نشانه‌ی اجتماعیِ لحظه‌ای» (چند نفر همین چند
+// دقیقه‌ی اخیر این محصول رو دیدن) روی صفحه‌ی محصول استفاده می‌شه
+model TrendyolProductView {
+  id        String   @id @default(cuid())
+  contentId String
+  createdAt DateTime @default(now())
+
+  @@index([contentId, createdAt])
+  @@map("trendyol_product_views")
 }
 
 // نمونه‌گیریِ سبک از زبانِ مرورگرِ بازدیدکننده‌ها -- قبل از سرمایه‌گذاری روی
@@ -480,6 +563,13 @@ model ProductVariant {
   sku       String  @unique
   stock     Int     @default(0)
   priceDiff Int     @default(0) // اختلاف قیمت نسبت به basePrice (می‌تونه منفی باشه)
+  // اندازه‌ی واقعیِ فیزیکیِ این ترکیب (قد، دور کمر، دور باسن، عرض دمپا، ...) --
+  // JSON از {label, cm}[]. عمداً یه لیستِ آزاد (نه فیلدهای ثابت مثل waist/hip)
+  // چون برشِ لباس‌ها فرق می‌کنه (شلوار با تیشرت یکی نیست) و ادمین دستی پر
+  // می‌کنه؛ اختیاریه، بیشترِ محصولات این رو نخواهند داشت. جدا از SizeGuide
+  // (که قد/وزنِ مشتری رو به یه سایز پیشنهادی نگاشت می‌کنه) -- این می‌گه خودِ
+  // پارچه‌ی این سایزِ همین محصول دقیقاً چند سانت‌ه
+  measurements String?
 
   product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
   values  ProductVariantValue[]
@@ -608,6 +698,10 @@ model Order {
   // (receipt) ثبت نشده باشد یا وضعیت پرداخت هنوز AWAITING_* باشد، سفارش به‌صورت
   // خودکار لغو می‌شود و منابع (موجودی/کوپن/کیف‌پول) برمی‌گردند
   paymentDeadlineAt DateTime?
+  // وقتی ارسالِ این سفارش با یه/چند سفارشِ دیگه (مقصدِ مشترک) ترکیب شده --
+  // هزینه‌ی ارسال/باربریِ قبلیِ این سفارش دیگه معتبر نیست، سهمِ جدید مستقیم
+  // توی shippingCost همین سفارش نشسته (ShippingGroup.applyShippingCostAdjustment)
+  shippingGroupId String?
 
   user    User                @relation(fields: [userId], references: [id])
   address Address?            @relation(fields: [addressId], references: [id])
@@ -619,8 +713,25 @@ model Order {
   messages      OrderMessage[]
   paymentEvents OrderPaymentEvent[]
   referralReward ReferralReward?
+  shippingGroup ShippingGroup? @relation(fields: [shippingGroupId], references: [id])
 
   @@map("orders")
+}
+
+// ترکیبِ ارسالِ چند سفارشِ جدا که مقصدشون یکیه و می‌خوان با هم توی یه بسته
+// ارسال بشن -- فقط اطلاعاتِ هدرِ ترکیب رو نگه می‌داره؛ آدرس مستقیم از اولین
+// سفارشِ عضو خونده می‌شه (نه کپیِ جدا). عمداً یه Order ساختگی نیست چون Order
+// همه‌جای این کدبیس فرضِ userId/items واقعی داره
+model ShippingGroup {
+  id                String   @id @default(cuid())
+  totalShippingCost Int
+  totalCargoCost    Int      @default(0)
+  trackingCode      String?
+  createdAt         DateTime @default(now())
+
+  orders Order[]
+
+  @@map("shipping_groups")
 }
 
 // گفت‌وگوی مستقیم مشتری/ادمین درباره‌ی یک سفارش خاص -- مثلاً مشتری بخواد سایز
@@ -721,8 +832,14 @@ model BankCard {
   isActive    Boolean  @default(true)
   // وقتی «تأییدِ اولیه‌ی ادمین» از تنظیمات خاموشه، سیستم خودش (بدون این‌که
   // ادمین دستی انتخاب کنه) باید یه کارت برای تخصیص به مشتری انتخاب کنه --
-  // همینه. حداکثر یکی می‌تونه true باشه (توی route اجرا می‌شه، نه constraint دیتابیسی)
+  // همینه. پیش‌فرضِ «هزینه‌ی سفارش» (دورِ اول). حداکثر یکی می‌تونه true باشه
+  // (توی route اجرا می‌شه، نه constraint دیتابیسی)
   isDefault   Boolean  @default(false)
+  // پیش‌فرضِ دورِ دومِ پرداخت -- مستقل از isDefault، چون ممکنه ادمین بخواد
+  // کارتِ جدایی برای باربریِ کالای خارجی یا هزینه‌ی ارسالِ مزون تعیین کنه. هر
+  // سه فلگ جدا اجرا می‌شن (یه کارت می‌تونه هم‌زمان پیش‌فرضِ چندتا هدف باشه)
+  isDefaultForCargo    Boolean @default(false)
+  isDefaultForShipping Boolean @default(false)
   createdAt   DateTime @default(now())
 
   @@map("bank_cards")
@@ -820,6 +937,11 @@ model OrderItem {
   // دیگه) پیدا کرده، اینجا ثبت می‌شه؛ کاملاً داخلی/فقط-ادمین، هیچ‌وقت به مشتری
   // نشون داده یا اطلاع داده نمی‌شه
   secondarySourceUrl String?
+  // وقتی مشتری از لیستِ «فروشنده‌های دیگر» یه فروشنده‌ی غیرِ پیش‌فرض انتخاب
+  // کرده -- تیمِ خرید باید دقیقاً بدونه از کدوم فروشنده بخره (قیمت فروشنده به
+  // فروشنده فرق می‌کنه). null یعنی فروشنده‌ی پیش‌فرض/کانونیک (رفتارِ فعلی)
+  merchantId   Int?
+  merchantName String?
   purchaseResolvedAt  DateTime?
   itemWeightGrams     Int? // وزن این قلم -- برای محاسبه‌ی خودکار هزینه‌ی باربری
   itemCargoCost       Int? // هزینه‌ی باربری این قلم به‌صورت جدا (اگه ادمین دستی وارد کرده باشه)
@@ -1012,6 +1134,38 @@ model QuestionReply {
   user     User            @relation(fields: [userId], references: [id])
 
   @@map("question_replies")
+}
+
+// ================= گزارشِ قیمتِ مناسب‌تر =================
+
+enum CheaperPriceReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+// کاملاً یه کانالِ ارتباطیِ دستیِ مشتری->ادمین -- مشتری می‌گه همین کالا رو
+// جای دیگه ارزون‌تر دیده، ادمین خودش تصمیم می‌گیره. هیچ مقایسه/اسکرپِ خودکاری
+// انجام نمی‌شه. «رد» یعنی status=DISMISSED نه حذفِ کامل (برخلافِ الگوی
+// ProductQuestion) چون این گزارش‌ها ارزشِ آماری/رقابتی دارن و ادمین شاید
+// بعداً بخواد تاریخچه‌شون رو مرور کنه
+model CheaperPriceReport {
+  id            String                   @id @default(cuid())
+  userId        String?
+  source        ProductSource            @default(MAZON)
+  productId     String?
+  externalId    String?
+  reportedPrice Int
+  note          String?
+  status        CheaperPriceReportStatus @default(PENDING)
+  adminNote     String?
+  createdAt     DateTime                 @default(now())
+  resolvedAt    DateTime?
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("cheaper_price_reports")
 }
 
 // ================= کیف پول =================
@@ -1291,6 +1445,28 @@ model StockNotification {
   @@map("stock_notifications")
 }
 
+// هر بار ادمین پوسترِ یه محصول رو ساخت و عکس(ها)ش رو دانلود کرد، یه ردیف اینجا
+// ثبت می‌شه -- یعنی «این پست توی اینستاگرام گذاشته شده». فقط برای هشدارِ
+// «قبلاً این رو گذاشتی» (وقتی همون محصول دوباره لود بشه) و فیلترکردنِ
+// پیشنهادهای پوسترِ بعدی (نباید چیزیو که قبلاً پست شده دوباره پیشنهاد بده)
+// استفاده می‌شه -- نه یه آنالیتیکسِ کامل، پس عمداً ساده نگه داشته شده. محصولِ
+// خارجی (ترندیول/میلا) توی جدولِ Product ما وجود نداره، پس فقط شناسه‌ی
+// خامِ سایت (contentId+siteSlug) ذخیره می‌شه، نه رابطه‌ی FK
+model InstagramPosterLog {
+  id              String   @id @default(cuid())
+  contentId       String
+  siteSlug        String
+  name            String
+  image           String?
+  price           Int?
+  originalPrice   Int?
+  discountPercent Int?
+  postedAt        DateTime @default(now())
+
+  @@index([contentId, siteSlug])
+  @@map("instagram_poster_logs")
+}
+
 // «کاهش قیمت خبرم کن» -- وقتی قیمت مؤثرِ محصول (با احتساب تخفیف/حراج فلش) به
 // targetPrice یا کمتر برسه، یک‌بار اطلاع می‌دهیم (notifiedAt پر می‌شه) و با
 // ثبت دوباره (re-arm) فعال می‌شود. حداکثر یک اخطار فعال برای هر محصول/کاربر.
@@ -1469,6 +1645,22 @@ model TrendyolProductUrlCache {
   @@map("trendyol_product_url_cache")
 }
 
+// کشِ لایوِ گرید/سرچِ ترندیول -- قبلاً یه Map حافظه‌ای بود (کامنتِ قبلیِ همین
+// فایل صراحتاً هشدار داده بود که "با ری‌استارت سرور یا چند instance پاک/
+// ناهماهنگ می‌شه")؛ روی Vercel که هر درخواست ممکنه سرورلسِ متفاوتی اجرا بشه،
+// این یعنی عملاً کش خیلی وقت‌ها اصلاً hit نمی‌خورد و هر بار دوباره زنده از
+// ترندیول کشیده می‌شد -- دقیقاً همون چیزی که ریسکِ ۴۰۳/چالش رو زیاد می‌کنه.
+// این جدول همون کش رو بینِ همه‌ی instance ها مشترک می‌کنه؛ key همون URL
+// درخواستیه، data نتیجه‌ی JSON.stringify شده
+model TrendyolLiveCache {
+  key       String   @id
+  data      String
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("trendyol_live_cache")
+}
+
 // همه‌ی گروه‌های فیلتر واقعی ترندیول (رنگ، برند، نوع کیف، ...) و مقادیرشون --
 // هم عنوان خودِ گروه (با valueId خالی) هم تک‌تک مقادیرش یه ردیفن. با دکمه‌ی
 // «به‌روزرسانی» توی پنل ادمین (با دادن یه wc/wg نمونه) پر/به‌روز می‌شه.
@@ -1523,6 +1715,37 @@ model TrendyolTitleTermDictionary {
   @@map("trendyol_title_term_dictionary")
 }
 
+// الگوهای دستیِ ادمین برای ترجمه‌ی اسمِ کمپین‌های ترندیول -- برای موردهایی که
+// دیکشنریِ کلمه‌به‌کلمه‌ی بالا بهم می‌ریزتشون (چون شاملِ عدد/درصدن، مثلِ
+// "2 Ürün %30 İndirim"). ادمین خودش الگوی ترکی رو با placeholderهای
+// {1},{2},... مشخص می‌کنه (هرکدوم یعنی یه عددِ دلخواه)، و قالبِ فارسی رو هم با
+// همون placeholderها می‌نویسه -- مثلاً الگو: "{1} Ürün %{2} İndirim"، قالب:
+// "خرید {1}م ٪{2} تخفیف". هیچ رجکسِ خامی گرفته نمی‌شه، فقط این نحوِ ساده
+model TrendyolCampaignNameFormula {
+  id         String   @id @default(cuid())
+  patternTr  String   @unique
+  templateFa String
+  priority   Int      @default(0) // وقتی چند الگو ممکنه هم‌زمان مچ بشن -- بزرگ‌تر اول امتحان می‌شه
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("trendyol_campaign_name_formulas")
+}
+
+// کمپین‌هایی که ادمین صریحاً خواسته اصلاً نمایش داده نشن -- طبقِ درخواستِ
+// صریح، کنارِ ترجمه‌ی هر کمپین یه تیکِ «غیرفعال» هست؛ با تیک‌زدن، campaignId
+// (همون آیدیِ خودِ ترندیول -- مشترک بینِ همه‌ی محصولاتی که توی همون کمپینِ
+// خاص شرکت دارن) اینجا ثبت می‌شه و از اون به بعد، روی هر محصولی که این
+// کمپین رو داشته باشه، اصلاً توی campaignBadges نمی‌آد (نه فقط مخفیِ CSS)
+model TrendyolHiddenCampaign {
+  id         String   @id @default(cuid())
+  campaignId Int      @unique
+  rawNameTr  String // فقط برای مرجع/بررسیِ دستیِ بعدی -- خودِ فیلترشدن با campaignId انجام می‌شه
+  createdAt  DateTime @default(now())
+
+  @@map("trendyol_hidden_campaigns")
+}
+
 // کش عنوان کامل هر محصول -- تا هر بار محصول لود می‌شه نیازی به دوباره
 // tokenize کردن و جایگزینی نباشه. originalTitle کلید یکتاست چون عنوان دقیق
 // محصول تغییر نمی‌کنه (برخلاف قیمت/موجودی).
@@ -1556,7 +1779,18 @@ model TrendyolDiscoveredCampaign {
   campaignId  Int // همون promotions[].id ترندیول -- برای ساختنِ لینکِ /campaign/{id}
   site        ExternalSiteKind @default(TRENDYOL)
   text        String // متنِ ترجمه‌شده‌ی نمایشی
+  // اسمِ خامِ ترکی -- بدونش امکاناتِ ادمینِ صفحه‌ی «محصولاتِ این کمپین» (تعریف/
+  // ویرایشِ الگو) در دسترس نیست چون نیاز به متنِ خام دارن، نه فقط ترجمه‌شده.
+  // nullable چون ردیف‌های قدیمی (قبل از این فیلد) این رو ندارن -- تا دفعه‌ی
+  // بعد که همون کمپین دیده بشه، خودکار پر می‌شه (recordDiscoveredCampaigns)
+  rawNameTr   String?
   sampleImage String? // عکسِ همون محصولی که این کمپین رو لو داد -- برای کارتِ صفحه‌ی اصلی
+  // چندتا عکسِ نمونه‌ی دیگه (JSON آرایه، حداکثر ۶ تا، به‌مرور از محصولاتِ
+  // مختلفی که همین کمپین رو دارن جمع می‌شه) -- برای کمپین‌های چندمحصولی مثلِ
+  // «۴ بگیر ۳ پرداخت کن» که خودِ ترندیول هم چندتا عکسِ نمونه نشون می‌ده؛
+  // کمپین‌های تخفیفِ سبدخرید (DiscountOnBasket) اصلاً عکس نمی‌گیرن
+  sampleImages String @default("[]")
+  discountType String? // promotionDiscountType خامِ ترندیول -- تصمیمِ نمایشِ عکس بر همین اساسه
   // از promotions[].promotionEndDate -- اگه گذشته باشه، دیگه از صفحه‌ی اصلی
   // حذف می‌شه (کمپین‌های بدونِ این فیلد، null می‌مونن و صرفاً با lastSeenAt
   // قدیمی‌شدن به‌مرور از فهرست می‌افتن)
@@ -1578,6 +1812,11 @@ model TrendyolCategoryCache {
   param           String // پارامتر واقعی، مثلا "wc=82" یا "wc=104443,1123,104444"
   nameTr          String // اسم اصلی (ترکی) که از منوی ترندیول میاد
   nameFa          String? // ترجمه‌ی فارسی -- تا وارد نشه null می‌مونه
+  // بعضی دسته‌ها چند معادلِ رایج فارسی دارن (مثلاً «Bluz» هم «بلوز» هم
+  // «شومیز» ترجمه می‌شه) -- nameFa همیشه معادلِ اصلی/نمایشی (چیپ، بردکرامب)
+  // می‌مونه؛ این فیلد فقط معادل‌های اضافه‌ست، با کاما جدا («شومیز,تاپ»)، و فقط
+  // برای *تشخیصِ* جست‌وجو (matchSearchQueryToCategory) استفاده می‌شه، نه نمایش
+  nameFaSynonyms  String?
   // true یعنی این ترجمه خودکار (فرهنگ‌لغت داخلی) یا از طریق import گروهی
   // اومده و هنوز ادمین دستی تأییدش نکرده؛ همین که ادمین از پنل ویرایشش کنه
   // (PATCH)، false می‌شه
@@ -1616,6 +1855,11 @@ model ExternalSite {
   // محصول) تنظیم می‌شه؛ فقط وقتی SITE_SETTING_KEYS.NON_RETURNABLE_PRODUCTS_ENABLED
   // روشن باشه معنی داره
   isReturnable Boolean @default(true)
+  // مقایسه‌ی فروشنده‌ی فعلی با فروشنده‌های دیگرِ همون محصول -- این فیچر ذاتاً
+  // مخصوصِ سایت‌هایی مثلِ ترندیوله (که چند فروشنده زیرِ یه لیستینگ دارن)؛ مزون
+  // اصلاً همچین مفهومی نداره، پس برخلافِ isReturnable نیازی به یه فلگِ سراسریِ
+  // «تنظیماتِ عمومی» جدا نداره -- کاملاً مشخصاتِ خودِ همین سایته
+  showOtherSellers Boolean @default(true)
   createdAt DateTime @default(now())
 
   categoryParams  ExternalSiteCategoryParam[]
@@ -1704,4 +1948,21 @@ model BlogPost {
   updatedAt   DateTime  @updatedAt
 
   @@map("blog_posts")
+}
+
+// ================= ارسالی مشتریان (UGC گلچین‌شده توسط ادمین) =================
+
+model CustomerShipment {
+  id          String   @id @default(cuid())
+  image       String // عکسِ ارسالیِ مشتری (آپلود به /uploads/customer-shipments)
+  caption     String? // توضیحِ کوتاهِ ادمین (مثلاً «ارسالی خانم احمدی - تهران»)
+  productId   String? // لینک به محصولِ مزون (اختیاری)
+  externalId  String? // لینک به محصولِ خارجی (اختیاری)
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@map("customer_shipments")
 }

@@ -9,7 +9,14 @@ type BankCardOption = {
   cardNumber: string;
   holderName: string;
   label: string | null;
+  isDefaultForCargo?: boolean;
+  isDefaultForShipping?: boolean;
 };
+
+// پیش‌انتخابِ هوشمند بر اساسِ هدف -- ادمین همچنان می‌تونه دستی عوض کنه
+function pickDefaultCardId(bankCards: BankCardOption[], flag: keyof BankCardOption): string {
+  return bankCards.find((c) => c[flag])?.id ?? bankCards[0]?.id ?? "";
+}
 
 type AddressForm = {
   title: string;
@@ -55,9 +62,11 @@ export function AdminChangeAddressPanel({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<AddressForm>(currentAddress ?? emptyAddress);
-  const [shippingMethod, setShippingMethod] = useState(currentShippingMethod ?? "");
+  const [shippingMethod, setShippingMethod] = useState(currentShippingMethod ?? SHIPPING_METHODS[0] ?? "");
   const [reason, setReason] = useState("");
-  const [selectedCardId, setSelectedCardId] = useState(bankCards[0]?.id ?? "");
+  const [selectedCardId, setSelectedCardId] = useState(
+    pickDefaultCardId(bankCards, hasExternalItems ? "isDefaultForCargo" : "isDefaultForShipping")
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState("");

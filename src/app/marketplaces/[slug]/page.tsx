@@ -13,6 +13,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { fetchTrendyolProductsFromUrl, siteSlugToKind } from "@/lib/trendyol";
 import { translateSearchQueryToTurkish } from "@/lib/trendyolTitleTranslation";
+import { fetchDiscountSeed } from "@/lib/trendyolTopDiscounts";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { auth } from "@/lib/auth";
 import { fetchWishlistedTrendyolIds } from "@/lib/wishlist";
@@ -39,6 +40,11 @@ const VALID_SORT_IDS = new Set([
   "MOST_FAVOURITE",
   "MOST_RATED",
 ]);
+
+// مرتب‌سازیِ مجازی (نه sstِ واقعیِ ترندیول): «بیشترین تخفیف» -- ترندیول چنین
+// مرتب‌سازی‌ای نداره، پس خودمون چند صفحه‌ی محصولاتِ تخفیف‌دار رو می‌گیریم و
+// با درصدِ واقعی مرتب می‌کنیم (trendyolTopDiscounts.ts)
+const DISCOUNT_SORT_ID = "DISCOUNT";
 
 export default async function MarketplaceSitePage({
   params,
@@ -224,7 +230,24 @@ export default async function MarketplaceSitePage({
   let resolvedCategoryIds: string[] = [];
   let loadError = "";
 
-  if (url) {
+  // «بیشترین تخفیف»: همه‌ی فیلترهای کاربر (دسته‌بندی، جنسیت، رنگ، سایز، ...) می‌مونن و
+  // فیلترهای تخفیف (تگِ آوانتاژی / کم‌ترین قیمتِ ۳۰ روز) روشون اضافه می‌شن --
+  // خودِ تابع (fetchDiscountSeed + TrendyolLiveGrid) اضافه‌شون می‌کنه
+  const isDiscountSort = query.sst === DISCOUNT_SORT_ID;
+  let discountMode: { tagNextUrl: string | null; lowestUrl: string } | undefined;
+  const discountBaseUrl = isDiscountSort ? url : null;
+
+  if (isDiscountSort && discountBaseUrl) {
+    try {
+      const result = await fetchDiscountSeed(discountBaseUrl);
+      initialProducts = result.products;
+      initialNextUrl = null;
+      initialTotal = result.products.length;
+      discountMode = { tagNextUrl: result.tagNextUrl, lowestUrl: result.lowestUrl };
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : "خطا در دریافت محصولاتِ تخفیف‌دار";
+    }
+  } else if (url) {
     // لاگ سمت سرور -- توی ترمینال npm run dev دیده می‌شه، نه Console مرورگر،
     // چون این fetch سمت سرور (Server Component) انجام می‌شه
     console.log(`[marketplaces/${slug}] fetching:`, urlWithSort);
@@ -397,16 +420,25 @@ export default async function MarketplaceSitePage({
                 </div>
                 <div className="shrink-0 ms-auto flex items-center gap-2">
                   <MobileFilterTriggerButton activeCount={otherChips.length} />
-                  <TrendyolSortDropdown />
+                  <TrendyolSortDropdown includeDiscountSort />
                 </div>
               </div>
+              {isDiscountSort && (
+                <p className="text-xs text-[var(--color-muted)] mb-3 leading-relaxed">
+                  مرتب‌سازی بر اساسِ بیشترین تخفیف: فیلترهای خودت حفظ شده و فیلترِ «آوانتاژلی» و
+                  «کم‌ترین قیمتِ ۳۰ روز اخیر» بهشون اضافه شده. محصولات چندتا‌چندتا بررسی می‌شن و هر بار
+                  دوباره بر اساسِ درصدِ تخفیف مرتب می‌شن -- نه کلِ دسته. اگه با فیلترهات محصولِ تخفیف‌داری
+                  نبود، لیست خالی می‌مونه؛ یه فیلتر رو بردار.
+                </p>
+              )}
               <TrendyolLiveGrid
-                key={urlWithSort}
+                key={isDiscountSort ? `${discountBaseUrl}#discount` : urlWithSort}
                 initialProducts={initialProducts}
                 initialNextUrl={initialNextUrl}
                 initialWishlistedIds={Array.from(wishlistedTrendyolIds)}
                 activeAttrsQuery={activeSizeAttrsQuery}
                 minDiscountPercentToShow={minDiscountPercentToShow}
+                discountMode={discountMode}
               />
             </>
           )}

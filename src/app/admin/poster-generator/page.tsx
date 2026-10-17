@@ -448,7 +448,10 @@ function drawPoster(
       brandLines = wrapLines(ctx, [brandText], maxBrandWidth);
     }
     const brandLineH = brandFontSize + 4;
-    const brandStartY = by - ((brandLines.length - 1) * brandLineH) / 2;
+    // خطِ اول عیناً همون جایی می‌مونه که برندِ تک‌خطی می‌نشست (درست زیرِ دایره‌ی
+    // تخفیف، مماس) و خطوطِ بعدی می‌رن *پایین* -- قبلاً کلِ بلوک دورِ by سنتر
+    // می‌شد و با ۲ خط، خطِ اول می‌رفت بالا و روی لبه‌ی دایره می‌نشست
+    const brandStartY = by;
     brandLines.forEach((line, idx) => {
       const ly = brandStartY + idx * brandLineH;
       ctx.strokeText(line, badgeCenterX, ly);
@@ -908,6 +911,42 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isMobileDevice(): boolean {
+  return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+// فقط باز کردنِ خودِ اپ (نه صفحه‌ی خاصی توش). عمداً بدونِ fallback به سایتِ
+// اینستاگرام -- اون سایت (بدونِ VPN) بلاکه و صفحه‌ی خطا نشون می‌داد
+function instagramAppUrl(): string {
+  if (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)) {
+    return "intent://instagram.com/#Intent;package=com.instagram.android;scheme=https;end";
+  }
+  return "instagram://app";
+}
+
+// عکس‌های ساخته‌شده رو به فایل تبدیل می‌کنه تا با Web Share (منوی اشتراکِ گوشی)
+// مستقیم به «پستِ» اینستاگرام فرستاده بشن -- بدونِ نیاز به گشتن توی گالری
+// بدونِ fetch(dataUrl): CSPِ سایت (connect-src) اجازه‌ی data: نمی‌ده و fetch بلاک می‌شد
+function dataUrlsToFiles(items: { name: string; dataUrl: string }[]): File[] {
+  return items.map((it) => {
+    const bin = atob(it.dataUrl.slice(it.dataUrl.indexOf(",") + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], it.name, { type: "image/png" });
+  });
+}
+
+async function shareFiles(files: File[]): Promise<boolean> {
+  if (files.length === 0 || typeof navigator === "undefined" || !navigator.share) return false;
+  if (navigator.canShare && !navigator.canShare({ files })) return false;
+  try {
+    await navigator.share({ files });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // برندهای چندکلمه‌ای (مثلاً «U.S. Polo Assn.») باید یکجا -- نه کلمه‌به‌کلمه --
 // برای ترجمه پیشنهاد بشن، چون تک‌تکِ کلمه‌هاشون به‌تنهایی معنی نداره (طبقِ
 // درخواستِ صریح). دقیقاً همون نرمال‌سازیِ سمتِ سرور (حذفِ علامت‌ها قبل از
@@ -984,6 +1023,11 @@ export default function PosterGeneratorPage() {
   const [minDiscountPercentToShow, setMinDiscountPercentToShow] = useState(2);
 
   const [generatingAll, setGeneratingAll] = useState(false);
+  const generatedFilesRef = useRef<File[]>([]);
+  // href نباید موقعِ SSR از navigator حساب بشه (اندروید/iOS فرق دارن و React
+  // اختلافِ attribute بینِ سرور و کلاینت رو تصحیح نمی‌کنه)
+  const [instagramHref, setInstagramHref] = useState("instagram://app");
+  useEffect(() => setInstagramHref(instagramAppUrl()), []);
   const [generateStatus, setGenerateStatus] = useState("");
   const [posterError, setPosterError] = useState("");
 
@@ -1170,6 +1214,7 @@ export default function PosterGeneratorPage() {
     setLoadingDetail(true);
     setDetailError("");
     setDetail(null);
+    generatedFilesRef.current = [];
     setCopied("");
     try {
       const res = await fetch("/api/admin/poster", {
@@ -1508,6 +1553,12 @@ export default function PosterGeneratorPage() {
     if (!detail || generatingAll) return;
     if (!confirmIfAlreadyPosted()) return;
     setGeneratingAll(true);
+    generatedFilesRef.current = [];
+    const generated: { name: string; dataUrl: string }[] = [];
+    const saveGenerated = (dataUrl: string, name: string) => {
+      generated.push({ name, dataUrl });
+      downloadDataUrl(dataUrl, name);
+    };
     setGenerateStatus("در حال ساخت عکس‌ها...");
     setSelectedImage(mainImageUrl);
     try {
@@ -1534,7 +1585,7 @@ export default function PosterGeneratorPage() {
           layoutMirrored,
         }),
       );
-      downloadDataUrl(mainDataUrl, `${safeTag}-اصلی.png`);
+      saveGenerated(mainDataUrl, `${safeTag}-اصلی.png`);
 
       const otherImages = detail.images.filter((img) => img !== mainImageUrl);
       let i = 0;
@@ -1551,7 +1602,7 @@ export default function PosterGeneratorPage() {
           const dataUrl = renderOffscreenToDataUrl((ctx) =>
             drawTagOnlyPoster(ctx, { image: img, tag: safeTag }),
           );
-          downloadDataUrl(dataUrl, `${safeTag}-${i + 1}.png`);
+          saveGenerated(dataUrl, `${safeTag}-${i + 1}.png`);
         } catch {
           // یه عکس خاص شکست خورد (مثلاً بلاک CORS) -- بقیه رو ادامه بده
         }
@@ -1572,7 +1623,7 @@ export default function PosterGeneratorPage() {
               tag: safeTag,
             }),
           );
-          downloadDataUrl(colorDataUrl, `${safeTag}-رنگ‌های‌دیگر.png`);
+          saveGenerated(colorDataUrl, `${safeTag}-رنگ‌های‌دیگر.png`);
           colorPosterMade = true;
         } catch {
           // بارگذاریِ عکسِ یکی از رنگ‌ها شکست خورد -- بی‌اهمیت، بقیه‌ی روند ادامه پیدا کنه
@@ -1600,7 +1651,7 @@ export default function PosterGeneratorPage() {
                 colorName: variant.colorName,
               }),
             );
-            downloadDataUrl(dataUrl, `${safeTag}-رنگ${ci}.png`);
+            saveGenerated(dataUrl, `${safeTag}-رنگ${ci}.png`);
             colorPhotosCount += 1;
           } catch {
             // بارگذاریِ عکسِ این رنگ شکست خورد -- بی‌اهمیت، رنگ‌های بعدی ادامه پیدا کنن
@@ -1613,6 +1664,22 @@ export default function PosterGeneratorPage() {
         otherImages.length + 1 + (colorPosterMade ? 1 : 0) + colorPhotosCount;
       setGenerateStatus(`✓ ${totalCount} عکس دانلود شد و کپشن کپی شد`);
       markAsPosted();
+
+      // طبقِ درخواستِ صریح: روی موبایل، بعدِ ساخت، اینستاگرام آماده‌ی «پستِ جدید»
+      // با همین عکس‌ها باشه. لینکِ مستقیم به اپ (intent/scheme) روی گوشیِ واقعی
+      // کار نکرد -- پس عکس‌ها رو از منوی اشتراکِ گوشی (Web Share) می‌فرستیم که
+      // به نامِ پکیج/لینکِ اپ وابسته نیست. مرورگر این منو رو فقط بعدِ لمسِ تازه‌ی
+      // کاربر اجازه می‌ده (ساخت چند ثانیه طول کشیده)، پس یه تلاشِ خودکار می‌کنیم
+      // و اگه بلاک شد، دکمه‌ی «اشتراک‌گذاری» با یه لمس همین کار رو می‌کنه
+      // آمادگیِ اینستاگرام جداست -- شکستش نباید یه ساختِ موفق رو «خطا» نشون بده
+      try {
+        // فقط پوستر اصلی (اولین فایل) -- طبقِ درخواستِ صریح: نسبتِ کادر رو ادمین
+        // خودش توی اینستاگرام عوض می‌کنه و بقیه‌ی عکس‌ها رو دستی از گالری برمی‌داره
+        generatedFilesRef.current = dataUrlsToFiles(generated.slice(0, 1));
+        if (isMobileDevice()) await shareFiles(generatedFilesRef.current);
+      } catch {
+        generatedFilesRef.current = [];
+      }
     } catch {
       setGenerateStatus(
         "خطا در ساخت عکس‌ها -- احتمالاً CORS. از «دانلود PNG» تکی امتحان کنید",
@@ -1706,6 +1773,22 @@ export default function PosterGeneratorPage() {
     } catch {
       alert("کپی با شکست مواجه شد؛ متن را دستی کپی کنید");
     }
+  }
+
+  // منوی اشتراکِ گوشی -- ادمین «بله» (یا هر پیام‌رسانِ دیگه) و مخاطب رو از همون منو
+  // انتخاب می‌کنه و متن آماده توی کادرِ پیام میاد. اگه مرورگر منوی اشتراک نداشت
+  // (مثلاً دسکتاپ)، حداقل کپی می‌شه
+  async function shareText(text: string) {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ text });
+      } catch {
+        // کاربر منو رو بست -- خطا نیست
+      }
+      return;
+    }
+    await copyText(text, "telegram");
+    alert("مرورگرِ شما منوی اشتراک‌گذاری نداره؛ متن کپی شد -- دستی پیست کنید");
   }
 
   function downloadPoster() {
@@ -2084,7 +2167,38 @@ export default function PosterGeneratorPage() {
               >
                 دانلود PNG (فقط همین عکس)
               </button>
+              <button
+                  disabled={generatingAll || !selectedImage}
+                  onClick={async () => {
+                    // هنوز چیزی ساخته نشده -- اول می‌سازه (که خودش اگه مرورگر اجازه بده
+                    // منوی اشتراک رو هم باز می‌کنه)؛ وگرنه مستقیم عکس‌های آماده رو می‌فرسته
+                    if (generatedFilesRef.current.length === 0) {
+                      await generateAndDownloadAll(selectedImage);
+                      return;
+                    }
+                    const ok = await shareFiles(generatedFilesRef.current);
+                    if (!ok) {
+                      setGenerateStatus(
+                        "منوی اشتراک‌گذاریِ گوشی باز نشد -- از «باز کردن اپ اینستاگرام» استفاده کن",
+                      );
+                    }
+                  }}
+                  className="bg-gradient-to-l from-[#f58529] via-[#dd2a7b] to-[#8134af] text-white px-5 py-2 rounded-full text-sm font-medium disabled:opacity-50"
+                >
+                  📲 ارسال پوستر اصلی به اینستاگرام
+              </button>
+              <a
+                href={instagramHref}
+                className="border cut-line px-5 py-2 rounded-full text-sm font-medium bg-white"
+              >
+                باز کردن اپ اینستاگرام
+              </a>
             </div>
+            <p className="text-[11px] text-[var(--color-muted)]">
+              «ارسال پوستر اصلی» (اگه هنوز نساخته‌ای اول می‌سازه) فقط عکسِ اصلی رو توی منوی اشتراکِ
+              گوشی می‌ذاره -- اینستاگرام → «پست/Feed» رو بزن، نسبتِ کادر (Ratio) رو خودت عوض کن و بقیه‌ی
+              عکس‌ها رو از گالری اضافه کن (همه توی گالری ذخیره شدن)؛ کپشن هم کپی شده، فقط پیست کن.
+            </p>
           </div>
 
           {/* کپشن و لینک */}
@@ -2223,12 +2337,20 @@ export default function PosterGeneratorPage() {
                 <span className="text-sm font-bold">
                   متن تلگرام (تگ + لینک)
                 </span>
-                <button
-                  onClick={() => copyText(telegramNote, "telegram")}
-                  className="text-xs text-[var(--color-wine)] hover:underline"
-                >
-                  {copied === "telegram" ? "کپی شد ✓" : "کپی متن تلگرام"}
-                </button>
+                <span className="flex items-center gap-3">
+                  <button
+                    onClick={() => shareText(telegramNote)}
+                    className="text-xs text-[var(--color-wine)] font-bold hover:underline"
+                  >
+                    📤 ارسال به بله/تلگرام
+                  </button>
+                  <button
+                    onClick={() => copyText(telegramNote, "telegram")}
+                    className="text-xs text-[var(--color-wine)] hover:underline"
+                  >
+                    {copied === "telegram" ? "کپی شد ✓" : "کپی متن تلگرام"}
+                  </button>
+                </span>
               </div>
               <textarea
                 value={telegramNote}

@@ -15,15 +15,18 @@ const SORT_OPTIONS: { id: string; label: string }[] = [
 ];
 
 // دقیقاً همون گزینه‌های صفحه‌ی محصولات ترندیول، با همون پارامتر واقعی sst=
-export function TrendyolSortDropdown() {
+// includeDiscountSort: «بیشترین تخفیف» یه مرتب‌سازیِ مجازیه (sst=DISCOUNT) که فقط
+// صفحه‌ی دسته‌بندیِ مارکت‌پلیس پشتیبانیش می‌کنه -- بقیه‌ی صفحه‌ها (سرچ، کمپین، ...) نه
+export function TrendyolSortDropdown({ includeDiscountSort = false }: { includeDiscountSort?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  const options = includeDiscountSort ? [...SORT_OPTIONS, { id: "DISCOUNT", label: "بیشترین تخفیف" }] : SORT_OPTIONS;
   const currentSst = searchParams.get("sst") ?? "SCORE";
-  const currentLabel = SORT_OPTIONS.find((o) => o.id === currentSst)?.label ?? "پیشنهادی";
+  const currentLabel = options.find((o) => o.id === currentSst)?.label ?? "پیشنهادی";
 
   function selectSort(id: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -54,7 +57,7 @@ export function TrendyolSortDropdown() {
               «نگاه سریع» با z-20)، وگرنه با هاورِ یه کارتِ زیرِ همین منو، اون
               دکمه روی خودِ لیستِ باز بازِ مرتب‌سازی می‌نشست */}
           <ul className="absolute left-0 mt-1 z-40 bg-white border cut-line rounded-lg shadow-md min-w-[180px] py-1">
-            {SORT_OPTIONS.map((opt) => (
+            {options.map((opt) => (
               <li key={opt.id}>
                 <button
                   type="button"

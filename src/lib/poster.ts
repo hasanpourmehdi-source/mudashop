@@ -332,6 +332,18 @@ export function priceTL(amount: number | null | undefined): string {
   return `${Math.round(amount)}TL`;
 }
 
+// سایزِ سنیِ لباسِ بچه («2-4 Yaş»، «0-3 Ay») -- مترجمِ عمومیِ سایزِ پوستر کلماتِ
+// کمتر از ۴ حرف رو اصلاً رد می‌کرد و «Yaş» فقط ۳ حرفه، پس همیشه ترکی می‌موند.
+// عمداً قاعده‌ی جدا، نه یه ردیفِ دیکشنریِ «yas -> سال»: «yaş» توی عنوانِ محصولات
+// معنیِ «خیس/مرطوب» هم می‌ده (مثلاً «Yaş Mendil») و ردیفِ عمومی اونا رو خراب می‌کرد.
+// null یعنی این برچسب سایزِ سنی نیست
+export function translateAgeSizeLabel(size: string): string | null {
+  const m = size.match(/^\s*(\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?)\s*(yaş|yas|ay)\s*$/i);
+  if (!m) return null;
+  const unit = m[2].toLowerCase() === "ay" ? "ماه" : "سال";
+  return `${m[1].replace(/\s+/g, "")} ${unit}`;
+}
+
 // درصد تخفیف برای دایره‌ی قرمز روی پوستر؛ null یعنی تخفیفی نیست
 export function getDiscountPercent(
   price: number | null | undefined,
@@ -441,10 +453,25 @@ function tokenizeForHashtags(text: string): string[] {
 // allowLatin=true فقط برای برند: طبقِ درخواستِ صریح، اسمِ لاتینِ برند هم باید
 // هشتگ بشه (کنارِ معادلِ فارسی‌ش، اگه ترجمه شده باشه) -- برخلافِ بقیه‌ی منابع
 // (عنوان/دسته‌بندی/مشخصات) که همچنان فقط فارسی‌شون هشتگ می‌شه
+// طبقِ درخواستِ صریح: نیم‌فاصله (ZWNJ) توی خودِ کلماتِ ترکیبیِ فارسیِ درست
+// (مثلِ «تی‌شرت»، «آستین‌بلند»، «راه‌راه») از نظرِ املا کاملاً درسته، ولی توی
+// یه هشتگِ اینستاگرام هیچ‌کس (مخصوصاً کاربرِ عادی) باهاش آشنا نیست -- زیرخط
+// (_) برعکس، برای همه قابلِ‌فهمه که یعنی «این‌ها یه هشتگِ واحدن». پس فقط موقعِ
+// ساختنِ خودِ متنِ هشتگ (نه جاهای دیگه‌ی سایت که نیم‌فاصله باید همون درستِ
+// املایی‌ش بمونه)، نیم‌فاصله رو با زیرخط عوض می‌کنیم
+function toHashtagText(token: string): string {
+  return token.replace(/‌/g, "_");
+}
+
 function isValidHashtagToken(token: string, allowLatin = false): boolean {
   if (token.length < 2) return false;
   if (/^[0-9۰-۹]+$/.test(token)) return false;
   if (/^[%#@!؟?.,]+$/.test(token)) return false;
+  // طبقِ گزارشِ صریح: «٪۹۵» (یا «۹۵%») از این دو چکِ بالا رد نمی‌شد چون هم
+  // رقم داره هم %، پس نه صرفاً «فقط رقم» بود نه صرفاً «فقط علامت» -- ولی %/٪
+  // اصلاً جزوِ کاراکترهای مجازِ هشتگِ اینستاگرام نیست (هشتگ سرِ اولین % قطع
+  // می‌شه)، و یه عددِ درصدِ تنها هم به‌عنوانِ هشتگ بی‌معنیه
+  if (/[%٪]/.test(token)) return false;
   if (!allowLatin && hasUntranslatedLatin(token)) return false;
   return true;
 }
@@ -459,7 +486,7 @@ function combinedHashtagToken(text: string): string | null {
   const words = tokenizeForHashtags(text)
     .map((w) => w.toLowerCase())
     .filter((w) => isValidHashtagToken(w) && !HASHTAG_STOPWORDS.has(w));
-  return words.length > 0 ? words.join("_") : null;
+  return words.length > 0 ? words.map(toHashtagText).join("_") : null;
 }
 
 export function buildGeneratedHashtags(opts: {
@@ -473,10 +500,15 @@ export function buildGeneratedHashtags(opts: {
   attributes?: { name: string; value: string }[];
   sizes?: string[];
 }): string[] {
-  const pool: { text: string; allowLatin?: boolean; combined?: boolean }[] = [];
+  const pool: { text: string; allowLatin?: boolean; combined?: boolean; wholeLatin?: boolean }[] = [];
   if (opts.nameFa) pool.push({ text: opts.nameFa });
   // برند: هم فرمِ لاتینِ اصلی هم معادلِ فارسی‌ش (اگه ترجمه شده باشه) -- طبقِ
-  // درخواستِ صریح، هردو باید هشتگ بشن، نه فقط یکی
+  // درخواستِ صریح، هردو باید هشتگ بشن، نه فقط یکی. علاوه بر تکه‌تکه‌ی کلمات
+  // (مثلِ «polo»، «assn»)، اسمِ *کاملِ* برند هم باید یه هشتگِ واحد باشه: فرمِ
+  // لاتین بدونِ فاصله و علامت به‌هم‌چسبیده («uspoloassn»)، فرمِ فارسی با
+  // زیرخط («یواس_پولو_اسن»). این دوتا قبلِ تکه‌ها میان تا اولویتِ بالاتری بگیرن
+  if (opts.brand) pool.push({ text: opts.brand, wholeLatin: true });
+  if (opts.brandFa) pool.push({ text: opts.brandFa, combined: true });
   if (opts.brand) pool.push({ text: opts.brand, allowLatin: true });
   if (opts.brandFa) pool.push({ text: opts.brandFa, allowLatin: true });
   if (opts.categoryName) pool.push({ text: opts.categoryName, combined: true });
@@ -487,6 +519,17 @@ export function buildGeneratedHashtags(opts: {
   const out: string[] = [];
   for (const piece of pool) {
     if (!piece.text) continue;
+    if (piece.wholeLatin) {
+      const token = piece.text
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, "");
+      if (isValidHashtagToken(token, true) && !seen.has(token)) {
+        seen.add(token);
+        out.push(token);
+      }
+      continue;
+    }
     if (piece.combined) {
       const token = combinedHashtagToken(piece.text);
       if (token && !seen.has(token)) {
@@ -496,9 +539,10 @@ export function buildGeneratedHashtags(opts: {
       continue;
     }
     for (const raw of tokenizeForHashtags(piece.text)) {
-      const token = raw.toLowerCase();
-      if (!isValidHashtagToken(token, piece.allowLatin)) continue;
-      if (HASHTAG_STOPWORDS.has(token)) continue;
+      const rawToken = raw.toLowerCase();
+      if (!isValidHashtagToken(rawToken, piece.allowLatin)) continue;
+      if (HASHTAG_STOPWORDS.has(rawToken)) continue;
+      const token = toHashtagText(rawToken);
       if (seen.has(token)) continue;
       seen.add(token);
       out.push(token);

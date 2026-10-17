@@ -24,7 +24,23 @@ import {
   extractBasketDiscountPercent,
   isTrendyolShortLink,
   resolveTrendyolShortLink,
+  translateAgeSizeLabel,
 } from "@/lib/poster";
+
+describe("translateAgeSizeLabel", () => {
+  it("«Yaş» و «Ay» رو (با بازه یا عددِ تنها) به سال/ماه ترجمه می‌کنه", () => {
+    expect(translateAgeSizeLabel("2-4 Yaş")).toBe("2-4 سال");
+    expect(translateAgeSizeLabel("12 YAŞ")).toBe("12 سال");
+    expect(translateAgeSizeLabel("6 - 9 Ay")).toBe("6-9 ماه");
+  });
+
+  it("سایزهایی که سنی نیستن رو دست نمی‌زنه", () => {
+    expect(translateAgeSizeLabel("S")).toBeNull();
+    expect(translateAgeSizeLabel("36")).toBeNull();
+    expect(translateAgeSizeLabel("Standart")).toBeNull();
+    expect(translateAgeSizeLabel("Yaş Mendil")).toBeNull();
+  });
+});
 
 describe("parseTrendyolInput", () => {
   it("لینک کامل ترندیول را می‌پذیرد", () => {
@@ -335,6 +351,24 @@ describe("buildGeneratedHashtags", () => {
     });
     expect(tags).toContain("rowenta");
     expect(tags).toContain("روونتا");
+  });
+
+  it("برندِ چندکلمه‌ای: اسمِ کاملِ به‌هم‌چسبیده (لاتین) و با زیرخط (فارسی) هم کنارِ تکه‌ها هشتگ می‌شود", () => {
+    const tags = buildGeneratedHashtags({
+      brand: "U.S. Polo Assn.",
+      brandFa: "یو اس پولو آسن",
+    });
+    expect(tags).toContain("uspoloassn");
+    expect(tags).toContain("یو_اس_پولو_آسن");
+    // تکه‌های جدا هنوز هستن
+    expect(tags).toContain("polo");
+    // اسمِ کامل قبلِ تکه‌ها میاد
+    expect(tags.indexOf("uspoloassn")).toBeLessThan(tags.indexOf("polo"));
+  });
+
+  it("برندِ تک‌کلمه‌ای هشتگِ تکراری نمی‌سازد", () => {
+    const tags = buildGeneratedHashtags({ brand: "Rowenta" });
+    expect(tags.filter((t) => t === "rowenta")).toHaveLength(1);
   });
 
   it("با ورودی خالی آرایه خالی می‌دهد", () => {

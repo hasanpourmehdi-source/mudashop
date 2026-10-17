@@ -10,6 +10,7 @@ import { StarRating, VerifiedBadge, EyeIcon, getStripBadgeLabel } from "@/compon
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
 import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
 import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
+import { sortByDiscountDesc } from "@/lib/discountPercent";
 
 // میلا/ترندیول در مرز صفحه‌ها محصولات تکراری برمی‌گردونن (همان id) -- dedup
 // به‌جای append خام، تا کلید React تکراری نشه (که باعث می‌شد کارت‌ها dup
@@ -361,12 +362,16 @@ export function TrendyolLiveGrid({
   initialWishlistedIds = [],
   activeAttrsQuery,
   minDiscountPercentToShow = 2,
+  discountMode,
 }: {
   initialProducts: TrendyolLiveProduct[];
   initialNextUrl: string | null;
   initialWishlistedIds?: string[];
   activeAttrsQuery?: string;
   minDiscountPercentToShow?: number;
+  // مرتب‌سازیِ «بیشترین تخفیف»: سرور فقط صفحه‌ی اول رو داده؛ بقیه‌ی صفحه‌ها یکی‌یکی
+  // از اینجا (سمتِ مرورگر) گرفته، ادغام، و دوباره با درصدِ تخفیف مرتب می‌شن
+  discountMode?: { tagNextUrl: string | null; lowestUrl: string };
 }) {
   const [products, setProducts] = useState(initialProducts);
   const [nextUrl, setNextUrl] = useState(initialNextUrl);
@@ -376,6 +381,43 @@ export function TrendyolLiveGrid({
   // فقط یه instance از مودال «نگاه سریع» برای کل گرید -- نه یکی برای هر کارت --
   // تا هم DOM سنگین نشه هم مطمئن باشیم دو مودال همزمان باز نمی‌شه
   const [quickViewProduct, setQuickViewProduct] = useState<TrendyolLiveProduct | null>(null);
+  const [scanStatus, setScanStatus] = useState("");
+
+  useEffect(() => {
+    if (!discountMode) return;
+    let cancelled = false;
+    (async () => {
+      // پشت‌سرهم (نه هم‌زمان) -- دو درخواستِ هم‌زمان به ترندیول باعثِ ۴۰۳ و ریستِ کوکی می‌شه
+      const jobs: { url: string; maxPages: number }[] = [];
+      if (discountMode.tagNextUrl) jobs.push({ url: discountMode.tagNextUrl, maxPages: 3 });
+      jobs.push({ url: discountMode.lowestUrl, maxPages: 2 });
+      const totalSteps = jobs.reduce((n, j) => n + j.maxPages, 0);
+      let step = 0;
+      for (const job of jobs) {
+        let url: string | null = job.url;
+        for (let i = 0; i < job.maxPages && url; i++) {
+          if (cancelled) return;
+          step += 1;
+          setScanStatus(`در حال بررسیِ محصولاتِ بیشتر (${step} از حداکثر ${totalSteps})...`);
+          try {
+            const res: Response = await fetch(`/api/trendyol/live?url=${encodeURIComponent(url)}`);
+            if (!res.ok) break;
+            const data: { products: TrendyolLiveProduct[]; nextUrl: string | null } = await res.json();
+            if (cancelled) return;
+            setProducts((prev) => sortByDiscountDesc(dedupeProducts(prev, data.products)));
+            url = data.nextUrl ?? null;
+          } catch {
+            break;
+          }
+        }
+      }
+      if (!cancelled) setScanStatus("");
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discountMode?.lowestUrl]);
 
   // محصولات تبلیغاتی/اسپانسری ترندیول رو نشون نمی‌دیم -- نمایش جایگاه تبلیغاتی
   // یه سایت دیگه توی سایت خودمون گمراه‌کننده‌ست
@@ -424,6 +466,7 @@ export function TrendyolLiveGrid({
 
   return (
     <div>
+      {scanStatus && <p className="text-xs text-[var(--color-wine)] mb-2">{scanStatus}</p>}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
         {visibleProducts.map((p, index) => (
           <TrendyolProductCard

@@ -252,8 +252,12 @@ function extractOgImage(html: string): string | null {
 // خودِ صفحه‌ی ترندیول زیر «ÜRÜNÜN KAMPANYALARI» نشون داده می‌شه) داخل
 // window["__envoy__SHARED_PROPS"]={"product":{...,"promotions":[...]}} توی
 // خودِ HTML embed شده -- بارگذاری کلاینت‌ساید نیست، همین fetch اولیه داره.
-// ممکنه این آرایه چندبار توی HTML تکرار شده باشه (یکی تودرتوی merchantListing)
-// که محتوای یکسان دارن، پس فقط اولین occurrence رو می‌گیریم
+// این آرایه چندبار توی HTML میاد: برای فروشنده‌ی فعلی (merchantListing.promotions)
+// و *جداگانه* برای هر فروشنده‌ی دیگه (merchantListing.otherMerchants[].promotions)
+// با کمپین‌های خودشون -- قبلاً «اولین occurrence» رو می‌گرفتیم که گاهی مالِ
+// یه فروشنده‌ی دیگه بود (مثلاً «Sepette %5 İndirim»ِ فروشنده‌ی NEVAvm روی
+// محصولِ فروشنده‌ی GGL-STORE نشون داده و روی قیمتِ پوستر اعمال می‌شد). پس
+// occurrenceهایی که داخلِ آرایه‌ی otherMerchants هستن رد می‌شن
 // وقتی کاربرِ واقعیِ ترندیول روی یکی از این کمپین‌ها کلیک می‌کند، به
 // `https://www.trendyol.com/sr?prm={id}` می‌رود -- صفحه‌ی فیلترشده‌ی همان
 // کمپین با همه‌ی امکانات فیلتر. این id همون `promotions[].id` است، پس همراه
@@ -264,7 +268,26 @@ function extractCampaignPromotions(
   html: string
 ): { id: number; name: string; endsAt: string | null; discountType: string | null }[] {
   const marker = '"promotions":[';
-  const idx = html.indexOf(marker);
+  const otherMerchantsMarker = '"otherMerchants":[';
+  const otherMerchantsRanges: [number, number][] = [];
+  for (let from = 0; ; ) {
+    const s = html.indexOf(otherMerchantsMarker, from);
+    if (s === -1) break;
+    const arr = extractBracketedJson(html, s + otherMerchantsMarker.length - 1, "[", "]");
+    const start = s + otherMerchantsMarker.length - 1;
+    if (arr) otherMerchantsRanges.push([start, start + arr.length]);
+    from = s + otherMerchantsMarker.length;
+  }
+  let idx = -1;
+  for (let from = 0; ; ) {
+    const cand = html.indexOf(marker, from);
+    if (cand === -1) break;
+    if (!otherMerchantsRanges.some(([s, e]) => cand > s && cand < e)) {
+      idx = cand;
+      break;
+    }
+    from = cand + marker.length;
+  }
   if (idx === -1) return [];
   const raw = extractBracketedJson(html, idx + marker.length - 1, "[", "]");
   if (!raw) return [];

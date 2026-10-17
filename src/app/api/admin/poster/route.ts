@@ -9,6 +9,7 @@ import {
   buildProductIdTag,
   siteSlugFromUrl,
   getDiscountPercent,
+  translateAgeSizeLabel,
   isTrendyolShortLink,
   resolveTrendyolShortLink,
 } from "@/lib/poster";
@@ -22,6 +23,8 @@ export const maxDuration = 60;
 // کدهای معمولِ سایز (حرف/عدد کوتاه مثلِ S، M، ۳۶، ۲XL) نیازی به ترجمه ندارن؛
 // فقط وقتی سایز یک *کلمه‌ی* واقعیه (مثل "Standart") باید از دیکشنری رد شود
 async function translateSizeLabelForPoster(size: string): Promise<string> {
+  const ageLabel = translateAgeSizeLabel(size);
+  if (ageLabel) return ageLabel;
   if (!/[A-Za-zÇŞĞİÖÜçşğıöü]{4,}/.test(size)) return size;
   return translateTrendyolAttributeText(size);
 }

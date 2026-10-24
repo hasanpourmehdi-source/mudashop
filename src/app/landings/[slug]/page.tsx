@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { ProductGrid, GridViewToggle } from "@/components/GridView";
 import Link from "next/link";
 import { SEO_LANDINGS, getLandingBySlug } from "@/data/seoLandings";
 import { fetchMazonProducts } from "@/lib/products";
@@ -83,11 +84,16 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
       {filtered.length === 0 ? (
         <p className="text-[var(--color-muted)]">محصولی با این فیلتر پیدا نشد.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-12">
-          {filtered.map((p) => (
-            <ProductCard key={p.id} product={p} />
-          ))}
-        </div>
+        <>
+          <div className="flex justify-end mb-3">
+            <GridViewToggle />
+          </div>
+          <ProductGrid className="sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-12">
+            {filtered.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </ProductGrid>
+        </>
       )}
 
       {/* متن سئو -- زیرِ محصولات مثل تگموند */}

@@ -10,10 +10,11 @@ import {
   TRENDYOL_RAW_CATEGORY_SENTINEL,
   TRENDYOL_RAW_COLOR_SENTINEL,
 } from "@/lib/externalSites";
+import { GridViewToggle } from "@/components/GridView";
 import { prisma } from "@/lib/prisma";
 import { fetchTrendyolProductsFromUrl, siteSlugToKind } from "@/lib/trendyol";
 import { translateSearchQueryToTurkish } from "@/lib/trendyolTitleTranslation";
-import { fetchDiscountSeed } from "@/lib/trendyolTopDiscounts";
+import { fetchDiscountSeed, type DiscountScanPlan } from "@/lib/trendyolTopDiscounts";
 import { logTrendyolFetchFailure } from "@/lib/trendyolFetchLog";
 import { auth } from "@/lib/auth";
 import { fetchWishlistedTrendyolIds } from "@/lib/wishlist";
@@ -170,7 +171,10 @@ export default async function MarketplaceSitePage({
                     </span>
                   )}
                 </h2>
-                <TrendyolSortDropdown />
+                <div className="flex items-center gap-2">
+                  <GridViewToggle />
+                  <TrendyolSortDropdown />
+                </div>
               </div>
               <StaleResultsNotice staleSince={staleSince} />
               {initialProducts.length === 0 ? (
@@ -238,16 +242,18 @@ export default async function MarketplaceSitePage({
   // فیلترهای تخفیف (تگِ آوانتاژی / کم‌ترین قیمتِ ۳۰ روز) روشون اضافه می‌شن --
   // خودِ تابع (fetchDiscountSeed + TrendyolLiveGrid) اضافه‌شون می‌کنه
   const isDiscountSort = query.sst === DISCOUNT_SORT_ID;
-  let discountMode: { tagNextUrl: string | null; lowestUrl: string } | undefined;
+  let discountMode: DiscountScanPlan | undefined;
   const discountBaseUrl = isDiscountSort ? url : null;
 
   if (isDiscountSort && discountBaseUrl) {
     try {
-      const result = await fetchDiscountSeed(discountBaseUrl);
+      const result = await fetchDiscountSeed(discountBaseUrl, {
+        hasAdvantageTag: siteSlugToKind(slug) !== "TRENDYOL_MILLA",
+      });
       initialProducts = result.products;
       initialNextUrl = null;
       initialTotal = result.products.length;
-      discountMode = { tagNextUrl: result.tagNextUrl, lowestUrl: result.lowestUrl };
+      discountMode = { seedNextUrl: result.seedNextUrl, scanUrl: result.scanUrl };
     } catch (err) {
       loadError = err instanceof Error ? err.message : "خطا در دریافت محصولاتِ تخفیف‌دار";
     }
@@ -278,7 +284,9 @@ export default async function MarketplaceSitePage({
   // دسته‌ی خاص روی همین سایت خالیه -- فقط وقتی که تنها فیلترهای فعال همین
   // دسته (و شاید جنسیت همراهش) باشن، نه وقتی برند/سایز/... دیگه‌ای هم انتخاب
   // شده (وگرنه صفر شدن نتیجه ممکنه به‌خاطر آن فیلترهای دیگه باشه، نه خودِ دسته)
-  if (!loadError && !query.q) {
+  // توی حالتِ «بیشترین تخفیف» initialTotal شمارِ نتیجه‌ی *فیلترِ تخفیف* ـه، نه کلِ دسته --
+  // صفر بودنش نباید دسته رو «خالیِ تأییدشده» (و مخفی) علامت بزنه
+  if (!loadError && !query.q && !isDiscountSort) {
     const categoryToken = effectiveAttrs.find((a) => a.attributeName === TRENDYOL_RAW_CATEGORY_SENTINEL);
     const onlyCategoryAndGender = effectiveAttrs.every(
       (a) => a.attributeName === TRENDYOL_RAW_CATEGORY_SENTINEL || a.attributeName === "جنسیت"
@@ -425,13 +433,16 @@ export default async function MarketplaceSitePage({
                 </div>
                 <div className="shrink-0 ms-auto flex items-center gap-2">
                   <MobileFilterTriggerButton activeCount={otherChips.length} />
+                  <GridViewToggle />
                   <TrendyolSortDropdown includeDiscountSort />
                 </div>
               </div>
               {isDiscountSort && (
                 <p className="text-xs text-[var(--color-muted)] mb-3 leading-relaxed">
-                  مرتب‌سازی بر اساسِ بیشترین تخفیف: فیلترهای خودت حفظ شده و فیلترِ «آوانتاژلی» و
-                  «کم‌ترین قیمتِ ۳۰ روز اخیر» بهشون اضافه شده. محصولات چندتا‌چندتا بررسی می‌شن و هر بار
+                  مرتب‌سازی بر اساسِ بیشترین تخفیف: فیلترهای خودت حفظ شده و
+                  {slug === "trendyol-milla"
+                    ? " فیلترِ «کم‌ترین قیمتِ ۳۰ روز اخیر» (میلا فیلترِ «آوانتاژلی» نداره) بهشون اضافه شده."
+                    : " فیلترِ «آوانتاژلی» و «کم‌ترین قیمتِ ۳۰ روز اخیر» بهشون اضافه شده."} محصولات چندتا‌چندتا بررسی می‌شن و هر بار
                   دوباره بر اساسِ درصدِ تخفیف مرتب می‌شن -- نه کلِ دسته. اگه با فیلترهات محصولِ تخفیف‌داری
                   نبود، لیست خالی می‌مونه؛ یه فیلتر رو بردار.
                 </p>

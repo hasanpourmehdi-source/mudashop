@@ -46,6 +46,8 @@ type ProductDetail = {
   // کلماتِ ناشناخته)، وگرنه همون brand رو (بدونِ ترجمه) برمی‌گردونه
   brandFa: string | null;
   categoryName: string | null;
+  // جنسیتِ محصول از دیتای خودِ صفحه‌ی ترندیول (وقتی توی عنوان/مشخصات نیست)
+  genderFa: string | null;
   images: string[];
   attributes: { name: string; value: string }[];
   sizes: string[];
@@ -1473,6 +1475,7 @@ export default function PosterGeneratorPage() {
         nameFa: detail.nameFa || detail.name,
         categoryName: categoryIncluded ? detail.categoryName : null,
         attributes: detail.attributes,
+        genderFa: detail.genderFa,
       })
     : { combo: null, gender: null };
   const genderComboTokens = genderHashtags.combo ? [genderHashtags.combo] : [];
@@ -1753,6 +1756,7 @@ export default function PosterGeneratorPage() {
         categoryName: detail.categoryName,
         sizes: detail.sizes,
         attributes: hashtagAttributes,
+        genderFa: detail.genderFa,
         hashtags: selectedHashtagsList,
       })
     : "";

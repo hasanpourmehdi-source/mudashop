@@ -591,3 +591,18 @@ describe("toEnglishBrandName", () => {
     expect(toEnglishBrandName("DeFacto")).toBe("DeFacto");
   });
 });
+describe("جنسیت از دیتای خودِ ترندیول (genderFa)", () => {
+  it("وقتی عنوان/مشخصات کلمه‌ی جنسیتی ندارن، از genderFa می‌آید", () => {
+    const opts = { nameFa: "ژاکت بافتنی یقه ایستاده", categoryName: "ژاکت", attributes: [] };
+    expect(buildGenderHashtags(opts)).toEqual({ combo: null, gender: null });
+    expect(buildGenderHashtags({ ...opts, genderFa: "مردانه" })).toEqual({
+      combo: "ژاکت_مردانه",
+      gender: "مردانه",
+    });
+  });
+
+  it("کلمه‌ی جنسیتیِ خودِ عنوان بر genderFa اولویت دارد", () => {
+    const r = buildGenderHashtags({ nameFa: "پالتو زنانه", categoryName: "پالتو", genderFa: "مردانه" });
+    expect(r.gender).toBe("زنانه");
+  });
+});

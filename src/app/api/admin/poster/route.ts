@@ -160,6 +160,7 @@ export async function POST(req: Request) {
         brand: detail.brand,
         brandFa,
         categoryName: detail.categoryName,
+        genderFa: detail.genderFa,
         images: detail.images,
         attributes: detail.attributes,
         sizes,

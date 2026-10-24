@@ -1,4 +1,5 @@
 import { gotScraping } from "got-scraping";
+import { extractGenderFaFromHtml } from "@/lib/trendyolGender";
 import { prisma } from "@/lib/prisma";
 import {
   HEADER_GENERATOR_OPTIONS,
@@ -109,6 +110,9 @@ export type TrendyolProductDetail = {
   // شده، پس برای تطبیق با TrendyolCategoryCache.nameTr (که کلیدش ترکیه، نه
   // فارسی) باید همین فیلد استفاده بشه، نه categoryName
   categoryNameTr: string | null;
+  // جنسیتِ محصول به فارسی (مردانه/زنانه/...) از دیتای خودِ صفحه -- مستقل از این‌که
+  // توی عنوان/مشخصات کلمه‌ی جنسیتی باشه یا نه (برای هشتگ‌های پوستر)
+  genderFa: string | null;
   images: string[];
   colorVariants: TrendyolProductVariantColor[]; // شامل خودِ محصول فعلی هم می‌شه
   attributes: { name: string; value: string }[]; // additionalProperty -- جنس، یقه، آستین و...
@@ -742,6 +746,7 @@ async function buildDetailFromDataLayerOnly(
     brand,
     categoryName: categoryNameFa,
     categoryNameTr: rawCategoryName,
+    genderFa: extractGenderFaFromHtml(html),
     images,
     colorVariants: mainImage
       ? [{ contentId, colorName: "", image: mainImage, url: productUrl, price: null }]
@@ -1047,6 +1052,7 @@ export async function fetchTrendyolProductDetail(
     brand,
     categoryName: categoryNameFa,
     categoryNameTr: rawCategoryName,
+    genderFa: extractGenderFaFromHtml(html),
     images: images.map(toProxiedImageUrl),
     colorVariants: colorVariantsInToman,
     attributes,

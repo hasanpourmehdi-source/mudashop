@@ -1,5 +1,6 @@
 "use client";
 
+import { ProductGrid } from "@/components/GridView";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import type { TrendyolLiveProduct } from "@/lib/trendyol";
@@ -17,7 +18,7 @@ import { StarRating, VerifiedBadge, EyeIcon, getStripBadgeLabel } from "@/compon
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";
 import { AdminOriginalLinkCopy } from "@/components/AdminOriginalLinkCopy";
 import { AdminClickToTranslate } from "@/components/AdminClickToTranslate";
-import { sortByDiscountDesc } from "@/lib/discountPercent";
+import { sortByDiscountDesc, effectiveDiscountPercent } from "@/lib/discountPercent";
 
 // میلا/ترندیول در مرز صفحه‌ها محصولات تکراری برمی‌گردونن (همان id) -- dedup
 // به‌جای append خام، تا کلید React تکراری نشه (که باعث می‌شد کارت‌ها dup
@@ -271,14 +272,10 @@ function TrendyolProductCard({
           // originalPrice به قیمتِ نهایی) نشون می‌دیم؛ و از دوتا قیمتِ
           // خط‌خورده‌ی احتمالی، فقط اولی (اصلی‌ترین/originalPrice) رو -- نه
           // قیمتِ میانیِ price رو هم -- تا شلوغ نشه
-          const combinedPercent =
-            hasNormalDiscount && hasBasketDiscount && finalPrice != null
-              ? Math.round(((p.originalPrice! - finalPrice) / p.originalPrice!) * 100)
-              : hasNormalDiscount
-                ? Math.round(((p.originalPrice! - p.price!) / p.originalPrice!) * 100)
-                : hasBasketDiscount
-                  ? p.basketCampaignPercent!
-                  : null;
+          // لیرِ خام اول (effectiveDiscountPercent): وقتی نرخِ ارز ثبت نشده، قیمتِ تومانی ۰ ـه
+          // و مقایسه‌ی تومانی هیچ تخفیفی نمی‌دید -- درحالی‌که مرتب‌سازیِ «بیشترین تخفیف» همیشه
+          // با همین تابع کار می‌کنه و برچسب باید با ترتیبِ لیست هم‌خوان باشه
+          const combinedPercent = effectiveDiscountPercent(p) || null;
           const struckValue = hasNormalDiscount ? p.originalPrice : hasBasketDiscount ? p.price : null;
           const struckLira = hasNormalDiscount ? p.originalPriceLira : hasBasketDiscount ? p.priceLira : null;
           // فقط برای ادمین -- تولتیقِ عدد خامِ لیرِ همون قیمت، برای تأییدِ سریعِ
@@ -378,7 +375,7 @@ export function TrendyolLiveGrid({
   minDiscountPercentToShow?: number;
   // مرتب‌سازیِ «بیشترین تخفیف»: سرور فقط صفحه‌ی اول رو داده؛ بقیه‌ی صفحه‌ها یکی‌یکی
   // از اینجا (سمتِ مرورگر) گرفته، ادغام، و دوباره با درصدِ تخفیف مرتب می‌شن
-  discountMode?: { tagNextUrl: string | null; lowestUrl: string };
+  discountMode?: { seedNextUrl: string | null; scanUrl: string };
 }) {
   const [products, setProducts] = useState(initialProducts);
   const [nextUrl, setNextUrl] = useState(initialNextUrl);
@@ -396,8 +393,8 @@ export function TrendyolLiveGrid({
     (async () => {
       // پشت‌سرهم (نه هم‌زمان) -- دو درخواستِ هم‌زمان به ترندیول باعثِ ۴۰۳ و ریستِ کوکی می‌شه
       const jobs: { url: string; maxPages: number }[] = [];
-      if (discountMode.tagNextUrl) jobs.push({ url: discountMode.tagNextUrl, maxPages: 3 });
-      jobs.push({ url: discountMode.lowestUrl, maxPages: 2 });
+      if (discountMode.seedNextUrl) jobs.push({ url: discountMode.seedNextUrl, maxPages: 3 });
+      jobs.push({ url: discountMode.scanUrl, maxPages: 2 });
       const totalSteps = jobs.reduce((n, j) => n + j.maxPages, 0);
       let step = 0;
       for (const job of jobs) {
@@ -424,7 +421,7 @@ export function TrendyolLiveGrid({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [discountMode?.lowestUrl]);
+  }, [discountMode?.scanUrl]);
 
   // محصولات تبلیغاتی/اسپانسری ترندیول رو نشون نمی‌دیم -- نمایش جایگاه تبلیغاتی
   // یه سایت دیگه توی سایت خودمون گمراه‌کننده‌ست
@@ -468,13 +465,21 @@ export function TrendyolLiveGrid({
   }, [nextUrl]);
 
   if (visibleProducts.length === 0) {
-    return <p className="text-sm text-[var(--color-muted)]">محصولی پیدا نشد.</p>;
+    // توی حالتِ «بیشترین تخفیف» لیستِ اولیه ممکنه خالی باشه و اسکنِ کلاینت هنوز در جریان
+    if (discountMode && scanStatus) {
+      return <p className="text-xs text-[var(--color-wine)]">{scanStatus}</p>;
+    }
+    return (
+      <p className="text-sm text-[var(--color-muted)]">
+        {discountMode ? "محصولِ تخفیف‌داری با این فیلترها پیدا نشد." : "محصولی پیدا نشد."}
+      </p>
+    );
   }
 
   return (
     <div>
       {scanStatus && <p className="text-xs text-[var(--color-wine)] mb-2">{scanStatus}</p>}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+      <ProductGrid className="sm:grid-cols-3 md:grid-cols-4 gap-4">
         {visibleProducts.map((p, index) => (
           <TrendyolProductCard
             key={p.id}
@@ -486,7 +491,7 @@ export function TrendyolLiveGrid({
             minDiscountPercentToShow={minDiscountPercentToShow}
           />
         ))}
-      </div>
+      </ProductGrid>
 
       {quickViewProduct && (
         <TrendyolQuickView

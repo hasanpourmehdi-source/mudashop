@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { ProductGrid, GridViewToggle } from "@/components/GridView";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { fetchMazonProducts } from "@/lib/products";
@@ -55,11 +56,16 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
       {filtered.length === 0 ? (
         <p className="text-[var(--color-muted)]">محصولی برای این برند یافت نشد.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {filtered.map((p) => (
-            <ProductCard key={p.id} product={p} />
-          ))}
-        </div>
+        <>
+          <div className="flex justify-end mb-3">
+            <GridViewToggle />
+          </div>
+          <ProductGrid className="sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {filtered.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </ProductGrid>
+        </>
       )}
     </div>
   );

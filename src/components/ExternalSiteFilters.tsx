@@ -613,27 +613,27 @@ export function ExternalSiteFilters({
         open={openFilterKey === g.key}
         onToggle={() => toggleFilterSection(g.key)}
       >
+        {/* کادرِ جستجو باید حتی وقتی نتیجه‌ای نیست (و کاربر عبارتِ دیگه‌ای بخواد
+            تایپ کنه) باقی بمونه -- وگرنه بعد از اولین جستجوی بی‌نتیجه ناپدید می‌شد */}
+        {g.values.length > 8 && (
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setGroupQueries((prev) => ({ ...prev, [g.key]: e.target.value }))}
+            placeholder={`${g.title} مورد نظر را جستجو کنید`}
+            className="w-full border cut-line rounded-lg px-3 py-1.5 mb-2 bg-white text-xs"
+          />
+        )}
         {filtered.length === 0 ? (
           <p className="text-xs text-[var(--color-muted)] py-1">موردی پیدا نشد.</p>
         ) : (
-          <>
-            {g.values.length > 8 && (
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setGroupQueries((prev) => ({ ...prev, [g.key]: e.target.value }))}
-                placeholder={`${g.title} مورد نظر را جستجو کنید`}
-                className="w-full border cut-line rounded-lg px-3 py-1.5 mb-2 bg-white text-xs"
-              />
-            )}
-            <ul className="space-y-0.5 max-h-48 overflow-y-auto">
-              {filtered.map((v) => (
-                <li key={v.id}>
-                  <FilterCheckbox checked={isSelected(v.id)} onChange={() => toggle(v.id)} label={v.label} />
-                </li>
-              ))}
-            </ul>
-          </>
+          <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+            {filtered.map((v) => (
+              <li key={v.id}>
+                <FilterCheckbox checked={isSelected(v.id)} onChange={() => toggle(v.id)} label={v.label} />
+              </li>
+            ))}
+          </ul>
         )}
       </FilterSection>
     );

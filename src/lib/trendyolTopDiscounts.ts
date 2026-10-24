@@ -57,15 +57,26 @@ const LOWEST_PRICE_DAYS = 30;
 // TrendyolLiveGrid یکی‌یکی از سمتِ مرورگر می‌گیره و دوباره مرتب می‌کنه.
 // baseUrl همون URLِ فیلترهای خودِ کاربره (دسته/جنسیت/رنگ/سایز/...) و فیلترهای
 // تخفیف روش اضافه می‌شن
-export async function fetchDiscountSeed(baseUrl: string): Promise<{
-  products: TrendyolLiveProduct[];
-  tagNextUrl: string | null;
-  lowestUrl: string;
-}> {
+//
+// میلا فیلترِ تگِ آوانتاژی (tag=) رو نداره: با اون پارامتر همیشه ۰ محصول برمی‌گردونه
+// (بررسیِ زنده). برای میلا (hasAdvantageTag=false) صفحه‌ی اولِ فیلترِ «کم‌ترین قیمتِ
+// ۳۰ روز» seed می‌شه و بعدش خودِ لیستِ معمولیِ کاربر اسکن و بر اساسِ تخفیف مرتب می‌شه
+export type DiscountScanPlan = {
+  // ادامه‌ی زنجیره‌ی seed (صفحه‌های بعدیِ همون فیلتر)
+  seedNextUrl: string | null;
+  // آدرسِ زنجیره‌ی دومِ اسکن که کلاینت از صفحه‌ی اولش شروع می‌کنه
+  scanUrl: string;
+};
+
+export async function fetchDiscountSeed(
+  baseUrl: string,
+  { hasAdvantageTag = true }: { hasAdvantageTag?: boolean } = {}
+): Promise<{ products: TrendyolLiveProduct[] } & DiscountScanPlan> {
+  const lowestUrl = `${baseUrl}&lpd=${LOWEST_PRICE_DAYS}`;
+  if (!hasAdvantageTag) {
+    const result = await fetchTrendyolProductsFromUrl(lowestUrl);
+    return { products: sortByDiscountDesc(result.products), seedNextUrl: result.nextUrl, scanUrl: baseUrl };
+  }
   const result = await fetchTrendyolProductsFromUrl(`${baseUrl}&tag=${DISCOUNT_TAG_IDS}`);
-  return {
-    products: sortByDiscountDesc(result.products),
-    tagNextUrl: result.nextUrl,
-    lowestUrl: `${baseUrl}&lpd=${LOWEST_PRICE_DAYS}`,
-  };
+  return { products: sortByDiscountDesc(result.products), seedNextUrl: result.nextUrl, scanUrl: lowestUrl };
 }

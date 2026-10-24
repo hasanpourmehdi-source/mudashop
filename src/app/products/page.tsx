@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProductGrid, GridViewToggle } from "@/components/GridView";
 import { fetchMazonProducts, fetchPopularityMap, fetchRatingMap } from "@/lib/products";
 import { auth } from "@/lib/auth";
 import { fetchWishlistedProductIds } from "@/lib/wishlist";
@@ -255,16 +256,21 @@ export default async function ProductsPage({
         {filtered.length === 0 ? (
           <p className="text-[var(--color-muted)]">محصولی با این فیلتر پیدا نشد.</p>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            {filtered.map((p) => (
-              <ProductCard
-                key={p.id}
-                product={p}
-                isWishlisted={wishlistedIds.has(p.id)}
-                activeAttrsQuery={params.attrs}
-              />
-            ))}
-          </div>
+          <>
+            <div className="flex justify-end mb-3">
+              <GridViewToggle />
+            </div>
+            <ProductGrid className="sm:grid-cols-3 gap-4">
+              {filtered.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  isWishlisted={wishlistedIds.has(p.id)}
+                  activeAttrsQuery={params.attrs}
+                />
+              ))}
+            </ProductGrid>
+          </>
         )}
       </div>
     </div>

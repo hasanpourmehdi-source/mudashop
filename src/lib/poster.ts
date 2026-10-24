@@ -515,6 +515,8 @@ export function detectGenderWord(opts: {
   nameFa?: string | null;
   categoryName?: string | null;
   attributes?: { name: string; value: string }[];
+  // جنسیتِ ثبت‌شده توی دیتای خودِ ترندیول -- وقتی ویژگی/عنوان چیزی نداشتن
+  genderFa?: string | null;
 }): string | null {
   const findIn = (text: string, allowAliases: boolean): string | null => {
     for (const raw of tokenizeForHashtags(text)) {
@@ -536,6 +538,7 @@ export function detectGenderWord(opts: {
     const g = findIn(text, false);
     if (g) return g;
   }
+  if (opts.genderFa && (GENDER_WORDS as readonly string[]).includes(opts.genderFa)) return opts.genderFa;
   return null;
 }
 
@@ -546,6 +549,7 @@ export function buildGenderHashtags(opts: {
   nameFa?: string | null;
   categoryName?: string | null;
   attributes?: { name: string; value: string }[];
+  genderFa?: string | null;
 }): { combo: string | null; gender: string | null } {
   const gender = detectGenderWord(opts);
   if (!gender) return { combo: null, gender: null };
@@ -633,6 +637,7 @@ export type CaptionInput = {
   categoryName?: string | null;
   sizes?: string[];
   attributes?: { name: string; value: string }[];
+  genderFa?: string | null;
   // اگه بدی، دقیقاً همین‌ها (حداکثر همون سقفِ ۵تایی) استفاده می‌شن -- برای
   // وقتی ادمین خودش با چک‌باکس از بینِ کاندیدهای buildGeneratedHashtags
   // انتخاب کرده، نه انتخابِ خودکار

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProductGrid, GridViewToggle } from "@/components/GridView";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -77,11 +78,16 @@ export default async function WishlistPage() {
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {items.map(({ product }) => (
-            <ProductCard key={product.id} product={product} isWishlisted />
-          ))}
-        </div>
+        <>
+          <div className="flex justify-end mb-3">
+            <GridViewToggle />
+          </div>
+          <ProductGrid className="md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {items.map(({ product }) => (
+              <ProductCard key={product.id} product={product} isWishlisted />
+            ))}
+          </ProductGrid>
+        </>
       )}
     </div>
   );

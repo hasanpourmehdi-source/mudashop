@@ -14,7 +14,6 @@ import {
   resolveTrendyolShortLink,
 } from "@/lib/poster";
 import { prisma } from "@/lib/prisma";
-import { fetchPosterSuggestions } from "@/lib/posterSuggestions";
 
 // Cloudflareِ ترندیول گاهی به یه fallback مرورگرِ واقعی (Playwright) نیاز داره که
 // خودش می‌تونه ~۱۵-۲۰ ثانیه طول بکشه -- مهلتِ پیش‌فرضِ Vercel (۱۰ ثانیه) کافی نیست
@@ -76,7 +75,7 @@ export async function POST(req: Request) {
       const { translated: translatedQuery, droppedWords } = await translateSearchQueryToTurkish(query);
       const q = encodeURIComponent(translatedQuery);
       const searchUrl = `${site.baseUrl}q=${q}&qt=${q}&st=${q}&os=1`;
-      const { products, total } = await fetchTrendyolProductsFromUrl(searchUrl);
+      const { products, total } = await fetchTrendyolProductsFromUrl(searchUrl, { allowStale: false });
       return NextResponse.json({
         totalCount: total,
         droppedWords,
@@ -192,18 +191,6 @@ export async function POST(req: Request) {
     } catch (err) {
       return NextResponse.json(
         { error: "دریافت جزئیات محصول ناموفق بود", detail: String(err) },
-        { status: 502 }
-      );
-    }
-  }
-
-  if (action === "suggestions") {
-    try {
-      const suggestions = await fetchPosterSuggestions();
-      return NextResponse.json({ suggestions });
-    } catch (err) {
-      return NextResponse.json(
-        { error: "پیدا کردنِ پیشنهادها ناموفق بود", detail: String(err) },
         { status: 502 }
       );
     }

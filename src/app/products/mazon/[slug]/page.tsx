@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import {
   fetchMazonProductBySlug,
@@ -47,10 +48,13 @@ import { ProductJsonLd } from "@/components/ProductJsonLd";
 import { toMetaDescription, priceFa, siteUrl } from "@/lib/seo";
 import type { Metadata } from "next";
 
+// generateMetadata و صفحه هر دو محصول رو می‌خوان -- یک بار واکشی در هر درخواست
+const getMazonProductBySlug = cache(fetchMazonProductBySlug);
+
 // متادیتای سئو صفحه‌ی محصول مزون -- عنوان، توضیح، تصویر OG و canonical
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const product = await fetchMazonProductBySlug(slug);
+  const product = await getMazonProductBySlug(slug);
   if (!product) return {};
 
   const description = toMetaDescription(stripHtmlToText(product.description));
@@ -80,7 +84,7 @@ export default async function MazonProductPage({
   const { slug } = await params;
   const { attrs } = await searchParams;
   const initialAttrs = parseAttrsQuery(attrs);
-  const product = await fetchMazonProductBySlug(slug);
+  const product = await getMazonProductBySlug(slug);
   if (!product) notFound();
 
   // اگه مهلت اولویتِ یه‌نفر برای این محصول تموم شده باشه و هنوز موجودی باشه، نوبت به نفر بعدی می‌رسه

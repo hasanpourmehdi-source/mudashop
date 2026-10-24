@@ -67,6 +67,12 @@ export const RATE_LIMITS = {
   LOGIN: { limit: 15, windowMs: 10 * 60 * 1000 }, // ۱۵ تلاشِ ورود (هر ایمیلی) در ۱۰ دقیقه از یه IP
   REVIEW_CREATE: { limit: 10, windowMs: 10 * 60 * 1000 }, // ۱۰ نظر در ۱۰ دقیقه
   REVIEW_UPLOAD: { limit: 30, windowMs: 10 * 60 * 1000 }, // ۳۰ آپلود در ۱۰ دقیقه (تا ۴ عکس/ویدیو به‌ازای هر نظر)
+  // صدورِ لینکِ آپلودِ مستقیمِ عکس/ویدیوی نظر -- جدا از REVIEW_UPLOAD تا هر فایل دو بار شمرده نشه
+  REVIEW_UPLOAD_PRESIGN: { limit: 30, windowMs: 10 * 60 * 1000 },
+  // دو endpointِ بدونِ احرازِ هویت که توی دیتابیس می‌نویسن -- بدونِ سقف، هرکسی می‌تونست
+  // جدولِ خطاها/زبان‌ها رو پر کنه (و برای خطاها، اعلانِ ادمین هم اسپم کنه)
+  CLIENT_ERROR_LOG: { limit: 10, windowMs: 10 * 60 * 1000 }, // ۱۰ گزارشِ خطا در ۱۰ دقیقه
+  LOCALE_ANALYTICS: { limit: 3, windowMs: 60 * 60 * 1000 }, // کلاینت ماهی یه‌بار می‌فرسته
 } as const;
 
 export function rateLimitOrNull(req: Request, action: keyof typeof RATE_LIMITS): RateLimitResult | null {

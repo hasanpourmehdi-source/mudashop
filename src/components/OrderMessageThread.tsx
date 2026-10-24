@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useVisiblePolling } from "@/hooks/useVisiblePolling";
+import { usePollIntervalMs } from "@/components/ClientPollingProvider";
 
 type Message = {
   id: string;
@@ -34,7 +36,6 @@ export function OrderMessageThread({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function load() {
     const qs = itemId ? `?itemId=${itemId}` : "";
@@ -47,15 +48,7 @@ export function OrderMessageThread({
       });
   }
 
-  useEffect(() => {
-    if (compact && !open) return;
-    load();
-    pollRef.current = setInterval(load, 15000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderId, itemId, open]);
+  useVisiblePolling(load, usePollIntervalMs(), { enabled: !(compact && !open) });
 
   async function handleSend() {
     if (!text.trim()) return;

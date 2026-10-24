@@ -67,10 +67,8 @@ export const config = {
     "/admin/:path*",
     "/staff/:path*",
     "/profile/:path*",
-    "/checkout/:path*",
     "/orders/:path*",
     "/wallet/:path*",
-    "/payment/:path*",
     "/referral/:path*",
   ],
 };

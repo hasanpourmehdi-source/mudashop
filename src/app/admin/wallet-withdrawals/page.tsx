@@ -1,5 +1,6 @@
 "use client";
 
+import { prepareUpload, appendUpload, discardPrepared } from "@/lib/directUpload";
 import { useEffect, useRef, useState } from "react";
 
 type WithdrawalRequest = {
@@ -35,10 +36,19 @@ function WithdrawalRow({ req, onDone }: { req: WithdrawalRequest; onDone: () => 
     setLoading(true);
     const formData = new FormData();
     formData.append("action", "approve");
-    formData.append("file", file);
+    let prepared: Awaited<ReturnType<typeof prepareUpload>> | null = null;
+    try {
+      prepared = await prepareUpload(file, "withdrawal-receipt");
+      appendUpload(formData, prepared);
+    } catch (err) {
+      setLoading(false);
+      setError(err instanceof Error ? err.message : "خطا در آپلود فیش");
+      return;
+    }
     const res = await fetch(`/api/admin/wallet-withdrawals/${req.id}`, { method: "POST", body: formData });
     setLoading(false);
     if (!res.ok) {
+      discardPrepared(prepared);
       const data = await res.json().catch(() => ({}));
       setError(data.error ?? "خطا در تکمیل درخواست");
       return;

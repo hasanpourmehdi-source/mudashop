@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FEATURE_CATALOG } from "@/lib/featureFlags";
+import { FEATURE_CATALOG } from "@/lib/featureCatalog";
 
 export default function AdminFeatureFlagsPage() {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});

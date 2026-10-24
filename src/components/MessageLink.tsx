@@ -1,28 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useVisiblePolling } from "@/hooks/useVisiblePolling";
+import { usePollIntervalMs } from "@/components/ClientPollingProvider";
 
 // لینک «پیام‌ها» با بجِ نخوانده -- فقط برای مشتری (ادمین از پنل خودش پاسخ می‌دهد)
 export function MessageLink({ admin = false }: { admin?: boolean }) {
   const [unread, setUnread] = useState(0);
+  const intervalMs = usePollIntervalMs();
 
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
+  // ادمین اصلاً این لینک رو نمی‌بینه، پس پولینگ هم نمی‌خواد
+  useVisiblePolling(
+    () => {
       fetch("/api/support/unread")
         .then((res) => (res.ok ? res.json() : { unread: 0 }))
-        .then((data) => {
-          if (alive) setUnread(data.unread ?? 0);
-        })
+        .then((data) => setUnread(data.unread ?? 0))
         .catch(() => {});
-    load();
-    const t = setInterval(load, 20000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+    },
+    intervalMs,
+    { enabled: !admin },
+  );
 
   if (admin) return null;
 

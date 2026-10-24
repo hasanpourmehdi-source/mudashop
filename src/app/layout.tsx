@@ -36,6 +36,7 @@ import { LanguageProvider } from "@/components/LanguageProvider";
 import { FeatureFlagsProvider } from "@/components/FeatureFlagsProvider";
 import { TrustBadgesProvider } from "@/components/TrustBadgesProvider";
 import { SalesPausedProvider } from "@/components/SalesPausedProvider";
+import { ClientPollingProvider } from "@/components/ClientPollingProvider";
 import { getFeatureFlags } from "@/lib/featureFlags";
 import { PwaInstallProvider } from "@/components/PwaInstallProvider";
 import { isLang, LANG_COOKIE, DEFAULT_LANG } from "@/lib/i18n";
@@ -136,6 +137,7 @@ export default async function RootLayout({
       // همینجا -- حالتِ «فروش موقتاً متوقف» هم سراسریه و روی هر صفحه‌ای لازمه
       SITE_SETTING_KEYS.SALES_PAUSED_ENABLED,
       SITE_SETTING_KEYS.SALES_PAUSED_MESSAGE,
+      SITE_SETTING_KEYS.CLIENT_POLL_INTERVAL_SECONDS,
     ]),
     getFeatureFlags(),
     auth(),
@@ -154,6 +156,9 @@ export default async function RootLayout({
     message: trustBadgeSettings[SITE_SETTING_KEYS.SALES_PAUSED_MESSAGE] ?? "",
   };
 
+  const pollSeconds = Number(trustBadgeSettings[SITE_SETTING_KEYS.CLIENT_POLL_INTERVAL_SECONDS]);
+  const pollIntervalMs = (Number.isFinite(pollSeconds) && pollSeconds >= 5 ? pollSeconds : 30) * 1000;
+
   const cookieLang = cookieStore.get(LANG_COOKIE)?.value;
   const initialLang = isLang(cookieLang) ? cookieLang : DEFAULT_LANG;
 
@@ -165,6 +170,7 @@ export default async function RootLayout({
           <FeatureFlagsProvider flags={flags}>
             <TrustBadgesProvider trustBadges={trustBadges}>
             <SalesPausedProvider value={salesPaused}>
+            <ClientPollingProvider intervalMs={pollIntervalMs}>
             <LanguageProvider initialLang={initialLang}>
               <PwaInstallProvider>
                 <ServiceWorkerRegister />
@@ -196,6 +202,7 @@ export default async function RootLayout({
                 <TranslationComboBar isAdmin={isAdmin} />
               </PwaInstallProvider>
             </LanguageProvider>
+            </ClientPollingProvider>
             </SalesPausedProvider>
             </TrustBadgesProvider>
           </FeatureFlagsProvider>

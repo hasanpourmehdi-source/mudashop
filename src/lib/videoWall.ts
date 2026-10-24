@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { parseImages } from "@/lib/products";
 import { internalTrendyolProductHref } from "@/lib/trendyolProductLink";
-import { getCachedTrendyolProductUrl } from "@/lib/trendyolProductUrlCache";
 
 const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov"];
 function isVideoUrl(url: string): boolean {
@@ -56,29 +55,37 @@ export async function fetchVideoWallItems(limit = 12): Promise<VideoWallItem[]> 
       kind: "official",
     }));
 
-  const reviewItems: VideoWallItem[] = [];
+  const picked: { r: (typeof videoReviews)[number]; videoUrl: string }[] = [];
   for (const r of videoReviews) {
-    if (reviewItems.length >= limit) break;
+    if (picked.length >= limit) break;
     const videoUrl = parseImages(r.images).find(isVideoUrl);
     if (!videoUrl) continue;
-
-    let href: string | null = null;
-    if (r.source === "MAZON" && r.product) {
-      href = `/products/mazon/${r.product.slug}`;
-    } else if (r.externalId) {
-      const trendyolUrl = await getCachedTrendyolProductUrl(r.externalId);
-      href = internalTrendyolProductHref(r.externalId, trendyolUrl);
-    }
-    if (!href) continue;
-
-    reviewItems.push({
-      id: `review-${r.id}`,
-      videoUrl,
-      title: r.productTitle ?? "محصول",
-      href,
-      kind: "review",
-    });
+    if (!(r.source === "MAZON" && r.product) && !r.externalId) continue;
+    picked.push({ r, videoUrl });
   }
+
+  // آدرسِ کاملِ ترندیول همه‌ی ویدیوها با یه کوئری (قبلاً به‌ازای هر ویدیو یه کوئریِ پشت‌سرِهم بود)
+  const externalIds = picked
+    .filter(({ r }) => !(r.source === "MAZON" && r.product) && r.externalId)
+    .map(({ r }) => r.externalId as string);
+  const urlRows = externalIds.length
+    ? await prisma.trendyolProductUrlCache.findMany({
+        where: { contentId: { in: externalIds } },
+        select: { contentId: true, url: true },
+      })
+    : [];
+  const urlById = new Map(urlRows.map((row) => [row.contentId, row.url]));
+
+  const reviewItems: VideoWallItem[] = picked.map(({ r, videoUrl }) => ({
+    id: `review-${r.id}`,
+    videoUrl,
+    title: r.productTitle ?? "محصول",
+    href:
+      r.source === "MAZON" && r.product
+        ? `/products/mazon/${r.product.slug}`
+        : internalTrendyolProductHref(r.externalId as string, urlById.get(r.externalId as string)),
+    kind: "review",
+  }));
 
   return [...official, ...reviewItems].slice(0, limit);
 }

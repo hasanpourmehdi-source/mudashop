@@ -14,11 +14,14 @@ export async function GET(req: Request) {
   const userId = url.searchParams.get("userId");
   if (!userId) return NextResponse.json({ error: "userId لازم است" }, { status: 400 });
 
-  const messages = await prisma.supportMessage.findMany({
-    where: { userId },
-    orderBy: { createdAt: "asc" },
-    take: 200,
-  });
+  // نزولی + reverse: با asc + take، بعد از ۲۰۰ پیام *قدیمی‌ترین*‌ها برمی‌گشت
+  const messages = (
+    await prisma.supportMessage.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    })
+  ).reverse();
 
   const unread = messages.filter((m) => m.sender === "CUSTOMER" && !m.adminRead).length;
   if (unread > 0) {

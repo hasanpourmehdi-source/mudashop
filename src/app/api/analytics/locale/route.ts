@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { rateLimitOrNull } from "@/lib/rateLimit";
 
 const schema = z.object({ lang: z.string().min(2).max(35) });
 
@@ -9,6 +10,7 @@ const schema = z.object({ lang: z.string().min(2).max(35) });
 // به زبان‌های دیگر ترجمه شود. کلاینت (LocaleAnalyticsRecorder) این را حداکثر
 // یک‌بار در ماه به‌ازای هر مرورگر می‌فرستد.
 export async function POST(req: Request) {
+  if (rateLimitOrNull(req, "LOCALE_ANALYTICS")) return NextResponse.json({ ok: false }, { status: 429 });
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

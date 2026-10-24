@@ -4,18 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { notifyAdminsOnce } from "@/lib/adminAlerts";
 import { approveShippingPayment } from "@/lib/orderPaymentApproval";
 import { getSiteSettingBool, SITE_SETTING_KEYS } from "@/lib/siteSettings";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
-import { fileMatchesDeclaredType } from "@/lib/fileSignature";
-
-const ALLOWED_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
-
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // ۵ مگابایت
+import { acceptUpload } from "@/lib/uploadStorage";
+import { RECEIPT_UPLOAD_SPEC } from "@/lib/uploadSpecs";
 
 // آپلود فیش دور دوم (هزینه ارسال سفارش خارجی) -- دقیقاً عین
 // /api/payment/[authority]/receipt ولی روی ShippingPayment، کلید‌شده با orderId
@@ -42,36 +32,9 @@ export async function POST(
   }
 
   const formData = await req.formData();
-  const file = formData.get("file");
-
-  if (!file || !(file instanceof File)) {
-    return NextResponse.json({ error: "فایلی ارسال نشده است" }, { status: 400 });
-  }
-
-  const ext = ALLOWED_TYPES[file.type];
-  if (!ext) {
-    return NextResponse.json(
-      { error: "فرمت فایل مجاز نیست (فقط jpg, png, webp, gif)" },
-      { status: 400 }
-    );
-  }
-
-  if (file.size > MAX_SIZE_BYTES) {
-    return NextResponse.json({ error: "حجم فایل نباید بیشتر از ۵ مگابایت باشد" }, { status: 400 });
-  }
-
-  const uploadsDir = path.join(process.cwd(), "public", "uploads", "receipts");
-  await mkdir(uploadsDir, { recursive: true });
-
-  const buffer = Buffer.from(await file.arrayBuffer());
-  if (!fileMatchesDeclaredType(buffer, file.type)) {
-    return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
-  }
-
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  await writeFile(path.join(uploadsDir, filename), buffer);
-
-  const receiptUrl = `/uploads/receipts/${filename}`;
+  const uploaded = await acceptUpload(formData, RECEIPT_UPLOAD_SPEC);
+  if ("error" in uploaded) return NextResponse.json({ error: uploaded.error }, { status: 400 });
+  const receiptUrl = uploaded.url;
 
   await prisma.shippingPayment.update({
     where: { orderId: id },

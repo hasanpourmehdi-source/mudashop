@@ -25,7 +25,37 @@ import {
   isTrendyolShortLink,
   resolveTrendyolShortLink,
   translateAgeSizeLabel,
+  buildGenderHashtags,
+  detectGenderWord,
+  isGenderOnlyHashtag,
 } from "@/lib/poster";
+
+describe("جنسیت توی هشتگ", () => {
+  it("اول ویژگیِ «جنسیت» (حتی اسمِ ساده‌ی «زن») و بعد کلماتِ عنوان", () => {
+    expect(detectGenderWord({ attributes: [{ name: "جنسیت", value: "زن" }] })).toBe("زنانه");
+    expect(detectGenderWord({ nameFa: "پالتو ساده مردانه یقه‌دار" })).toBe("مردانه");
+    expect(detectGenderWord({ nameFa: "پالتو ساده" })).toBeNull();
+  });
+
+  it("ترکیبِ نوعِ محصول + جنسیت: از دسته‌بندی، وگرنه اولین کلمه‌ی عنوان", () => {
+    expect(buildGenderHashtags({ categoryName: "پالتو", nameFa: "پالتو ساده زنانه" })).toEqual({
+      combo: "پالتو_زنانه",
+      gender: "زنانه",
+    });
+    // دسته‌بندی تیک نخورده (null) => از عنوان
+    expect(buildGenderHashtags({ categoryName: null, nameFa: "پالتو ساده زنانه" }).combo).toBe("پالتو_زنانه");
+    // دسته‌بندیِ خودش جنسیت داره => تکرار نمی‌شه
+    expect(buildGenderHashtags({ categoryName: "پالتو زنانه", nameFa: "x" }).combo).toBe("پالتو_زنانه");
+  });
+
+  it("جنسیتِ تنها پیش‌فرض انتخاب نمی‌شه ولی ترکیبش میاد", () => {
+    expect(isGenderOnlyHashtag("زنانه")).toBe(true);
+    expect(isGenderOnlyHashtag("پالتو_زنانه")).toBe(false);
+    const sel = buildDefaultHashtagSelection({ nameFa: "پالتو ساده زنانه", categoryName: "پالتو" });
+    expect(sel[0]).toBe("پالتو_زنانه");
+    expect(sel).not.toContain("زنانه");
+  });
+});
 
 describe("translateAgeSizeLabel", () => {
   it("«Yaş» و «Ay» رو (با بازه یا عددِ تنها) به سال/ماه ترجمه می‌کنه", () => {

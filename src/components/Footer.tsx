@@ -89,12 +89,13 @@ export function Footer({
           </h3>
           <ul className="space-y-2 text-sm text-[var(--color-muted)]">
             <li>
-              <Link href="/profile" className="hover:text-[var(--color-wine)]">
+              {/* prefetch خاموش: برای مهمان‌ها این صفحه‌ها فقط به ورود ریدایرکت می‌شن */}
+              <Link href="/profile" prefetch={false} className="hover:text-[var(--color-wine)]">
                 {t(lang, "myProfile")}
               </Link>
             </li>
             <li>
-              <Link href="/orders" className="hover:text-[var(--color-wine)]">
+              <Link href="/orders" prefetch={false} className="hover:text-[var(--color-wine)]">
                 {t(lang, "myOrders")}
               </Link>
             </li>
@@ -104,7 +105,7 @@ export function Footer({
               </Link>
             </li>
             <li>
-              <Link href="/wallet" className="hover:text-[var(--color-wine)]">
+              <Link href="/wallet" prefetch={false} className="hover:text-[var(--color-wine)]">
                 {t(lang, "wallet")}
               </Link>
             </li>

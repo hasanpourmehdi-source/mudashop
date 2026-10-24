@@ -113,6 +113,7 @@ export default async function MarketplaceSitePage({
     let initialNextUrl: string | null = null;
     let initialTotal: number | null = null;
     let loadError = "";
+    let staleSince: string | null = null;
 
     console.log(`[marketplaces/${slug}] searching:`, searchUrl);
     try {
@@ -120,6 +121,7 @@ export default async function MarketplaceSitePage({
       initialProducts = result.products;
       initialNextUrl = result.nextUrl;
       initialTotal = result.total;
+      staleSince = result.staleSince ?? null;
     } catch (err) {
       const message = err instanceof Error ? err.message : "خطا در دریافت نتایج جستجو";
       console.warn(`[marketplaces/${slug}] search failed:`, searchUrl, message);
@@ -170,6 +172,7 @@ export default async function MarketplaceSitePage({
                 </h2>
                 <TrendyolSortDropdown />
               </div>
+              <StaleResultsNotice staleSince={staleSince} />
               {initialProducts.length === 0 ? (
                 <p className="text-sm text-[var(--color-muted)]">محصولی با این جستجو پیدا نشد.</p>
               ) : (
@@ -229,6 +232,7 @@ export default async function MarketplaceSitePage({
   let initialTotal: number | null = null;
   let resolvedCategoryIds: string[] = [];
   let loadError = "";
+  let staleSince: string | null = null;
 
   // «بیشترین تخفیف»: همه‌ی فیلترهای کاربر (دسته‌بندی، جنسیت، رنگ، سایز، ...) می‌مونن و
   // فیلترهای تخفیف (تگِ آوانتاژی / کم‌ترین قیمتِ ۳۰ روز) روشون اضافه می‌شن --
@@ -256,6 +260,7 @@ export default async function MarketplaceSitePage({
       initialProducts = result.products;
       initialNextUrl = result.nextUrl;
       initialTotal = result.total;
+      staleSince = result.staleSince ?? null;
       resolvedCategoryIds = result.resolvedCategoryIds ?? [];
     } catch (err) {
       const message = err instanceof Error ? err.message : "خطا در دریافت محصولات";
@@ -431,6 +436,7 @@ export default async function MarketplaceSitePage({
                   نبود، لیست خالی می‌مونه؛ یه فیلتر رو بردار.
                 </p>
               )}
+              <StaleResultsNotice staleSince={staleSince} />
               <TrendyolLiveGrid
                 key={isDiscountSort ? `${discountBaseUrl}#discount` : urlWithSort}
                 initialProducts={initialProducts}
@@ -446,5 +452,17 @@ export default async function MarketplaceSitePage({
       </div>
       </MobileFilterSheetProvider>
     </div>
+  );
+}
+
+// وقتی ترندیول بلاک کرده و آخرین نتیجه‌ی ذخیره‌شده نشون داده می‌شه (fetchTrendyolProductsFromUrl)
+function StaleResultsNotice({ staleSince }: { staleSince: string | null }) {
+  if (!staleSince) return null;
+  const hoursAgo = Math.max(1, Math.round((Date.now() - new Date(staleSince).getTime()) / 3_600_000));
+  return (
+    <p className="text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+      ترندیول الان در دسترس نیست؛ این لیست مالِ حدودِ {hoursAgo.toLocaleString("fa-IR")} ساعت پیشه و ممکنه
+      قیمت یا موجودی‌ها به‌روز نباشن.
+    </p>
   );
 }

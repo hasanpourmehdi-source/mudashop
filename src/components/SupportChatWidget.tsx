@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useVisiblePolling, usePageVisible } from "@/hooks/useVisiblePolling";
+import { usePollIntervalMs } from "@/components/ClientPollingProvider";
 
 type ChatMessage = {
   id: string;
@@ -40,6 +42,8 @@ export function SupportChatWidget({
   const typingSentRef = useRef(false);
 
   const isLoggedIn = status === "authenticated" && session?.user?.role !== "ADMIN";
+  const pageVisible = usePageVisible();
+  const pollIntervalMs = usePollIntervalMs();
 
   function loadMessages(markRead: boolean) {
     setLoading(true);
@@ -59,9 +63,12 @@ export function SupportChatWidget({
       .catch(() => {});
   }
 
-  // اتصال زنده -- پیام ادمین و «در حال نوشتن» بدون پولینگ می‌رسد
+  // اتصال زنده -- پیام ادمین و «در حال نوشتن» بدون پولینگ می‌رسد. فقط وقتی پنجره‌ی
+  // چت بازه و تب دیده‌می‌شه وصله: قبلاً برای هر کاربرِ لاگین‌شده روی هر صفحه یه
+  // اتصالِ همیشه‌باز (یعنی یه فانکشنِ درحالِ‌اجرا روی ورسل) نگه می‌داشت؛ وقتی بسته‌ست،
+  // بجِ نخوانده با پولینگِ پایین به‌روز می‌شه
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !open || !pageVisible) return;
     const es = new EventSource("/api/support/stream");
     es.onmessage = (e) => {
       try {
@@ -83,14 +90,11 @@ export function SupportChatWidget({
       }
     };
     return () => es.close();
-  }, [isLoggedIn, open]);
+  }, [isLoggedIn, open, pageVisible]);
 
-  // در حالت بسته، بجِ نخوانده را با پولینگ سبک به‌روز نگه دار
-  useEffect(() => {
-    if (!isLoggedIn || open) return;
-    const t = setInterval(loadUnread, 15000);
-    return () => clearInterval(t);
-  }, [open, isLoggedIn]);
+  // در حالت بسته، بجِ نخوانده را با پولینگ سبک به‌روز نگه دار (بازه از تنظیمات،
+  // متوقف وقتی تب پنهانه)
+  useVisiblePolling(loadUnread, pollIntervalMs, { enabled: isLoggedIn && !open, runImmediately: false });
 
   // تایپینگ ادمین بعد از ۲.۵ ثانیه بی‌حرکتی خاموش می‌شود
   useEffect(() => {

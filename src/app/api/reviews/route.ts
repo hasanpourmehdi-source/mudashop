@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isInternalUploadUrl } from "@/lib/uploadStorage";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -24,14 +25,14 @@ const reviewSchema = z
     productImage: z
       .string()
       .min(1)
-      .refine((v) => v.startsWith("/uploads/") || /^https:\/\//.test(v), {
+      .refine((v) => isInternalUploadUrl(v) || /^https:\/\//.test(v), {
         message: "آدرس عکس محصول نامعتبر است",
       })
       .optional(),
     rating: z.number().int().min(1, "امتیاز باید حداقل ۱ باشد").max(5, "امتیاز نمی‌تواند بیشتر از ۵ باشد"),
     comment: z.string().min(3, "نظر باید حداقل ۳ حرف باشد").max(1000, "نظر خیلی طولانی است"),
     images: z
-      .array(z.string().min(1).regex(/^\/uploads\/reviews\//, "عکس‌ها باید از آپلودِ داخلی باشند"))
+      .array(z.string().min(1).refine((v) => isInternalUploadUrl(v, "reviews"), "عکس‌ها باید از آپلودِ داخلی باشند"))
       .max(4, "حداکثر ۴ عکس می‌توانید ضمیمه کنید")
       .optional()
       .default([]),

@@ -16,9 +16,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ products: [] });
   }
 
+  // موازی واکشی، ولی ادغام به همون ترتیبِ آیتم‌های سبد (قبلاً تا ۱۰ واکشیِ پشت‌سرِهم بود)
+  const recsPerItem = await Promise.all(
+    productIds.slice(0, 10).map((id) => fetchFrequentlyBoughtTogether(id, 6))
+  );
   const seen = new Map<string, Awaited<ReturnType<typeof fetchFrequentlyBoughtTogether>>[number]>();
-  for (const id of productIds.slice(0, 10)) {
-    const recs = await fetchFrequentlyBoughtTogether(id, 6);
+  for (const recs of recsPerItem) {
     for (const p of recs) {
       if (excludeIds.has(p.id) || seen.has(p.id)) continue;
       seen.set(p.id, p);

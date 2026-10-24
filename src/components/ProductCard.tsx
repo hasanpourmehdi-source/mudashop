@@ -7,10 +7,16 @@ import { useRouter } from "next/navigation";
 import { UnifiedProduct } from "@/types/product";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { WishlistButton } from "@/components/WishlistButton";
-import { MazonQuickView } from "@/components/MazonQuickView";
+import dynamic from "next/dynamic";
+
+// فقط بعد از کلیک روی «نگاه سریع» رندر می‌شه -- لودِ تنبل تا AddToCartForm و
+// بقیه‌ی وابستگی‌هاش توی باندلِ هر صفحه‌ی لیستِ محصول نیاد
+const MazonQuickView = dynamic(() => import("@/components/MazonQuickView").then((m) => m.MazonQuickView), {
+  ssr: false,
+});
 import { EyeIcon } from "@/components/TrendyolBadges";
 import { useFeatureFlags } from "@/components/FeatureFlagsProvider";
-import { SITE_SETTING_KEYS } from "@/lib/siteSettings";
+import { SITE_SETTING_KEYS } from "@/lib/siteSettingKeys";
 
 const MAX_VISIBLE_COLORS = 4;
 const LOW_STOCK_THRESHOLD = 5; // زیر این تعداد، هشدارِ «فقط N عدد باقی مونده» نشون داده می‌شه

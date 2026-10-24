@@ -6,6 +6,8 @@ import {
   buildCaption,
   buildTelegramNote,
   buildGeneratedHashtags,
+  buildGenderHashtags,
+  isGenderOnlyHashtag,
   extractBasketDiscountPercent,
   extractTrendyolLinkFromText,
   getDiscountPercent,
@@ -18,6 +20,7 @@ import {
   toEnglishBrandName,
 } from "@/lib/poster";
 import { siteUrl } from "@/lib/seo";
+import { foldTurkish } from "@/lib/turkishText";
 import { PosterUntranslatedTerms } from "@/components/PosterUntranslatedTerms";
 import { TranslatableRun } from "@/components/AdminClickToTranslate";
 
@@ -75,20 +78,6 @@ type ProductDetail = {
   // تاریخ‌هایی که قبلاً پوسترِ همین محصول ساخته و دانلود شده (یعنی احتمالاً
   // قبلاً توی اینستاگرام پست شده) -- خالی/نبودن یعنی هنوز پست نشده
   previousPosts?: { postedAt: string }[];
-};
-
-type PosterSuggestion = {
-  contentId: string;
-  siteSlug: string;
-  name: string;
-  image: string | null;
-  url: string | null;
-  brand: string | null;
-  category: string | null;
-  price: number | null;
-  originalPrice: number | null;
-  discountPercent: number;
-  basketCampaignPercent: number | null;
 };
 
 // ۱۰۸۰x۱۳۵۰ (نسبت ۴:۵) -- سایزِ عمودیِ مجازِ اینستاگرام، نه مربع
@@ -1065,12 +1054,8 @@ export default function PosterGeneratorPage() {
   // نیستن (چون از buildGeneratedHashtags نمیان)، پس جدا نگه‌داری می‌شن تا هم
   // به‌عنوان چک‌باکسِ اضافه نشون داده بشن هم امکانِ حذف داشته باشن
   const [customHashtags, setCustomHashtags] = useState<string[]>([]);
-
-  // پیشنهادِ محصول برای پوسترِ بعدی -- ته‌ی صفحه، مستقل از اینکه الان محصولی
-  // بارگذاری شده یا نه
-  const [suggestions, setSuggestions] = useState<PosterSuggestion[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [suggestionsError, setSuggestionsError] = useState("");
+  // پیغامِ ثبتِ ترجمه‌ی ترکیبی توی دیکشنری (بعدِ برعکس‌کردنِ یه هشتگِ ترکیبی)
+  const [hashtagNote, setHashtagNote] = useState("");
 
   // جلوگیری از ثبتِ تکراریِ «پست شد» توی همون سشن -- مثلاً وقتی ادمین چندبار
   // پشتِ‌سرهم دکمه‌ی دانلود/اینستاگرام رو برای همون محصول می‌زنه
@@ -1089,30 +1074,6 @@ export default function PosterGeneratorPage() {
       })
       .catch(() => {});
   }, []);
-
-  const loadSuggestions = useCallback(() => {
-    setLoadingSuggestions(true);
-    setSuggestionsError("");
-    fetch("/api/admin/poster", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "suggestions" }),
-    })
-      .then((res) => res.json())
-      .then((data: { suggestions?: PosterSuggestion[]; error?: string }) => {
-        if (data.error) {
-          setSuggestionsError(data.error);
-          return;
-        }
-        setSuggestions(data.suggestions ?? []);
-      })
-      .catch(() => setSuggestionsError("خطای شبکه در دریافتِ پیشنهادها"))
-      .finally(() => setLoadingSuggestions(false));
-  }, []);
-
-  useEffect(() => {
-    loadSuggestions();
-  }, [loadSuggestions]);
 
   // هر بار پوسترِ محصول ساخته و دانلود شد، ثبت می‌کنیم که «احتمالاً پست شد» --
   // بی‌صدا (fire-and-forget)، چون این فقط یه کمکه، نباید جلوی خودِ دانلود رو بگیره
@@ -1326,18 +1287,22 @@ export default function PosterGeneratorPage() {
 
   // چسبوندنِ چندتا هشتگِ تیک‌خورده به هم و ساختِ یه هشتگِ ترکیبیِ جدید (مثلاً
   // «کیف»+«لوازم»+«آرایش» -> «کیف_لوازم_آرایش»، طبقِ درخواستِ صریح). ترتیبِ
-  // نمایشیِ کاندیدها حفظ می‌شه (نه ترتیبِ تیک‌خوردن)، تا نتیجه قابل‌پیش‌بینی
-  // باشه. هشتگ‌های ترکیب‌شده از انتخاب برداشته می‌شن (خودشون هنوز به‌عنوانِ
-  // چک‌باکسِ جدا موجودن، فقط یه تیکِ جدید -- خودِ هشتگِ ترکیبی -- جایگزینشون
-  // می‌شه) تا سقفِ ۵تایی درست شمرده بشه
+  // *تیک‌خوردن* حفظ می‌شه (Setِ جاوااسکریپت ترتیبِ اضافه‌شدن رو نگه می‌داره) --
+  // مثلاً اگه اول «چرم» و بعد «مصنوعی» رو تیک بزنی، «چرم_مصنوعی» ساخته می‌شه،
+  // نه ترتیبِ نمایشیِ چک‌باکس‌ها. هشتگ‌های ترکیب‌شده از انتخاب برداشته می‌شن (خودشون هنوز به‌عنوانِ
+  // چک‌باکسِ جدا موجودن) تا سقفِ ۵تایی درست شمرده بشه؛ خودِ هشتگِ ترکیبی تیک
+  // نمی‌خوره
   function mergeSelectedHashtags() {
-    const parts = [...hashtagCandidates, ...customHashtags].filter((h) =>
-      selectedHashtags.has(h),
-    );
+    const known = new Set([...hashtagCandidates, ...customHashtags]);
+    const parts = Array.from(selectedHashtags).filter((h) => known.has(h));
     if (parts.length < 2) return;
     const merged = parts.join("_");
-    setCustomHashtags((prev) => (prev.includes(merged) ? prev : [...prev, merged]));
-    setSelectedHashtags(new Set([merged]));
+    // اگه همین متن از قبل یه کاندیدِ خودکاره (مثلاً «کیف_دوشی» از دسته‌بندی)، دوباره
+    // به‌عنوانِ هشتگِ دستی اضافه‌ش نمی‌کنیم -- چک‌باکسِ تکراری می‌شد
+    setCustomHashtags((prev) => (prev.includes(merged) || hashtagCandidates.includes(merged) ? prev : [...prev, merged]));
+    // هشتگِ ترکیبی خودکار تیک نمی‌خوره (طبقِ درخواستِ صریح -- ادمین خودش تصمیم
+    // می‌گیره)؛ فقط تکه‌هایی که ادغام شدن از انتخاب برمی‌دارن و بقیه‌ی تیک‌ها دست‌نخورده می‌مونن
+    setSelectedHashtags((prev) => new Set(Array.from(prev).filter((h) => !parts.includes(h))));
   }
 
   // حذفِ یه هشتگِ دستیِ ادغام‌شده -- اگه انتخاب هم بود، از انتخاب هم برداشته می‌شه
@@ -1351,16 +1316,62 @@ export default function PosterGeneratorPage() {
     });
   }
 
-  // ادغام همیشه به ترتیبِ نمایشیِ کاندیدها انجام می‌شه (نه ترتیبِ کلیک) --
-  // که گاهی ترتیبِ ترکیِ خام رو حفظ می‌کنه (مثلاً «معمولی_آستین» به‌جای
-  // «آستین_معمولی» طبقِ دستورِ فارسی). به‌جای اینکه ادمین مجبور بشه دوباره از
-  // اول با ترتیبِ برعکس ادغام کنه، همینجا جای بخش‌ها عوض می‌شه -- چون متنِ
-  // خودِ هشتگ id/کلیدِ انتخابه، جایگزینیِ هم‌زمان توی selectedHashtags هم لازمه
-  // تا اگه انتخاب‌شده بود، بعدِ برعکس‌شدن هم انتخاب‌شده بمونه
+  // ادغام به ترتیبِ تیک انجام می‌شه؛ اگه ترتیب برعکسِ دلخواه شد، همین‌جا جای
+  // بخش‌ها عوض می‌شه. متنِ هشتگ کلیدِ انتخابه، پس جایگزینیِ هم‌زمان توی
+  // selectedHashtags هم لازمه تا انتخاب‌شده بمونه
+  // طبقِ درخواستِ صریح: وقتی ادمین ترتیبِ یه هشتگِ ترکیبی رو برعکس می‌کنه («مصنوعی_چرم»
+  // -> «چرم_مصنوعی»)، یعنی ترجمه‌ی کلمه‌به‌کلمه ترتیبش غلط بوده -- همون لحظه یه
+  // ردیفِ چندکلمه‌ای با اولویتِ بالا توی دیکشنری ثبت می‌کنیم (termTr = ترکیِ هر
+  // کلمه به ترتیبِ *قبل* از برعکس، termFa = ترتیبِ درست) تا دفعه‌های بعد خودِ ترجمه
+  // (عنوان/مشخصات) همین‌جوری بیاد، نه فقط این‌بارِ این هشتگ. چندکلمه‌ای‌ها توی
+  // دیکشنری همیشه قبل از تک‌کلمه‌ای‌ها چک می‌شن
+  async function registerReversedPhrase(oldParts: string[]) {
+    if (oldParts.length < 2 || oldParts.length > 3) return;
+    const reversedPhrase = [...oldParts].reverse().join(" ");
+    try {
+      const lookup = async (termFa: string) => {
+        const res = await fetch(`/api/admin/trendyol-title-dictionary?q=${encodeURIComponent(termFa)}&exact=true&limit=8`);
+        const data = await res.json();
+        return (Array.isArray(data.results) ? data.results : []) as { termTr: string }[];
+      };
+      // اگه ترتیبِ فعلی (قبل از برعکس) خودش از قبل یه ترجمه‌ی ترکیبیِ ثبت‌شده‌ست، یعنی
+      // ادمین داره ترتیبِ درست رو دوباره برعکس می‌کنه -- ردیفِ معکوس نساز
+      if ((await lookup(oldParts.join(" "))).length > 0) return;
+      const candidates: { termTr: string }[][] = [];
+      for (const w of oldParts) {
+        const rows = await lookup(w);
+        if (rows.length === 0) {
+          setHashtagNote(`«${w}» توی دیکشنری پیدا نشد -- ترجمه‌ی ترکیبی ثبت نشد`);
+          return;
+        }
+        candidates.push(rows);
+      }
+      // اگه یه کلمه چند termTr داشت، ترکیبی رو انتخاب کن که توی عنوانِ ترکیِ خامِ همین محصول هست
+      const rawTitle = foldTurkish(detail?.name ?? "");
+      let chosen = candidates.map((rows) => rows[0].termTr);
+      const combos = candidates.reduce<string[][]>((acc, rows) => acc.flatMap((c) => rows.map((r) => [...c, r.termTr])), [[]]);
+      const inTitle = combos.find((c) => rawTitle.includes(c.join(" ")));
+      if (inTitle) chosen = inTitle;
+      const res = await fetch("/api/admin/trendyol-title-dictionary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ termTr: chosen.join(" "), termFa: reversedPhrase, priority: 10 }),
+      });
+      setHashtagNote(
+        res.ok
+          ? `ترجمه‌ی ترکیبی ثبت شد: «${chosen.join(" ")}» ← «${reversedPhrase}» (اولویتِ بالا) -- از بارگذاریِ بعدیِ محصول اعمال می‌شه`
+          : "ثبتِ ترجمه‌ی ترکیبی توی دیکشنری ناموفق بود",
+      );
+    } catch {
+      setHashtagNote("ثبتِ ترجمه‌ی ترکیبی توی دیکشنری ناموفق بود");
+    }
+  }
+
   function reverseCustomHashtag(term: string) {
     const parts = term.split("_");
     if (parts.length < 2) return;
     const reversed = [...parts].reverse().join("_");
+    void registerReversedPhrase(parts);
     setCustomHashtags((prev) => prev.map((h) => (h === term ? reversed : h)));
     setSelectedHashtags((prev) => {
       if (!prev.has(term)) return prev;
@@ -1454,15 +1465,32 @@ export default function PosterGeneratorPage() {
   // دسته‌بندیِ «ست پیژامه») هم حذف می‌کرد -- که دقیقاً برعکسِ قاعده‌ست: هر
   // چک‌باکس مستقل عمل می‌کنه، و اگه کلمه‌ای از یه منبعِ تیک‌خورده میاد، باید
   // هشتگ بشه، حتی اگه همون کلمه از یه منبعِ دیگه (تیک‌نخورده) هم حذف شده باشه
-  const hashtagCandidates = detail
-    ? buildGeneratedHashtags({
+  // جنسیت همیشه توی لیسته (حتی اگه ویژگیِ «جنسیت» از مشخصات برداشته شده باشه --
+  // برای همین از *همه‌ی* ویژگی‌ها تشخیص داده می‌شه): ترکیبِ «نوعِ محصول + جنسیت»
+  // (پالتو_زنانه) و خودِ جنسیتِ تنها. پیش‌فرض فقط ترکیب تیک می‌خوره، نه جنسیتِ تنها
+  const genderHashtags = detail
+    ? buildGenderHashtags({
         nameFa: detail.nameFa || detail.name,
-        brand: detail.brand,
-        brandFa: detail.brandFa,
         categoryName: categoryIncluded ? detail.categoryName : null,
-        sizes: detail.sizes,
-        attributes: hashtagAttributes,
+        attributes: detail.attributes,
       })
+    : { combo: null, gender: null };
+  const genderComboTokens = genderHashtags.combo ? [genderHashtags.combo] : [];
+  const hashtagCandidates = detail
+    ? Array.from(
+        new Set([
+          ...genderComboTokens,
+          ...(genderHashtags.gender ? [genderHashtags.gender] : []),
+          ...buildGeneratedHashtags({
+            nameFa: detail.nameFa || detail.name,
+            brand: detail.brand,
+            brandFa: detail.brandFa,
+            categoryName: categoryIncluded ? detail.categoryName : null,
+            sizes: detail.sizes,
+            attributes: hashtagAttributes,
+          }),
+        ]),
+      )
     : [];
   // فقط هشتگ‌هایی که از خودِ دسته‌بندی میان -- طبقِ درخواستِ صریح، اگه
   // دسته‌بندی تیک‌خورده باشه، هشتگ‌هاش حتماً باید جزوِ انتخابِ پیش‌فرض باشن
@@ -1693,9 +1721,29 @@ export default function PosterGeneratorPage() {
   // برای نمایشِ پایدارِ چک‌باکس‌ها؛ سقفِ ۵تایی توی خودِ toggle (نه اینجا) اعمال
   // می‌شه. customHashtags (هشتگ‌های دستیِ ادغام‌شده) هم باید اینجا حساب بشن،
   // وگرنه با اینکه چک‌باکسشون تیک‌خورده، توی کپشنِ نهایی نمی‌اومدن
-  const selectedHashtagsList = [...hashtagCandidates, ...customHashtags].filter((h) =>
+  // یکتا: یه هشتگ ممکنه هم کاندیدِ خودکار باشه هم همزمان هشتگِ دستیِ ادغام‌شده (مثلاً
+  // «کیف_دوشی») -- هر دو چک‌باکس به یه عضوِ Set وصلن، پس تکراری نباید دوبار توی سقفِ
+  // ۵تایی و کپشن حساب بشه
+  const selectedHashtagsList = Array.from(new Set([...hashtagCandidates, ...customHashtags])).filter((h) =>
     selectedHashtags.has(h),
   );
+
+  // «انتخاب همه»: سقفِ ۵تاییِ هشتگ (سیاستِ استیج) همچنان برقراره، پس «همه» یعنی
+  // تا سقفِ مجاز -- اول همین‌هایی که الان تیک خوردن می‌مونن و بقیه‌ی جاها با
+  // ترتیبِ نمایشی پر می‌شه. وقتی انتخاب پره، همون چک‌باکس همه رو خالی می‌کنه
+  const allHashtagTerms = Array.from(new Set([...hashtagCandidates, ...customHashtags]));
+  const hashtagSelectAllTarget = Math.min(MAX_TOTAL_HASHTAGS, allHashtagTerms.length);
+  const allHashtagsSelected =
+    hashtagSelectAllTarget > 0 && selectedHashtagsList.length >= hashtagSelectAllTarget;
+  function toggleSelectAllHashtags() {
+    if (allHashtagsSelected) {
+      setSelectedHashtags(new Set());
+      return;
+    }
+    const kept = allHashtagTerms.filter((h) => selectedHashtags.has(h));
+    const fill = allHashtagTerms.filter((h) => !selectedHashtags.has(h));
+    setSelectedHashtags(new Set([...kept, ...fill].slice(0, MAX_TOTAL_HASHTAGS)));
+  }
 
   const caption = detail
     ? buildCaption({
@@ -1726,9 +1774,10 @@ export default function PosterGeneratorPage() {
     // اولویت: دسته‌بندی، بعد برند (فقط اگه ترجمه شده باشه)، بعد مشخصاتِ
     // تیک‌خورده -- طبقِ درخواستِ صریح. بعدش بقیه‌ی کاندیدها (عنوان/...) به‌اندازه‌ای که جا داره
     const guaranteed = Array.from(
-      new Set([...categoryHashtagTokens, ...brandHashtagTokens, ...attrHashtagTokens]),
+      new Set([...genderComboTokens, ...categoryHashtagTokens, ...brandHashtagTokens, ...attrHashtagTokens]),
     ).slice(0, MAX_TOTAL_HASHTAGS);
-    const rest = hashtagCandidates.filter((h) => !guaranteed.includes(h));
+    // جنسیتِ تنها پیش‌فرض انتخاب نمی‌شه (فقط ترکیبش) -- ادمین دستی می‌تونه تیکش بزنه
+    const rest = hashtagCandidates.filter((h) => !guaranteed.includes(h) && !isGenderOnlyHashtag(h));
     setSelectedHashtags(new Set([...guaranteed, ...rest].slice(0, MAX_TOTAL_HASHTAGS)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.contentId]);
@@ -1743,7 +1792,7 @@ export default function PosterGeneratorPage() {
   // (مثلاً مشخصه‌ای که همین الان تیکش برداشته شد) خودش‌به‌خود از انتخاب می‌افته
   useEffect(() => {
     if (!detail) return;
-    const guaranteed = [...categoryHashtagTokens, ...brandHashtagTokens, ...attrHashtagTokens];
+    const guaranteed = [...genderComboTokens, ...categoryHashtagTokens, ...brandHashtagTokens, ...attrHashtagTokens];
     setSelectedHashtags((prev) => {
       const stillValid = Array.from(prev).filter(
         (t) => hashtagCandidates.includes(t) || customHashtags.includes(t),
@@ -1779,6 +1828,15 @@ export default function PosterGeneratorPage() {
   // انتخاب می‌کنه و متن آماده توی کادرِ پیام میاد. اگه مرورگر منوی اشتراک نداشت
   // (مثلاً دسکتاپ)، حداقل کپی می‌شه
   async function shareText(text: string) {
+    // اول کپی -- اگه مخاطب/اپ متن رو نگرفت یا ادمین منو رو بست، متن توی کلیپ‌بورده.
+    // کپی ساکت (بدونِ alert) چون شکستش نباید جلوی بازشدنِ منوی اشتراک رو بگیره
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("telegram");
+      setTimeout(() => setCopied(""), 2000);
+    } catch {
+      // ادامه بده -- منوی اشتراک هنوز کار می‌کنه
+    }
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
         await navigator.share({ text });
@@ -1787,7 +1845,6 @@ export default function PosterGeneratorPage() {
       }
       return;
     }
-    await copyText(text, "telegram");
     alert("مرورگرِ شما منوی اشتراک‌گذاری نداره؛ متن کپی شد -- دستی پیست کنید");
   }
 
@@ -2266,6 +2323,16 @@ export default function PosterGeneratorPage() {
               </div>
               {/* بازای هرکدوم چک‌باکس -- حداکثر ۵تا هم‌زمان قابلِ انتخابن. اول
                   کاندیدهای خودکار، بعد هشتگ‌های دستیِ ادغام‌شده (با دکمه‌ی حذف) */}
+              {hashtagNote && <p className="text-[11px] text-emerald-700">{hashtagNote}</p>}
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allHashtagsSelected}
+                  disabled={hashtagSelectAllTarget === 0}
+                  onChange={toggleSelectAllHashtags}
+                />
+                انتخاب همه (حداکثر {MAX_TOTAL_HASHTAGS.toLocaleString("fa-IR")} تا)
+              </label>
               <div className="flex flex-wrap gap-2" dir="ltr">
                 {hashtagCandidates.map((h) => {
                   const checked = selectedHashtags.has(h);
@@ -2289,7 +2356,7 @@ export default function PosterGeneratorPage() {
                     </label>
                   );
                 })}
-                {customHashtags.map((h) => {
+                {customHashtags.filter((h) => !hashtagCandidates.includes(h)).map((h) => {
                   const checked = selectedHashtags.has(h);
                   const disabled =
                     !checked &&
@@ -2413,74 +2480,6 @@ export default function PosterGeneratorPage() {
           </div>
         </section>
       )}
-
-      {/* پیشنهادِ محصول برای پوسترِ بعدی -- از هم ترندیول هم میلا، هر
-          دسته‌بندی، بر اساسِ تخفیف/کمپینِ خوب، بدونِ چیزی که قبلاً پست شده */}
-      <section className="border cut-line rounded-xl p-4 bg-white space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold">💡 پیشنهاد برای پوسترِ بعدی</h2>
-          <button
-            type="button"
-            onClick={loadSuggestions}
-            disabled={loadingSuggestions}
-            className="text-xs text-[var(--color-wine)] hover:underline disabled:opacity-50"
-          >
-            {loadingSuggestions ? "در حال جستجو..." : "🔄 پیشنهادِ جدید"}
-          </button>
-        </div>
-        {suggestionsError && (
-          <p className="text-xs text-red-600">{suggestionsError}</p>
-        )}
-        {!loadingSuggestions && !suggestionsError && suggestions.length === 0 && (
-          <p className="text-xs text-[var(--color-muted)]">
-            الان پیشنهادی پیدا نشد -- دوباره امتحان کن یا آستانه‌ی تخفیف رو از
-            تنظیمات کم‌تر کن.
-          </p>
-        )}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-          {suggestions.map((s) => (
-            <button
-              key={`${s.siteSlug}:${s.contentId}`}
-              type="button"
-              onClick={() => {
-                if (!s.url) return;
-                setDirectInput(s.url);
-                loadDetail(s.url);
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              disabled={loadingDetail || !s.url}
-              className="text-right border cut-line rounded-lg overflow-hidden bg-white hover:border-[var(--color-wine)] transition-colors disabled:opacity-50"
-            >
-              {s.image ? (
-                <div className="relative w-full aspect-square bg-[var(--color-linen-dim)]">
-                  <Image
-                    src={s.image}
-                    alt={s.name}
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
-                  <span className="absolute top-1 left-1 bg-[var(--color-wine)] text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">
-                    {s.discountPercent >= minDiscountPercentToShow ? `٪${s.discountPercent}` : "کمپین"}
-                  </span>
-                </div>
-              ) : (
-                <div className="w-full aspect-square bg-[var(--color-linen-dim)]" />
-              )}
-              <div className="p-1.5 space-y-0.5">
-                <p className="text-[11px] font-medium line-clamp-2">{s.name}</p>
-                <p className="text-[10px] text-[var(--color-muted)]">
-                  {s.siteSlug === "trendyol-milla" ? "میلا" : "ترندیول"}
-                  {s.category ? ` · ${s.category}` : ""}
-                </p>
-                <p className="text-[11px] font-bold text-[var(--color-wine)]">
-                  {priceToman(s.price)}
-                </p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

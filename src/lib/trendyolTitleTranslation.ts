@@ -601,14 +601,21 @@ export async function translateTrendyolTitles(
     }
   }
 
-  // بعد از هر batch، یه چک سبک برای کلمات ناشناخته‌ی پرتکرار -- notifyAdminsOnce
-  // خودش dedupe می‌کنه (۲۴ ساعته) پس صدا زدنش هر بار مشکلی نداره
-  checkUnknownTermsThreshold().catch((err) => {
-    console.error("خطا در بررسی کلمات ناشناخته‌ی پرتکرار:", err);
-  });
+  // چکِ کلماتِ ناشناخته‌ی پرتکرار: کلِ ردیف‌های کشِ عنوان رو می‌خونه (جدولی که با
+  // هر عنوانِ تازه بزرگ‌تر می‌شه)، پس فقط وقتی عنوانِ *تازه‌ای* ترجمه شده و حداکثر
+  // ساعتی یه‌بار به‌ازای هر instance -- اعلانش به‌هرحال ۲۴ساعته dedupe می‌شه
+  if (toUpsert.length > 0 && Date.now() - lastUnknownTermsCheckAt > UNKNOWN_TERMS_CHECK_INTERVAL_MS) {
+    lastUnknownTermsCheckAt = Date.now();
+    checkUnknownTermsThreshold().catch((err) => {
+      console.error("خطا در بررسی کلمات ناشناخته‌ی پرتکرار:", err);
+    });
+  }
 
   return results;
 }
+
+const UNKNOWN_TERMS_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+let lastUnknownTermsCheckAt = 0;
 
 // حداقل تعداد تکرار یه کلمه‌ی ناشناخته توی عنوان‌های کش‌شده تا لازم بشه به
 // ادمین اعلان بدیم -- عدد پایین چون هرچی زودتر اضافه بشه به دیکشنری، عنوان‌های

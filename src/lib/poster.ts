@@ -489,6 +489,78 @@ function combinedHashtagToken(text: string): string | null {
   return words.length > 0 ? words.map(toHashtagText).join("_") : null;
 }
 
+// جنسیت برای هشتگ بسیار مهمه: همیشه باید توی لیستِ کاندیدها باشه، ولی «تنها»
+// (فقط «زنانه») پیش‌فرض تیک نمی‌خوره -- به‌جاش ترکیبش با نوعِ محصول («پالتو_زنانه»)
+// تیک می‌خوره (buildGenderHashtags + isGenderOnlyHashtag)
+export const GENDER_WORDS = ["زنانه", "مردانه", "دخترانه", "پسرانه", "بچگانه", "نوزادی", "یونیسکس"] as const;
+
+const GENDER_ALIASES: Record<string, string> = {
+  زن: "زنانه",
+  خانم: "زنانه",
+  مرد: "مردانه",
+  آقا: "مردانه",
+  دختر: "دخترانه",
+  پسر: "پسرانه",
+  بچه‌گانه: "بچگانه",
+  کودک: "بچگانه",
+};
+
+export function isGenderOnlyHashtag(token: string): boolean {
+  return (GENDER_WORDS as readonly string[]).includes(token);
+}
+
+// اول مقدارِ ویژگیِ «جنسیت» (که اسم‌های ساده‌ی «زن/مرد» رو هم می‌پذیره)، بعد
+// خودِ کلماتِ عنوان/دسته‌بندی/مقادیرِ بقیه‌ی ویژگی‌ها
+export function detectGenderWord(opts: {
+  nameFa?: string | null;
+  categoryName?: string | null;
+  attributes?: { name: string; value: string }[];
+}): string | null {
+  const findIn = (text: string, allowAliases: boolean): string | null => {
+    for (const raw of tokenizeForHashtags(text)) {
+      const t = raw.toLowerCase();
+      if ((GENDER_WORDS as readonly string[]).includes(t)) return t;
+      if (allowAliases && GENDER_ALIASES[t]) return GENDER_ALIASES[t];
+    }
+    return null;
+  };
+  for (const a of opts.attributes ?? []) {
+    if (a.name.includes("جنسیت")) {
+      const g = findIn(a.value, true);
+      if (g) return g;
+    }
+  }
+  const texts = [opts.nameFa, opts.categoryName, ...(opts.attributes ?? []).map((a) => a.value)];
+  for (const text of texts) {
+    if (!text) continue;
+    const g = findIn(text, false);
+    if (g) return g;
+  }
+  return null;
+}
+
+// [ترکیبِ «نوعِ محصول + جنسیت»، جنسیتِ تنها] -- هرکدوم که ساخته بشه. نوعِ محصول:
+// اگه دسته‌بندی داده شده (و تیک‌خورده، یعنی null نیست) کلماتِ خودِ دسته‌بندی (بدونِ
+// کلمه‌ی جنسیت)، وگرنه اولین کلمه‌ی معنی‌دارِ عنوان
+export function buildGenderHashtags(opts: {
+  nameFa?: string | null;
+  categoryName?: string | null;
+  attributes?: { name: string; value: string }[];
+}): { combo: string | null; gender: string | null } {
+  const gender = detectGenderWord(opts);
+  if (!gender) return { combo: null, gender: null };
+  const usable = (text?: string | null) =>
+    text
+      ? tokenizeForHashtags(text)
+          .map((w) => w.toLowerCase())
+          .filter((w) => isValidHashtagToken(w) && !HASHTAG_STOPWORDS.has(w) && !isGenderOnlyHashtag(w) && !GENDER_ALIASES[w])
+      : [];
+  let typeWords = usable(opts.categoryName);
+  if (typeWords.length === 0) typeWords = usable(opts.nameFa).slice(0, 1);
+  const combo = typeWords.length > 0 ? `${typeWords.map(toHashtagText).join("_")}_${gender}` : null;
+  return { combo, gender };
+}
+
 export function buildGeneratedHashtags(opts: {
   nameFa?: string | null;
   brand?: string | null;
@@ -580,8 +652,10 @@ export const MAX_TOTAL_HASHTAGS = 5;
 export function buildDefaultHashtagSelection(
   opts: Omit<CaptionInput, "tag" | "hashtags">,
 ): string[] {
-  const generated = buildGeneratedHashtags(opts);
-  const hashtags = [...generated];
+  const { combo } = buildGenderHashtags(opts);
+  // جنسیتِ تنها توی لیست هست ولی پیش‌فرض انتخاب نمی‌شه؛ ترکیبش با نوعِ محصول اول میاد
+  const generated = buildGeneratedHashtags(opts).filter((h) => !isGenderOnlyHashtag(h));
+  const hashtags = Array.from(new Set(combo ? [combo, ...generated] : generated));
   for (const h of BASE_HASHTAGS) {
     if (hashtags.length >= MAX_TOTAL_HASHTAGS) break;
     if (!hashtags.includes(h)) hashtags.push(h);

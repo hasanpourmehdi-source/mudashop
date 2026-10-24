@@ -1,5 +1,7 @@
 "use client";
 
+import { prepareUpload, appendUpload, discardUploads, discardPrepared } from "@/lib/directUpload";
+import { useDiscardUnsubmittedUploads } from "@/hooks/useDiscardUnsubmittedUploads";
 import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
@@ -171,6 +173,7 @@ export function ReviewsSection({
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const pendingUploads = useDiscardUnsubmittedUploads(images, () => setImages([]));
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -244,10 +247,18 @@ export function ReviewsSection({
     setUploading(true);
     for (const file of files.slice(0, remaining)) {
       const formData = new FormData();
-      formData.append("file", file);
+      let prepared: Awaited<ReturnType<typeof prepareUpload>>;
+      try {
+        prepared = await prepareUpload(file, "review");
+        appendUpload(formData, prepared);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "خطا در آپلود فایل");
+        continue;
+      }
       const res = await fetch("/api/reviews/upload", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) {
+        discardPrepared(prepared);
         setError(data.error ?? "خطا در آپلود فایل");
         continue;
       }
@@ -258,12 +269,14 @@ export function ReviewsSection({
 
   function removeImage(url: string) {
     setImages((prev) => prev.filter((u) => u !== url));
+    discardUploads([url]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setSubmitting(true);
+    pendingUploads.setSubmitting(true);
     const res = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -272,12 +285,14 @@ export function ReviewsSection({
     const data = await res.json();
     setSubmitting(false);
     if (!res.ok) {
+      pendingUploads.setSubmitting(false);
       setError(data.error ?? "خطا در ثبت نظر");
       return;
     }
     setComment("");
     setRating(5);
     setImages([]);
+    pendingUploads.setSubmitting(false);
     setJustSubmitted(true);
     load();
   }

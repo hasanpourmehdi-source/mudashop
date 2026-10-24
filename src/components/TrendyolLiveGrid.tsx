@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import type { TrendyolLiveProduct } from "@/lib/trendyol";
 import { TrendyolProductLink } from "@/components/TrendyolProductLink";
-import { TrendyolQuickView } from "@/components/TrendyolQuickView";
+import dynamic from "next/dynamic";
+
+// فقط بعد از کلیک روی «نگاه سریع» رندر می‌شه -- لودِ تنبل تا توی باندلِ صفحه‌ی
+// مارکت‌پلیس نیاد
+const TrendyolQuickView = dynamic(
+  () => import("@/components/TrendyolQuickView").then((m) => m.TrendyolQuickView),
+  { ssr: false },
+);
 import { WishlistButton } from "@/components/WishlistButton";
 import { StarRating, VerifiedBadge, EyeIcon, getStripBadgeLabel } from "@/components/TrendyolBadges";
 import { AdminOriginalTitleCopy } from "@/components/AdminOriginalTitleCopy";

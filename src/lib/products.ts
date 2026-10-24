@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { UnifiedProduct } from "@/types/product";
 import { fetchTrendyolProducts } from "@/lib/trendyol";
@@ -191,7 +192,11 @@ export async function recordPriceSnapshotIfNeeded(productId: string, price: numb
   }
 }
 
-export async function fetchMazonProducts(): Promise<UnifiedProduct[]> {
+// صفحه‌ی اصلی هم مستقیم و هم از مسیرِ recommend.ts این رو صدا می‌زنه -- cache()
+// توی یه رندرِ سرور یک بار کوئری می‌زنه (بیرون از رندر، مثلاً route handler، بی‌اثره)
+export const fetchMazonProducts = cache(fetchMazonProductsUncached);
+
+async function fetchMazonProductsUncached(): Promise<UnifiedProduct[]> {
   const [products, activeFlashSales, stockGroups] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },

@@ -8,9 +8,9 @@ import { useEffect, useState } from "react";
 const SALES_PAUSED_ENABLED_KEY = "salesPausedEnabled";
 const SALES_PAUSED_MESSAGE_KEY = "salesPausedMessage";
 const MIN_DISCOUNT_PERCENT_TO_SHOW_KEY = "minDiscountPercentToShow";
-const POSTER_SUGGESTIONS_MIN_PERCENT_KEY = "posterSuggestionsMinDiscountPercent";
-const POSTER_SUGGESTIONS_MAX_COUNT_KEY = "posterSuggestionsMaxCount";
 const SOCIAL_PROOF_WINDOW_MINUTES_KEY = "socialProofWindowMinutes";
+const CLIENT_POLL_INTERVAL_SECONDS_KEY = "clientPollIntervalSeconds";
+const TRENDYOL_STALE_FALLBACK_HOURS_KEY = "trendyolStaleFallbackHours";
 const SOCIAL_PROOF_MIN_COUNT_KEY = "socialProofMinCount";
 const CROSS_SELL_MAX_ITEMS_KEY = "crossSellMaxItems";
 const SUPPORT_WHATSAPP_NUMBER_KEY = "supportWhatsappNumber";
@@ -208,9 +208,9 @@ export default function AdminOtherSettingsPage() {
     setSavingDisplay(true);
     try {
       await saveKey(MIN_DISCOUNT_PERCENT_TO_SHOW_KEY, thresholds[MIN_DISCOUNT_PERCENT_TO_SHOW_KEY] || "2");
-      await saveKey(POSTER_SUGGESTIONS_MIN_PERCENT_KEY, thresholds[POSTER_SUGGESTIONS_MIN_PERCENT_KEY] || "50");
-      await saveKey(POSTER_SUGGESTIONS_MAX_COUNT_KEY, thresholds[POSTER_SUGGESTIONS_MAX_COUNT_KEY] || "6");
       await saveKey(SOCIAL_PROOF_WINDOW_MINUTES_KEY, thresholds[SOCIAL_PROOF_WINDOW_MINUTES_KEY] || "10");
+      await saveKey(CLIENT_POLL_INTERVAL_SECONDS_KEY, thresholds[CLIENT_POLL_INTERVAL_SECONDS_KEY] || "30");
+      await saveKey(TRENDYOL_STALE_FALLBACK_HOURS_KEY, thresholds[TRENDYOL_STALE_FALLBACK_HOURS_KEY] || "24");
       await saveKey(SOCIAL_PROOF_MIN_COUNT_KEY, thresholds[SOCIAL_PROOF_MIN_COUNT_KEY] || "2");
       await saveKey(CROSS_SELL_MAX_ITEMS_KEY, thresholds[CROSS_SELL_MAX_ITEMS_KEY] || "4");
       await saveKey(SUPPORT_WHATSAPP_NUMBER_KEY, thresholds[SUPPORT_WHATSAPP_NUMBER_KEY] ?? "");
@@ -446,6 +446,46 @@ export default function AdminOtherSettingsPage() {
         </div>
 
         <div>
+          <p className="text-sm font-bold mb-1">به‌روزرسانیِ خودکار (ثانیه)</p>
+          <p className="text-[10px] text-[var(--color-muted)] mb-2">
+            هر چند ثانیه بجِ پیام‌ها، پیام‌های سفارش و وضعیتِ سفارش برای کاربرِ لاگین‌شده خودکار به‌روز بشن
+            (فقط وقتی صفحه باز و جلوی چشمه). عددِ کمتر یعنی به‌روزتر ولی درخواستِ بیشتر به سرور و
+            دیتابیس؛ حداقل ۵.
+          </p>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={thresholds[CLIENT_POLL_INTERVAL_SECONDS_KEY] ?? ""}
+            placeholder="30"
+            onChange={(e) =>
+              setThresholds((prev) => ({ ...prev, [CLIENT_POLL_INTERVAL_SECONDS_KEY]: e.target.value }))
+            }
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
+          <p className="text-sm font-bold mb-1">نمایشِ نتیجه‌ی ذخیره‌شده وقتی ترندیول در دسترس نیست (ساعت)</p>
+          <p className="text-[10px] text-[var(--color-muted)] mb-2">
+            اگه ترندیول درخواستِ سایت رو بلاک کنه، به‌جای پیامِ خطا آخرین لیستِ ذخیره‌شده با برچسبِ
+            «ممکنه به‌روز نباشه» نشون داده می‌شه -- به شرطی که از این تعداد ساعت قدیمی‌تر نباشه. قیمت‌ها
+            ممکنه با قیمتِ فعلیِ ترندیول فرق داشته باشن. ۰ یعنی خاموش.
+          </p>
+          <input
+            type="number"
+            min={0}
+            max={720}
+            value={thresholds[TRENDYOL_STALE_FALLBACK_HOURS_KEY] ?? ""}
+            placeholder="24"
+            onChange={(e) =>
+              setThresholds((prev) => ({ ...prev, [TRENDYOL_STALE_FALLBACK_HOURS_KEY]: e.target.value }))
+            }
+            className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
+          />
+        </div>
+
+        <div>
           <p className="text-sm font-bold mb-1">نشانه‌ی اجتماعیِ لحظه‌ای (روی صفحه‌ی محصول)</p>
           <p className="text-[10px] text-[var(--color-muted)] mb-2">
             «N نفر توی چند دقیقه‌ی اخیر این محصول رو دیده‌اند» -- دیتای واقعیه، از رویِ
@@ -514,43 +554,6 @@ export default function AdminOtherSettingsPage() {
                 value={thresholds[SUPPORT_TELEGRAM_USERNAME_KEY] ?? ""}
                 onChange={(e) =>
                   setThresholds((prev) => ({ ...prev, [SUPPORT_TELEGRAM_USERNAME_KEY]: e.target.value }))
-                }
-                className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div>
-          <p className="text-sm font-bold mb-1">پیشنهادِ محصول برای پوستر بعدی</p>
-          <p className="text-[10px] text-[var(--color-muted)] mb-2">
-            ته‌ی صفحه‌ی «پوستر اینستاگرام»، چند محصولِ ترندیول/میلا که تخفیفشون (یا
-            کمپینِ سبدخریدشون) به این درصد برسه پیشنهاد می‌شه؛ محصولی که قبلاً
-            پوسترش ساخته شده دوباره پیشنهاد نمی‌شه.
-          </p>
-          <div className="flex gap-3">
-            <label className="flex-1">
-              <span className="block text-[10px] text-[var(--color-muted)] mb-1">حداقل درصدِ تخفیف</span>
-              <input
-                type="number"
-                min={1}
-                max={99}
-                value={thresholds[POSTER_SUGGESTIONS_MIN_PERCENT_KEY] ?? ""}
-                onChange={(e) =>
-                  setThresholds((prev) => ({ ...prev, [POSTER_SUGGESTIONS_MIN_PERCENT_KEY]: e.target.value }))
-                }
-                className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
-              />
-            </label>
-            <label className="flex-1">
-              <span className="block text-[10px] text-[var(--color-muted)] mb-1">تعدادِ پیشنهادها</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={thresholds[POSTER_SUGGESTIONS_MAX_COUNT_KEY] ?? ""}
-                onChange={(e) =>
-                  setThresholds((prev) => ({ ...prev, [POSTER_SUGGESTIONS_MAX_COUNT_KEY]: e.target.value }))
                 }
                 className="w-full border cut-line rounded-lg px-3 py-2 text-sm bg-white"
               />

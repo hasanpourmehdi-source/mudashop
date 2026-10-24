@@ -1,5 +1,6 @@
 "use client";
 
+import { prepareUpload, appendUpload, discardPrepared } from "@/lib/directUpload";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
@@ -60,7 +61,15 @@ export default function ShippingPaymentPage() {
     setError("");
 
     const formData = new FormData();
-    formData.append("file", file);
+    let prepared: Awaited<ReturnType<typeof prepareUpload>> | null = null;
+    try {
+      prepared = await prepareUpload(file, "shipping-receipt", { orderId: String(params.id) });
+      appendUpload(formData, prepared);
+    } catch (err) {
+      setUploading(false);
+      setError(err instanceof Error ? err.message : "خطا در ارسال فیش");
+      return;
+    }
 
     const res = await fetch(`/api/orders/${params.id}/shipping-payment/receipt`, {
       method: "POST",
@@ -70,6 +79,7 @@ export default function ShippingPaymentPage() {
     setUploading(false);
 
     if (!res.ok) {
+      discardPrepared(prepared);
       setError(data.error ?? "خطا در ارسال فیش");
       return;
     }

@@ -384,6 +384,15 @@ export default async function Home() {
         />
       )}
 
+      {/* معادلِ «Sen De Al!»ِ خودِ ترندیول -- واکشی‌اش از قبل انجام می‌شد ولی رندرش جا افتاده بود */}
+      {flags[SITE_SETTING_KEYS.FEATURE_TRENDYOL_BEST_SELLING] && (
+        <TrendyolTopDiscountsSection
+          products={trendyolBestSelling}
+          title="🛍️ چون خیلی‌ها خریدن، تو هم بخر!"
+          minDiscountPercentToShow={minDiscountPercentToShow}
+        />
+      )}
+
       {/* نظرات عکس‌دار محبوب */}
       {flags[SITE_SETTING_KEYS.FEATURE_PHOTO_REVIEWS] && <PhotoReviewsShowcase reviews={photoReviews} />}
       {flags[SITE_SETTING_KEYS.FEATURE_VIDEO_WALL] && <VideoWallSection items={videoWallItems} />}

@@ -15,7 +15,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: https:",
-  "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com",
+  // فایل‌های آپلودی از /api/files/... به لینکِ امضاشده‌ی Vercel Blob ریدایرکت می‌شن --
+  // ویدیوی نظرها (media-src) و fetchِ عکس توی پوستر (connect-src) هم باید اجازه داشته باشن
+  "media-src 'self' https://*.blob.vercel-storage.com",
+  // https://vercel.com/api/blob: آپلودِ مستقیمِ ویدیوی نظر/فیش از مرورگر (src/lib/directUpload.ts)
+  "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com https://*.blob.vercel-storage.com https://vercel.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -62,6 +63,10 @@ function isLegacyDemoSlug(slug: string): boolean {
   return /^\d{1,3}$/.test(slug);
 }
 
+// generateMetadata و خودِ صفحه هر دو جزئیات رو می‌خوان -- بدون cache() هر بازدید
+// دو درخواستِ کامل به ترندیول (و گاهی دو بار fallbackِ مرورگر) می‌زد
+const getTrendyolProductDetail = cache(fetchTrendyolProductDetail);
+
 // متادیتای سئو صفحه‌ی محصول ترندیول -- آدرس از کشِ URL کامل خوانده می‌شود و
 // جزئیات از خود ترندیول (best-effort؛ اگه خطا داد متادیتای پیش‌فرض می‌ماند)
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -72,7 +77,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   try {
     const trendyolUrl = await getCachedTrendyolProductUrl(contentId);
     if (!trendyolUrl) return {};
-    const product = await fetchTrendyolProductDetail(trendyolUrl);
+    const product = await getTrendyolProductDetail(trendyolUrl);
     if (!product) return {};
 
     const description = toMetaDescription(product.name);
@@ -174,7 +179,7 @@ export default async function TrendyolProductPage({
 
   let product;
   try {
-    product = await fetchTrendyolProductDetail(trendyolUrl);
+    product = await getTrendyolProductDetail(trendyolUrl);
   } catch (err) {
     console.warn("خطا در واکشی جزئیات محصول ترندیول:", err);
     await logTrendyolFetchFailure({ url: trendyolUrl, error: String(err), source: "product-detail" });

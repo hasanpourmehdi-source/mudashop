@@ -12,6 +12,7 @@ import {
 import { getExchangeRateInfo, applyExchangeRate } from "@/lib/exchangeRate";
 import { fetchTrendyolPageViaBrowser } from "@/lib/trendyolBrowserFetch";
 import { toProxiedImageUrl } from "@/lib/imageProxy";
+import { getSiteSetting, SITE_SETTING_KEYS } from "@/lib/siteSettings";
 
 const FAKE_STORE_BASE = "https://fakestoreapi.com";
 
@@ -175,6 +176,9 @@ type TrendyolLiveFetchResult = {
   // می‌کنه (نه اینکه واقعاً خالی باشه)
   resolvedCategoryIds?: string[];
   firstProductCategoryName?: string | null;
+  // فقط وقتی پُر می‌شه که واکشیِ زنده شکست خورده و آخرین نتیجه‌ی ذخیره‌شده (منقضی)
+  // برگردونده شده -- زمانِ واقعیِ واکشیِ همون نتیجه (ISO)، برای برچسبِ «ممکنه به‌روز نباشه»
+  staleSince?: string | null;
 };
 
 // ⚠️ هدر تنها کافی نیست -- لایه‌ی ضدبات ترندیول امضای TLS/HTTP2 هم چک می‌کنه که
@@ -815,7 +819,18 @@ async function fetchNextPageFromApi(apiUrl: string): Promise<TrendyolLiveFetchRe
 
 // نقطه‌ی ورود اصلی -- url می‌تونه لینک صفحه‌ی سرچ ترندیول باشه (Category.trendyolUrl)
 // یا لینک صفحه‌ی بعدی (از nextUrl همین تابع)
-export async function fetchTrendyolProductsFromUrl(url: string): Promise<TrendyolLiveFetchResult> {
+async function getStaleFallbackMs(): Promise<number> {
+  const hours = Number(await getSiteSetting(SITE_SETTING_KEYS.TRENDYOL_STALE_FALLBACK_HOURS));
+  return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60 * 1000 : 0;
+}
+
+// allowStale: اگه واکشیِ زنده شکست بخوره (معمولاً بلاکِ Cloudflare)، آخرین نتیجه‌ی
+// ذخیره‌شده تا سقفِ تنظیمِ ادمین برگردونده می‌شه به‌جای خطا. جاهایی که قیمتِ دقیقِ
+// لحظه‌ای لازمه (پوستر) یا خودِ سالم‌بودنِ لینک رو می‌سنجن (check-url) باید false بدن
+export async function fetchTrendyolProductsFromUrl(
+  url: string,
+  { allowStale = true }: { allowStale?: boolean } = {}
+): Promise<TrendyolLiveFetchResult> {
   const cached = await prisma.trendyolLiveCache.findUnique({ where: { key: url } }).catch(() => null);
   let result: TrendyolLiveFetchResult;
 
@@ -826,7 +841,18 @@ export async function fetchTrendyolProductsFromUrl(url: string): Promise<Trendyo
     // با اندپوینت JSON صفحه‌های بعدی (که آدرسش شامل discovery-*-service هست) --
     // این‌طوری فقط به یه دامنه‌ی خاص (trendyol.com) قفل نیست
     const isHtmlPage = !url.includes("/discovery-");
-    result = isHtmlPage ? await fetchFirstPageFromHtml(url) : await fetchNextPageFromApi(url);
+    try {
+      result = isHtmlPage ? await fetchFirstPageFromHtml(url) : await fetchNextPageFromApi(url);
+    } catch (err) {
+      const staleMs = allowStale && cached ? await getStaleFallbackMs() : 0;
+      const fetchedAt = cached ? cached.expiresAt.getTime() - CACHE_TTL_MS : 0;
+      if (cached && staleMs > 0 && Date.now() - fetchedAt <= staleMs) {
+        console.warn("[trendyol] واکشیِ زنده شکست خورد، نتیجه‌ی ذخیره‌شده برگردونده شد:", url);
+        const stale = JSON.parse(cached.data) as TrendyolLiveFetchResult;
+        return await withTomanPrices({ ...stale, staleSince: new Date(fetchedAt).toISOString() });
+      }
+      throw err;
+    }
     const expiresAt = new Date(Date.now() + CACHE_TTL_MS);
     // نوشتنِ کش صرفاً یه بهینه‌سازیه -- اگه به هر دلیلی (مثلاً race روی همون
     // key) شکست بخوره، نباید کلِ درخواست رو بترکونه؛ دفعه‌ی بعد دوباره زنده می‌گیره
@@ -837,6 +863,16 @@ export async function fetchTrendyolProductsFromUrl(url: string): Promise<Trendyo
         update: { data: JSON.stringify(result), expiresAt },
       })
       .catch((err) => console.error("[trendyol] ذخیره‌ی کشِ لایو شکست خورد (نادیده گرفته می‌شه):", err));
+    // ردیف‌های منقضی هیچ‌وقت پاک نمی‌شدن -- هر URLِ یکتا (فیلتر × مرتب‌سازی × صفحه)
+    // یه JSONِ چندده‌کیلوبایتی می‌ذاشت و دیتابیسِ رایگان (۰.۵ گیگ) آروم پر می‌شد.
+    // cron نداریم، پس گاه‌به‌گاه (حدودِ ۱ از ۵۰ نوشتن) همین‌جا پاکسازی می‌کنیم
+    // ردیف‌های تازه‌منقضی نگه داشته می‌شن تا fallbackِ «نتیجه‌ی ذخیره‌شده» کار کنه
+    if (Math.random() < 0.02) {
+      const keepMs = await getStaleFallbackMs();
+      prisma.trendyolLiveCache
+        .deleteMany({ where: { expiresAt: { lt: new Date(Date.now() - keepMs) } } })
+        .catch((err) => console.error("[trendyol] پاکسازیِ کشِ لایوِ منقضی شکست خورد:", err));
+    }
   }
 
   // تبدیل قیمت از لیر به تومان همیشه اینجا (بعد از خوندن از کش هم) انجام

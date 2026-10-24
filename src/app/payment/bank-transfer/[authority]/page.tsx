@@ -1,5 +1,6 @@
 "use client";
 
+import { prepareUpload, appendUpload, discardPrepared } from "@/lib/directUpload";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
@@ -68,7 +69,15 @@ export default function BankTransferPage() {
     setError("");
 
     const formData = new FormData();
-    formData.append("file", file);
+    let prepared: Awaited<ReturnType<typeof prepareUpload>> | null = null;
+    try {
+      prepared = await prepareUpload(file, "payment-receipt", { authority: String(params.authority) });
+      appendUpload(formData, prepared);
+    } catch (err) {
+      setUploading(false);
+      setError(err instanceof Error ? err.message : "خطا در ارسال فیش");
+      return;
+    }
     if (needsShippingMethod) formData.append("shippingMethod", shippingMethod);
 
     const res = await fetch(`/api/payment/${params.authority}/receipt`, {
@@ -79,6 +88,7 @@ export default function BankTransferPage() {
     setUploading(false);
 
     if (!res.ok) {
+      discardPrepared(prepared);
       setError(data.error ?? "خطا در ارسال فیش");
       return;
     }

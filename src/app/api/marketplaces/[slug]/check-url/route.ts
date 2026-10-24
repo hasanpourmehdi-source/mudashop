@@ -35,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   }
 
   try {
-    await fetchTrendyolProductsFromUrl(url);
+    await fetchTrendyolProductsFromUrl(url, { allowStale: false });
     return NextResponse.json({ ok: true, url });
   } catch (err) {
     const message = err instanceof Error ? err.message : "خطا در دریافت محصولات";

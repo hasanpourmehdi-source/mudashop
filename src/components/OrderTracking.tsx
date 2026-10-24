@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { customerOrderStatusLabel, shippingPaymentStatusLabel } from "@/lib/orderStatusMessages";
@@ -9,6 +9,8 @@ import { estimateDeliveryWindow, formatEta } from "@/lib/orderEta";
 import { computeDelayInfo } from "@/lib/orderDelay";
 import { buildTrackingTimeline } from "@/lib/trackingTimeline";
 import { TrackingTimeline } from "@/components/TrackingTimeline";
+import { useVisiblePolling } from "@/hooks/useVisiblePolling";
+import { usePollIntervalMs } from "@/components/ClientPollingProvider";
 
 type StatusHistoryEntry = {
   id: string;
@@ -161,26 +163,19 @@ export function OrderTracking({
   const searchParams = useSearchParams();
   const [order, setOrder] = useState(initialOrder);
   const paymentBanner = searchParams.get("payment"); // 'paid' | 'failed' از ریدایرکت درگاه
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const intervalMs = usePollIntervalMs();
 
-  useEffect(() => {
-    if (disablePolling) return;
-    // فقط وقتی سفارش هنوز در جریانه (نه لغوشده/تحویل‌شده) لازم به poll کردنه
-    if (order.status === "CANCELLED" || order.status === "DELIVERED" || order.status === "RETURNED")
-      return;
-
-    pollRef.current = setInterval(async () => {
+  // فقط وقتی سفارش هنوز در جریانه (نه لغوشده/تحویل‌شده) لازم به poll کردنه؛
+  // بازه از تنظیماتِ ادمین، و وقتی تب پنهانه متوقف
+  const finished = order.status === "CANCELLED" || order.status === "DELIVERED" || order.status === "RETURNED";
+  useVisiblePolling(
+    async () => {
       const res = await fetch(`/api/orders/${order.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setOrder(data);
-      }
-    }, 8000);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [order.id, order.status, disablePolling]);
+      if (res.ok) setOrder(await res.json());
+    },
+    intervalMs,
+    { enabled: !disablePolling && !finished, runImmediately: false },
+  );
 
   const steps = order.hasExternalItems ? STEPS_EXTERNAL : STEPS_MAZON;
   const { stepIndex: currentStepIndex, sublabel: currentSublabel } = computeStage(order, order.hasExternalItems);

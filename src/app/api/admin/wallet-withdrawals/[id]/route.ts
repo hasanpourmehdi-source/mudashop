@@ -4,18 +4,8 @@ import { requireAdmin } from "@/lib/requireAdmin";
 import { applyWalletTransaction } from "@/lib/wallet";
 import { notifyCustomerOutbound } from "@/lib/outboundNotify";
 import { logAdminAction } from "@/lib/adminAudit";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
-import { fileMatchesDeclaredType } from "@/lib/fileSignature";
-
-const ALLOWED_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
-
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // ۵ مگابایت
+import { acceptUpload } from "@/lib/uploadStorage";
+import { RECEIPT_UPLOAD_SPEC } from "@/lib/uploadSpecs";
 
 // تکمیل/رد درخواست واریز -- برخلاف بقیه‌ی جاهای پروژه که مشتری فیش آپلود
 // می‌کنه، این‌جا برعکسه: ادمین فیشِ واریزِ خودش به حساب مشتری رو آپلود می‌کنه
@@ -38,31 +28,9 @@ export async function POST(
   const action = formData.get("action");
 
   if (action === "approve") {
-    const file = formData.get("file");
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "عکس فیش واریزی را ضمیمه کنید" }, { status: 400 });
-    }
-    const ext = ALLOWED_TYPES[file.type];
-    if (!ext) {
-      return NextResponse.json(
-        { error: "فرمت فایل مجاز نیست (فقط jpg, png, webp, gif)" },
-        { status: 400 }
-      );
-    }
-    if (file.size > MAX_SIZE_BYTES) {
-      return NextResponse.json({ error: "حجم فایل نباید بیشتر از ۵ مگابایت باشد" }, { status: 400 });
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    if (!fileMatchesDeclaredType(buffer, file.type)) {
-      return NextResponse.json({ error: "فایل ارسالی معتبر نیست" }, { status: 400 });
-    }
-
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "receipts");
-    await mkdir(uploadsDir, { recursive: true });
-    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    await writeFile(path.join(uploadsDir, filename), buffer);
-    const receiptUrl = `/uploads/receipts/${filename}`;
+    const uploaded = await acceptUpload(formData, RECEIPT_UPLOAD_SPEC, "عکس فیش واریزی را ضمیمه کنید");
+    if ("error" in uploaded) return NextResponse.json({ error: uploaded.error }, { status: 400 });
+    const receiptUrl = uploaded.url;
 
     const updated = await prisma.walletWithdrawalRequest.update({
       where: { id },

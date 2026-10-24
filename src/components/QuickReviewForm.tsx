@@ -1,5 +1,7 @@
 "use client";
 
+import { prepareUpload, appendUpload, discardUploads, discardPrepared } from "@/lib/directUpload";
+import { useDiscardUnsubmittedUploads } from "@/hooks/useDiscardUnsubmittedUploads";
 import { useState } from "react";
 import { Spinner } from "@/components/Spinner";
 
@@ -32,6 +34,7 @@ export function QuickReviewForm({
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const pendingUploads = useDiscardUnsubmittedUploads(images, () => setImages([]));
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -49,10 +52,18 @@ export function QuickReviewForm({
     setUploading(true);
     for (const file of files.slice(0, remaining)) {
       const formData = new FormData();
-      formData.append("file", file);
+      let prepared: Awaited<ReturnType<typeof prepareUpload>>;
+      try {
+        prepared = await prepareUpload(file, "review");
+        appendUpload(formData, prepared);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "خطا در آپلود فایل");
+        continue;
+      }
       const res = await fetch("/api/reviews/upload", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) {
+        discardPrepared(prepared);
         setError(data.error ?? "خطا در آپلود فایل");
         continue;
       }
@@ -65,6 +76,7 @@ export function QuickReviewForm({
     e.preventDefault();
     setError("");
     setSubmitting(true);
+    pendingUploads.setSubmitting(true);
     const res = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -82,6 +94,7 @@ export function QuickReviewForm({
     const data = await res.json();
     setSubmitting(false);
     if (!res.ok) {
+      pendingUploads.setSubmitting(false);
       setError(data.error ?? "خطا در ثبت نظر");
       return;
     }
@@ -131,7 +144,10 @@ export function QuickReviewForm({
             <img src={url} alt="" className="w-12 h-12 rounded-lg object-cover border cut-line" />
             <button
               type="button"
-              onClick={() => setImages((prev) => prev.filter((u) => u !== url))}
+              onClick={() => {
+                setImages((prev) => prev.filter((u) => u !== url));
+                discardUploads([url]);
+              }}
               className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center"
             >
               ✕
